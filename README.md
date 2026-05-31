@@ -31,12 +31,6 @@ Production hosting target:
 - MariaDB 10.11.14
 - UnixODBC database access
 
-Development environment:
-
-- Windows 10
-- Sublime Text
-- Codex
-
 SwallowTail is intended to run on a FreeBSD virtual machine with storage added over time. Uploaded originals, converted JPEGs, thumbnails, previews, generated ZIP files, and cache files should be stored outside `web_root` and served only through application routes that check the current user's permissions.
 
 ## Photo Workflow
