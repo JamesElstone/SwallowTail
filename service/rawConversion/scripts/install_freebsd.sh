@@ -16,8 +16,9 @@ pkg install -y py311-pymysql py311-pyodbc
 mkdir -p "${CONFIG_DIR}"
 if [ ! -f "${CONFIG_FILE}" ]; then
   cp "${PROJECT_ROOT}/service/rawConversion/config.example.ini" "${CONFIG_FILE}"
-  chmod 0640 "${CONFIG_FILE}"
 fi
+chown root:swallowtail "${CONFIG_FILE}"
+chmod 0640 "${CONFIG_FILE}"
 
 if ! pw usershow swallowtail >/dev/null 2>&1; then
   pw useradd swallowtail -d /var/db/swallowtail -s /usr/sbin/nologin -c "SwallowTail service user"
