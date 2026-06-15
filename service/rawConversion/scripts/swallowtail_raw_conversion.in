@@ -20,6 +20,6 @@ load_rc_config "$name"
 pidfile="/var/run/swallowtail/raw_conversion.pid"
 procname="${swallowtail_raw_conversion_python}"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${swallowtail_raw_conversion_user} /usr/bin/env PYTHONPATH=${swallowtail_raw_conversion_project_root}/service/rawConversion ${swallowtail_raw_conversion_python} -m raw_conversion --config ${swallowtail_raw_conversion_config}"
+command_args="-f -p ${pidfile} /usr/bin/su -m ${swallowtail_raw_conversion_user} -c '/usr/bin/env PYTHONPATH=${swallowtail_raw_conversion_project_root}/service/rawConversion ${swallowtail_raw_conversion_python} -m raw_conversion --config ${swallowtail_raw_conversion_config}'"
 
 run_rc_command "$1"
