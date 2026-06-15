@@ -14,13 +14,6 @@ ALTER TABLE swallowtail_photo_derivatives
 ALTER TABLE swallowtail_photo_derivatives
   ADD KEY IF NOT EXISTS idx_swallowtail_derivatives_storage_location (storage_location_id);
 
-ALTER TABLE swallowtail_photo_derivatives
-  ADD CONSTRAINT IF NOT EXISTS fk_swallowtail_derivatives_storage_location
-    FOREIGN KEY (storage_location_id)
-    REFERENCES swallowtail_storage_locations (id)
-    ON DELETE SET NULL
-    ON UPDATE CASCADE;
-
 ALTER TABLE swallowtail_photo_conversion_jobs
   MODIFY COLUMN job_type enum('raw_derivatives','rebuild_derivatives','derivative') NOT NULL;
 
@@ -53,15 +46,3 @@ ALTER TABLE swallowtail_photo_conversion_jobs
   ),
   ADD KEY IF NOT EXISTS idx_swallowtail_conversion_jobs_output_storage_location (output_storage_location_id),
   ADD KEY IF NOT EXISTS idx_swallowtail_conversion_jobs_requested_by (requested_by_user_id);
-
-ALTER TABLE swallowtail_photo_conversion_jobs
-  ADD CONSTRAINT IF NOT EXISTS fk_swallowtail_conversion_jobs_output_storage_location
-    FOREIGN KEY (output_storage_location_id)
-    REFERENCES swallowtail_storage_locations (id)
-    ON DELETE SET NULL
-    ON UPDATE CASCADE,
-  ADD CONSTRAINT IF NOT EXISTS fk_swallowtail_conversion_jobs_requested_by
-    FOREIGN KEY (requested_by_user_id)
-    REFERENCES users (id)
-    ON DELETE SET NULL
-    ON UPDATE CASCADE;
