@@ -1,0 +1,3 @@
+#!/bin/sh
+export PYTHONPATH="__PROJECT_ROOT__/service/rawConversion"
+exec "__PYTHON__" -m raw_conversion --config "__CONFIG__"

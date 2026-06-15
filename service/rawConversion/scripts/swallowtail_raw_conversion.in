@@ -16,10 +16,11 @@ load_rc_config "$name"
 : ${swallowtail_raw_conversion_config:="/usr/local/etc/swallowtail/raw-conversion.ini"}
 : ${swallowtail_raw_conversion_python:="/usr/local/bin/python3.11"}
 : ${swallowtail_raw_conversion_user:="swallowtail"}
+: ${swallowtail_raw_conversion_runner:="/usr/local/libexec/swallowtail_raw_conversion_worker"}
 
 pidfile="/var/run/swallowtail/raw_conversion.pid"
 procname="${swallowtail_raw_conversion_python}"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} /usr/bin/su -m ${swallowtail_raw_conversion_user} -c '/usr/bin/env PYTHONPATH=${swallowtail_raw_conversion_project_root}/service/rawConversion ${swallowtail_raw_conversion_python} -m raw_conversion --config ${swallowtail_raw_conversion_config}'"
+command_args="-f -p ${pidfile} /usr/bin/su -m ${swallowtail_raw_conversion_user} -c ${swallowtail_raw_conversion_runner}"
 
 run_rc_command "$1"
