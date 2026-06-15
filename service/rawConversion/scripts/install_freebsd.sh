@@ -24,7 +24,8 @@ if ! pw usershow swallowtail >/dev/null 2>&1; then
 fi
 
 mkdir -p /var/db/swallowtail-raw-conversion /var/tmp/swallowtail-raw-conversion
-chown -R swallowtail:swallowtail /var/db/swallowtail-raw-conversion /var/tmp/swallowtail-raw-conversion
+mkdir -p /var/run/swallowtail
+chown -R swallowtail:swallowtail /var/db/swallowtail-raw-conversion /var/tmp/swallowtail-raw-conversion /var/run/swallowtail
 
 sed "s#__PROJECT_ROOT__#${PROJECT_ROOT}#g" \
   "${PROJECT_ROOT}/service/rawConversion/scripts/swallowtail_raw_conversion.in" \
