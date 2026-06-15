@@ -13,7 +13,7 @@ defined on the job.
 Install dependencies:
 
 ```sh
-pkg install -y py311-pymysql
+pkg install -y py311-pymysql py311-pyodbc
 ```
 
 Copy and edit configuration:

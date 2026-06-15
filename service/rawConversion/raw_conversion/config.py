@@ -7,6 +7,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class DatabaseConfig:
+    driver: str
+    dsn: str
     host: str
     port: int
     database: str
@@ -56,6 +58,8 @@ def load_config(path: str) -> AppConfig:
 
     return AppConfig(
         database=DatabaseConfig(
+            driver=parser.get("database", "driver", fallback="odbc").strip().lower(),
+            dsn=parser.get("database", "dsn", fallback=""),
             host=parser.get("database", "host", fallback="127.0.0.1"),
             port=parser.getint("database", "port", fallback=3306),
             database=parser.get("database", "database"),

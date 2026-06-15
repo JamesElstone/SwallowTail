@@ -11,7 +11,7 @@ if [ ! -d "${PROJECT_ROOT}/service/rawConversion" ]; then
   exit 1
 fi
 
-pkg install -y py311-pymysql
+pkg install -y py311-pymysql py311-pyodbc
 
 mkdir -p "${CONFIG_DIR}"
 if [ ! -f "${CONFIG_FILE}" ]; then
