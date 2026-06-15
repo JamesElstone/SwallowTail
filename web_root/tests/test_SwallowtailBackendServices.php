@@ -121,6 +121,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         photo_id INTEGER NOT NULL,
         derivative_type TEXT NOT NULL,
         storage_path TEXT NOT NULL,
+        storage_location_id INTEGER NULL,
         bytes INTEGER NOT NULL,
         sha256 TEXT NULL,
         generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -131,6 +132,14 @@ $swallowtailCreateSqliteSchema = static function (): void {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
         job_type TEXT NOT NULL,
+        derivative_type TEXT NULL,
+        input_path TEXT NULL,
+        pp3_path TEXT NULL,
+        output_path TEXT NULL,
+        output_storage_path TEXT NULL,
+        output_storage_location_id INTEGER NULL,
+        profile_version INTEGER NOT NULL DEFAULT 1,
+        requested_by_user_id INTEGER NULL,
         priority TEXT NOT NULL DEFAULT 'normal',
         status TEXT NOT NULL DEFAULT 'queued',
         attempts INTEGER NOT NULL DEFAULT 0,
@@ -138,6 +147,9 @@ $swallowtailCreateSqliteSchema = static function (): void {
         locked_at TEXT NULL,
         locked_by TEXT NULL,
         last_error TEXT NULL,
+        redis_notified_at TEXT NULL,
+        started_at TEXT NULL,
+        completed_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
@@ -210,7 +222,16 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertTrue(is_file((new SwallowtailStorageService($root))->absolutePath((string)$result['storage_path'])));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_photos', 'storage_location_id', ['id' => (int)$result['photo_id']]));
     $harness->assertSame(0, InterfaceDB::countWhere('swallowtail_event_photos', 'photo_id', (int)$result['photo_id']));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(4, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+        'photo_id' => (int)$result['photo_id'],
+        'derivative_type' => 'preview',
+        'priority' => 'high',
+    ]));
+    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+        'photo_id' => (int)$result['photo_id'],
+        'derivative_type' => 'original_jpeg',
+    ]));
     $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_audit', 'action_type', 'raw_uploaded'));
 
     @unlink($source);
@@ -374,11 +395,15 @@ $harness->check(SwallowtailStorageLocationService::class, 'chooses writable moun
 
 $harness->check('Swallowtail migration', 'defines the photo backend tables', function () use ($harness): void {
     $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_05_31_001_swallowtail_photo_services.sql';
+    $conversionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_15_004_raw_conversion_jobs.sql';
     $sql = file_get_contents($path);
+    $conversionSql = file_get_contents($conversionPath);
 
-    if (!is_string($sql)) {
+    if (!is_string($sql) || !is_string($conversionSql)) {
         throw new RuntimeException('Swallowtail migration could not be read.');
     }
+
+    $sql .= "\n" . $conversionSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS swallowtail_events',
@@ -387,7 +412,41 @@ $harness->check('Swallowtail migration', 'defines the photo backend tables', fun
         'CREATE TABLE IF NOT EXISTS swallowtail_event_permissions',
         'CREATE TABLE IF NOT EXISTS swallowtail_api_upload_tokens',
         'CREATE TABLE IF NOT EXISTS swallowtail_photo_conversion_jobs',
+        'derivative_type enum',
+        'output_storage_path',
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));
     }
+});
+
+$harness->check(SwallowtailConversionQueueService::class, 'deduplicates derivative jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-dedupe';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary dedupe storage', $root);
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $ingest = new SwallowtailPhotoIngestService(
+        new SwallowtailStorageService($root),
+        new SwallowtailPhotoLibraryService(),
+        new SwallowtailConversionQueueService()
+    );
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0006.CR2');
+    $queue = new SwallowtailConversionQueueService();
+    $photoId = (int)$result['photo_id'];
+    $first = $queue->enqueuePreviewRefresh($photoId, $root . DIRECTORY_SEPARATOR . 'profile-v2.pp3', 2, 12);
+    $second = $queue->enqueuePreviewRefresh($photoId, $root . DIRECTORY_SEPARATOR . 'profile-v2.pp3', 2, 12);
+
+    $harness->assertSame($first, $second);
+    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'derivative_type' => 'preview',
+        'profile_version' => 2,
+    ]));
+
+    @unlink($source);
 });

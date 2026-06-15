@@ -1,0 +1,12 @@
+[project]
+name = "swallowtail-raw-conversion"
+version = "0.1.0"
+description = "SwallowTail RawTherapee conversion worker"
+requires-python = ">=3.11"
+dependencies = [
+    "PyMySQL>=1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
