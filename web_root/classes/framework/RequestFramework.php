@@ -260,6 +260,14 @@ final class RequestFramework
             $headers[HelperFramework::httpHeaderLabelFromServerKey($key)] = is_scalar($value) ? (string)$value : '';
         }
 
+        foreach (['AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION'] as $authorizationKey) {
+            if (trim((string)($headers['Authorization'] ?? '')) !== '' || !array_key_exists($authorizationKey, $server)) {
+                continue;
+            }
+
+            $headers['Authorization'] = is_scalar($server[$authorizationKey]) ? (string)$server[$authorizationKey] : '';
+        }
+
         foreach (['CONTENT_TYPE', 'CONTENT_LENGTH', 'CONTENT_MD5'] as $contentKey) {
             if (!array_key_exists($contentKey, $server)) {
                 continue;
