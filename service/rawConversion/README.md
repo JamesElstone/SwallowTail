@@ -10,28 +10,27 @@ defined on the job.
 
 ## Install On FreeBSD
 
-Install dependencies:
+Run the repo-provided installer from the checked-out project:
 
 ```sh
-pkg install -y py311-pymysql py311-pyodbc
+sh service/rawConversion/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
-Copy and edit configuration:
+Review the generated configuration:
 
 ```sh
-mkdir -p /usr/local/etc/swallowtail
-cp service/rawConversion/config.example.ini /usr/local/etc/swallowtail/raw-conversion.ini
+ee /usr/local/etc/swallowtail/raw-conversion.ini
 ```
 
-Install the rc.d script from the repository:
+The installer creates the rc.d script, worker wrapper, log file, and newsyslog
+rotation config.
+
+## Operations
 
 ```sh
-sed "s#__PROJECT_ROOT__#/usr/local/swallowtail#g" \
-  service/rawConversion/scripts/swallowtail_raw_conversion.in \
-  > /usr/local/etc/rc.d/swallowtail_raw_conversion
-chmod 0555 /usr/local/etc/rc.d/swallowtail_raw_conversion
-sysrc swallowtail_raw_conversion_enable=YES
+python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --health
 service swallowtail_raw_conversion start
+service swallowtail_raw_conversion status
 ```
 
 The service command is:
@@ -45,3 +44,21 @@ For one-shot testing:
 ```sh
 python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --once
 ```
+
+For host smoke testing:
+
+```sh
+sh tools/bin/rawConversionSmokeTest.sh --input=/home/james.elstone/TEST.CR2
+```
+
+The smoke test uses `/storage/1/swallowtail-raw-smoke` by default, waits for all
+four derivative jobs to succeed, verifies non-empty output files, and cleans up
+the rows/files it created unless `--keep-artifacts` is supplied.
+
+## Rendering Notes
+
+RawTherapee processing profiles are layered in command-line order. For thumbnail
+jobs, PHP supplies `output_width` and `output_height` on the job and the worker
+generates a temporary resize PP3 after any user PP3 so thumbnails are bounded to
+the requested dimensions. Preview, full JPEG, and original JPEG jobs remain
+full-size unless PHP supplies dimensions for those derivatives later.

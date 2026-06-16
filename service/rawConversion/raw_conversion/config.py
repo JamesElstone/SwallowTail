@@ -30,6 +30,7 @@ class RawTherapeeConfig:
     binary: str
     maximum_threads: int
     home: str
+    stderr_chars: int
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,13 @@ class WorkerConfig:
     max_attempts: int
     retry_delay_seconds: int
     work_dir: str
+    temp_retention_hours: int
+
+
+@dataclass(frozen=True)
+class LoggingConfig:
+    file: str
+    level: str
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,7 @@ class AppConfig:
     redis: RedisConfig
     rawtherapee: RawTherapeeConfig
     worker: WorkerConfig
+    logging: LoggingConfig
 
 
 def load_config(path: str) -> AppConfig:
@@ -77,6 +86,7 @@ def load_config(path: str) -> AppConfig:
             binary=parser.get("rawtherapee", "binary", fallback="/usr/local/bin/rawtherapee-cli"),
             maximum_threads=max(1, parser.getint("rawtherapee", "maximum_threads", fallback=1)),
             home=parser.get("rawtherapee", "home", fallback="/var/db/swallowtail-raw-conversion"),
+            stderr_chars=max(200, parser.getint("logging", "stderr_chars", fallback=4000)),
         ),
         worker=WorkerConfig(
             worker_id=parser.get("worker", "id", fallback="swallowtail-converter-1"),
@@ -85,6 +95,11 @@ def load_config(path: str) -> AppConfig:
             max_attempts=max(1, parser.getint("worker", "max_attempts", fallback=3)),
             retry_delay_seconds=max(1, parser.getint("worker", "retry_delay_seconds", fallback=60)),
             work_dir=parser.get("worker", "work_dir", fallback="/var/tmp/swallowtail-raw-conversion"),
+            temp_retention_hours=max(1, parser.getint("worker", "temp_retention_hours", fallback=24)),
+        ),
+        logging=LoggingConfig(
+            file=parser.get("logging", "file", fallback="/var/log/swallowtail_raw_conversion.log"),
+            level=parser.get("logging", "level", fallback="INFO").strip().upper(),
         ),
     )
 

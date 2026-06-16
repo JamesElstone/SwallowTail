@@ -68,6 +68,10 @@ class ConversionDatabase:
         self.connection.commit()
         return count
 
+    def ping(self) -> None:
+        self._fetchone("SELECT 1 AS ok")
+        self.connection.rollback()
+
     def next_queued_job_id(self) -> int | None:
         row = self._fetchone(
             """

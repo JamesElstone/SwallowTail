@@ -36,6 +36,7 @@ final class SwallowtailConversionQueueService
             'jpeg' => $priority,
         ] as $derivativeType => $jobPriority) {
             $outputStoragePath = $storage->derivativeRelativePath($sha256, $derivativeType);
+            $dimensions = $this->dimensionsForDerivative($derivativeType);
             $jobIds[] = $this->enqueueDerivativeJob(
                 $photoId,
                 $derivativeType,
@@ -45,7 +46,10 @@ final class SwallowtailConversionQueueService
                 $storageLocationId,
                 null,
                 1,
-                $jobPriority
+                $jobPriority,
+                null,
+                $dimensions['width'],
+                $dimensions['height']
             );
         }
 
@@ -68,7 +72,9 @@ final class SwallowtailConversionQueueService
         ?string $pp3Path = null,
         int $profileVersion = 1,
         string $priority = 'normal',
-        ?int $requestedByUserId = null
+        ?int $requestedByUserId = null,
+        ?int $outputWidth = null,
+        ?int $outputHeight = null
     ): ?int {
         if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
             return null;
@@ -77,6 +83,12 @@ final class SwallowtailConversionQueueService
         $derivativeType = $this->normaliseDerivativeType($derivativeType);
         $priority = $this->normalisePriority($priority);
         $profileVersion = max(1, $profileVersion);
+        $outputWidth = $this->nullablePositiveInt($outputWidth);
+        $outputHeight = $this->nullablePositiveInt($outputHeight);
+
+        if (($outputWidth === null) !== ($outputHeight === null)) {
+            throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
+        }
 
         $existingJobId = InterfaceDB::fetchColumn(
             "SELECT id
@@ -108,6 +120,8 @@ final class SwallowtailConversionQueueService
                 output_path,
                 output_storage_path,
                 output_storage_location_id,
+                output_width,
+                output_height,
                 profile_version,
                 requested_by_user_id,
                 priority,
@@ -121,6 +135,8 @@ final class SwallowtailConversionQueueService
                 :output_path,
                 :output_storage_path,
                 :output_storage_location_id,
+                :output_width,
+                :output_height,
                 :profile_version,
                 :requested_by_user_id,
                 :priority,
@@ -134,6 +150,8 @@ final class SwallowtailConversionQueueService
                 'output_path' => $this->normaliseRequiredPath($outputPath, 1000),
                 'output_storage_path' => $this->normaliseRequiredPath($outputStoragePath, 500),
                 'output_storage_location_id' => $this->nullablePositiveInt($outputStorageLocationId),
+                'output_width' => $outputWidth,
+                'output_height' => $outputHeight,
                 'profile_version' => $profileVersion,
                 'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
                 'priority' => $priority,
@@ -172,7 +190,9 @@ final class SwallowtailConversionQueueService
             $profilePath,
             $profileVersion,
             'high',
-            $requestedByUserId
+            $requestedByUserId,
+            null,
+            null
         );
     }
 
@@ -304,6 +324,18 @@ final class SwallowtailConversionQueueService
         $value = (int)$value;
 
         return $value > 0 ? $value : null;
+    }
+
+    private function dimensionsForDerivative(string $derivativeType): array
+    {
+        if ($derivativeType !== 'thumbnail') {
+            return ['width' => null, 'height' => null];
+        }
+
+        $size = (int)AppConfigurationStore::get('swallowtail.raw_conversion.thumbnail_max_pixels', 512);
+        $size = max(1, min(4096, $size));
+
+        return ['width' => $size, 'height' => $size];
     }
 
     private function lastInsertId(): int

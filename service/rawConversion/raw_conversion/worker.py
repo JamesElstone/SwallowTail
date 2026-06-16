@@ -22,6 +22,10 @@ class ConversionWorker:
         self.runner = RawTherapeeRunner(config.rawtherapee)
 
     def run_forever(self) -> None:
+        removed = self.cleanup_stale_temp_dirs()
+        if removed:
+            self.log.info("Removed %s stale raw conversion temp directories", removed)
+
         recovered = self.db.requeue_expired_jobs()
         if recovered:
             self.log.info("Requeued %s expired conversion jobs", recovered)
@@ -45,6 +49,7 @@ class ConversionWorker:
                     future.result()
 
     def run_once(self) -> bool:
+        self.cleanup_stale_temp_dirs()
         job_id = self._next_job_id()
         if job_id is None:
             return False
@@ -95,3 +100,22 @@ class ConversionWorker:
         if message is not None:
             return message.job_id
         return self.db.next_queued_job_id()
+
+    def cleanup_stale_temp_dirs(self) -> int:
+        work_dir = Path(self.config.worker.work_dir)
+        if not work_dir.is_dir():
+            return 0
+
+        cutoff = time.time() - (self.config.worker.temp_retention_hours * 3600)
+        removed = 0
+        for path in work_dir.glob("job-*"):
+            if not path.is_dir():
+                continue
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    continue
+                shutil.rmtree(path)
+                removed += 1
+            except OSError:
+                self.log.warning("Unable to remove stale temp directory: %s", path, exc_info=True)
+        return removed

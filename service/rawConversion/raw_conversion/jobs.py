@@ -20,6 +20,8 @@ class ConversionJob:
     output_storage_location_id: int | None
     profile_version: int
     attempts: int
+    output_width: int | None = None
+    output_height: int | None = None
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "ConversionJob":
@@ -34,7 +36,16 @@ class ConversionJob:
             output_storage_location_id=int(row["output_storage_location_id"]) if row.get("output_storage_location_id") else None,
             profile_version=max(1, int(row.get("profile_version") or 1)),
             attempts=int(row.get("attempts") or 0),
+            output_width=cls._positive_int_or_none(row.get("output_width")),
+            output_height=cls._positive_int_or_none(row.get("output_height")),
         )
+
+    @staticmethod
+    def _positive_int_or_none(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        parsed = int(value)
+        return parsed if parsed > 0 else None
 
     def validate(self) -> None:
         if self.derivative_type not in DERIVATIVE_TYPES:
@@ -49,3 +60,5 @@ class ConversionJob:
         output_parent = Path(self.output_path).parent
         if not output_parent.exists():
             output_parent.mkdir(parents=True, exist_ok=True)
+        if (self.output_width is None) != (self.output_height is None):
+            raise RuntimeError("Both output_width and output_height must be set together.")

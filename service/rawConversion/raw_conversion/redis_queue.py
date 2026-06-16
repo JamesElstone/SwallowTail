@@ -45,6 +45,14 @@ class RedisQueue:
 
         return RedisMessage(queue=queue, job_id=job_id) if job_id > 0 else None
 
+    def ping(self) -> None:
+        with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+            sock.settimeout(self.config.timeout_seconds)
+            sock.sendall(self._command("PING"))
+            response = self._read_resp(sock)
+        if self._to_text(response) != "PONG":
+            raise RuntimeError("Redis did not return PONG")
+
     def _command(self, *parts: str) -> bytes:
         encoded = [part.encode("utf-8") for part in parts]
         data = [f"*{len(encoded)}\r\n".encode("ascii")]

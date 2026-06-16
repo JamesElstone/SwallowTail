@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 
 def main() -> int:
+    if os.environ.get("SWALLOWTAIL_FAKE_RAWTHERAPEE_FAIL") == "1":
+        print("fake rawtherapee failure", file=sys.stderr)
+        return 17
+
     output = None
     for index, arg in enumerate(sys.argv):
         if arg == "-o" and index + 1 < len(sys.argv):
