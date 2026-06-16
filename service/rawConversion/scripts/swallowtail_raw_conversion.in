@@ -31,6 +31,7 @@ reload_cmd="swallowtail_raw_conversion_reload"
 swallowtail_raw_conversion_precmd()
 {
   export PYTHONPATH="${swallowtail_raw_conversion_project_root}/service/rawConversion"
+  export PYTHONDONTWRITEBYTECODE=1
   ${swallowtail_raw_conversion_python} -m raw_conversion --config "${swallowtail_raw_conversion_config}" --health
 }
 
