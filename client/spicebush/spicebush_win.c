@@ -15,6 +15,7 @@
 #define WM_TRAYICON (WM_APP + 10)
 #define WM_REFRESH_STATS (WM_APP + 11)
 #define WM_REGISTER_DONE (WM_APP + 12)
+#define WM_PING_DONE (WM_APP + 13)
 
 #define IDR_SPICEBUSH_ICON 101
 
@@ -79,9 +80,19 @@ static AppState g_app;
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static void ShowRegisterWindow(void);
 static DWORD WINAPI ProcessorThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
+static DWORD WINAPI PingThread(LPVOID param);
+
+static HICON AppIcon(void)
+{
+    if (!g_app.registerLogoIcon) {
+        g_app.registerLogoIcon = (HICON)LoadImageA(g_app.instance, MAKEINTRESOURCEA(IDR_SPICEBUSH_ICON), IMAGE_ICON, 64, 64, LR_DEFAULTCOLOR);
+    }
+    return g_app.registerLogoIcon ? g_app.registerLogoIcon : LoadIcon(NULL, IDI_APPLICATION);
+}
 
 static int SbSnprintf(char *buffer, size_t bufferSize, const char *format, ...)
 {
@@ -146,6 +157,7 @@ static void TrimTrailingSlashes(char *text)
 static void SetStatus(HWND hwnd, const char *text)
 {
     HWND status = GetDlgItem(hwnd, ID_REGISTER_STATUS);
+    if (!status) status = g_app.registerStatus;
     if (status) SetWindowTextA(status, text);
 }
 
@@ -462,6 +474,32 @@ static int JsonStringValue(const char *json, const char *key, char *out, DWORD o
     return i > 0;
 }
 
+static int JsonFirstArrayStringValue(const char *json, const char *key, char *out, DWORD outSize)
+{
+    char needle[128];
+    const char *p;
+    DWORD i = 0;
+    SbSnprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
+    needle[sizeof(needle) - 1] = '\0';
+    p = strstr(json, needle);
+    if (!p) return 0;
+    p = strchr(p + lstrlenA(needle), ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '[') return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '"') return 0;
+    p++;
+    while (*p && *p != '"' && i + 1 < outSize) {
+        if (*p == '\\' && p[1]) p++;
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return i > 0;
+}
+
 static int JsonBoolValue(const char *json, const char *key, int *value)
 {
     char needle[128];
@@ -541,6 +579,53 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
     if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) return 0;
     if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) return 1;
     return 0;
+}
+
+static DWORD WINAPI PingThread(LPVOID param)
+{
+    char url[MAX_TEXT * 2], headers[MAX_TEXT + 128], response[4096], errorText[512];
+    char *postedError = NULL;
+    DWORD status = 0;
+    int requestOk;
+    (void)param;
+
+    SbSnprintf(url, sizeof(url) - 1, "%s/ping.php", g_app.apiUrl);
+    url[sizeof(url) - 1] = '\0';
+    SbSnprintf(headers, sizeof(headers) - 1, "Authorization: Bearer %s\r\n", g_app.uploadToken);
+    headers[sizeof(headers) - 1] = '\0';
+
+    requestOk = HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response));
+    if (requestOk && status == 200 && JsonBoolValue(response, "pong", &requestOk) && requestOk) {
+        PostMessageA(g_app.mainWindow, WM_PING_DONE, 1, 0);
+        return 0;
+    }
+
+    if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+        postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 48);
+        if (postedError) {
+            SbSnprintf(postedError, lstrlenA(errorText) + 48, "Connection check failed: %s", errorText);
+        }
+    } else {
+        postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 180);
+        if (postedError) {
+            if (requestOk && status > 0) {
+                SbSnprintf(postedError, 180, "Connection check failed: server returned HTTP %lu.", status);
+            } else {
+                SafeCopy(postedError, 180, "Connection check failed: could not connect to the SwallowTail server.");
+            }
+        }
+    }
+    PostMessageA(g_app.mainWindow, WM_PING_DONE, 0, (LPARAM)postedError);
+    return 0;
+}
+
+static void StartPingCheck(void)
+{
+    HANDLE thread;
+    if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') return;
+    thread = CreateThread(NULL, 0, PingThread, NULL, 0, NULL);
+    if (thread) CloseHandle(thread);
+    else ShowRegisterWindow();
 }
 
 static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
@@ -744,7 +829,7 @@ static void AddTrayIcon(HWND hwnd)
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    nid.hIcon = AppIcon();
     SafeCopy(nid.szTip, sizeof(nid.szTip), APP_NAME);
     Shell_NotifyIconA(NIM_ADD, &nid);
 }
@@ -757,6 +842,21 @@ static void RemoveTrayIcon(HWND hwnd)
     nid.hWnd = hwnd;
     nid.uID = 1;
     Shell_NotifyIconA(NIM_DELETE, &nid);
+}
+
+static void ShowTrayBalloon(HWND hwnd, const char *title, const char *message, UINT timeoutMillis)
+{
+    NOTIFYICONDATAA nid;
+    ZeroMemory(&nid, sizeof(nid));
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_INFO;
+    SafeCopy(nid.szInfoTitle, sizeof(nid.szInfoTitle), title);
+    SafeCopy(nid.szInfo, sizeof(nid.szInfo), message);
+    nid.uTimeout = timeoutMillis;
+    nid.dwInfoFlags = NIIF_INFO;
+    Shell_NotifyIconA(NIM_MODIFY, &nid);
 }
 
 static void ShowTrayMenu(HWND hwnd)
@@ -779,6 +879,11 @@ static HWND Label(HWND parent, const char *text, int x, int y, int w, int h)
     return CreateWindowA("STATIC", text, WS_CHILD | WS_VISIBLE, x, y, w, h, parent, NULL, g_app.instance, NULL);
 }
 
+static HWND StatusLabel(HWND parent, const char *text, int x, int y, int w, int h)
+{
+    return CreateWindowExA(WS_EX_CLIENTEDGE, "STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT, x, y, w, h, parent, (HMENU)ID_REGISTER_STATUS, g_app.instance, NULL);
+}
+
 static HWND Edit(HWND parent, int id, const char *text, int x, int y, int w, int h, DWORD style)
 {
     return CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL);
@@ -787,7 +892,7 @@ static HWND Edit(HWND parent, int id, const char *text, int x, int y, int w, int
 static void ShowRegisterWindow(void)
 {
     if (!g_app.registerWindow) {
-        g_app.registerWindow = CreateWindowExA(WS_EX_CONTROLPARENT, "SpiceBushRegister", "Register with SwallowTail", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 270, NULL, NULL, g_app.instance, NULL);
+        g_app.registerWindow = CreateWindowExA(WS_EX_CONTROLPARENT, "SpiceBushRegister", "Register with SwallowTail", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 330, NULL, NULL, g_app.instance, NULL);
     }
     ShowWindow(g_app.registerWindow, SW_SHOWNORMAL);
     SetForegroundWindow(g_app.registerWindow);
@@ -848,6 +953,9 @@ static DWORD WINAPI RegisterThread(LPVOID param)
     RegisterRequest *rr = (RegisterRequest *)param;
     char endpoint[2048], u[MAX_TEXT * 2], p[MAX_TEXT * 2], o[80], d[256], json[4096], headers[256], response[8192];
     char token[MAX_TEXT], apiUrl[MAX_TEXT];
+    char errorText[512];
+    char *postedError = NULL;
+    int requestOk;
     DWORD status = 0;
     BuildRegisterEndpoint(rr->siteUrl, endpoint, sizeof(endpoint));
     JsonEscape(rr->username, u, sizeof(u));
@@ -857,7 +965,8 @@ static DWORD WINAPI RegisterThread(LPVOID param)
     SbSnprintf(json, sizeof(json) - 1, "{\"username\":\"%s\",\"password\":\"%s\",\"otp_code\":\"%s\",\"device_id\":\"%s\",\"token_label\":\"SpiceBush %s\"}", u, p, o, d, d);
     json[sizeof(json) - 1] = '\0';
     SafeCopy(headers, sizeof(headers), "Content-Type: application/json\r\n");
-    if (HttpSimpleRequest("POST", endpoint, headers, (const BYTE *)json, lstrlenA(json), &status, response, sizeof(response))
+    requestOk = HttpSimpleRequest("POST", endpoint, headers, (const BYTE *)json, lstrlenA(json), &status, response, sizeof(response));
+    if (requestOk
         && status == 200
         && JsonStringValue(response, "token", token, sizeof(token))
         && JsonStringValue(response, "api_url", apiUrl, sizeof(apiUrl))) {
@@ -867,7 +976,27 @@ static DWORD WINAPI RegisterThread(LPVOID param)
         SaveConfig();
         PostMessageA(rr->hwnd, WM_REGISTER_DONE, 1, 0);
     } else {
-        PostMessageA(rr->hwnd, WM_REGISTER_DONE, 0, status);
+        if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+            postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 32);
+            if (postedError) {
+                SbSnprintf(postedError, lstrlenA(errorText) + 32, "Registration failed: %s", errorText);
+            }
+        } else if (requestOk && JsonStringValue(response, "message", errorText, sizeof(errorText))) {
+            postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 32);
+            if (postedError) {
+                SbSnprintf(postedError, lstrlenA(errorText) + 32, "Registration failed: %s", errorText);
+            }
+        } else {
+            postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 160);
+            if (postedError) {
+                if (requestOk && status > 0) {
+                    SbSnprintf(postedError, 160, "Registration failed: server returned HTTP %lu.", status);
+                } else {
+                    SafeCopy(postedError, 160, "Registration failed: could not connect to the SwallowTail server.");
+                }
+            }
+        }
+        PostMessageA(rr->hwnd, WM_REGISTER_DONE, 0, (LPARAM)postedError);
     }
     SecureZeroMemory(rr->password, sizeof(rr->password));
     SecureZeroMemory(rr->otpCode, sizeof(rr->otpCode));
@@ -908,16 +1037,11 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case WM_CREATE:
         {
             HWND logo = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_ICON, 20, 28, 72, 72, hwnd, NULL, g_app.instance, NULL);
-            if (!g_app.registerLogoIcon) {
-                g_app.registerLogoIcon = (HICON)LoadImageA(g_app.instance, MAKEINTRESOURCEA(IDR_SPICEBUSH_ICON), IMAGE_ICON, 64, 64, LR_DEFAULTCOLOR);
-            }
-            if (g_app.registerLogoIcon) {
-                SendMessageA(logo, STM_SETICON, (WPARAM)g_app.registerLogoIcon, 0);
-            }
+            SendMessageA(logo, STM_SETICON, (WPARAM)AppIcon(), 0);
         }
         Label(hwnd, "URL", 110, 20, 90, 20);
         Edit(hwnd, ID_REGISTER_URL, g_app.siteUrl, 210, 18, 270, 22, 0);
-        Label(hwnd, "Username", 110, 55, 90, 20);
+        Label(hwnd, "E-mail", 110, 55, 90, 20);
         Edit(hwnd, ID_REGISTER_USER, "", 210, 53, 270, 22, 0);
         Label(hwnd, "Password", 110, 90, 90, 20);
         Edit(hwnd, ID_REGISTER_PASSWORD, "", 210, 88, 270, 22, ES_PASSWORD);
@@ -925,7 +1049,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         Edit(hwnd, ID_REGISTER_OTP, "", 210, 123, 120, 22, 0);
         CreateWindowA("BUTTON", "Register", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 210, 161, 100, 28, hwnd, (HMENU)ID_REGISTER_SAVE, g_app.instance, NULL);
         CreateWindowA("BUTTON", "Quit", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 320, 161, 80, 28, hwnd, (HMENU)ID_REGISTER_QUIT, g_app.instance, NULL);
-        g_app.registerStatus = Label(hwnd, "", 110, 200, 370, 35);
+        g_app.registerStatus = StatusLabel(hwnd, "Enter registration details, then click Register.", 18, 202, 500, 72);
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_REGISTER_SAVE) BeginRegister(hwnd);
@@ -933,7 +1057,16 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         return 0;
     case WM_REGISTER_DONE:
         EnableWindow(GetDlgItem(hwnd, ID_REGISTER_SAVE), TRUE);
-        SetStatus(hwnd, wp ? "Registered. SpiceBush is ready to upload." : "Registration failed. Check URL, credentials, role, and CIDR policy.");
+        if (wp) {
+            SetStatus(hwnd, "Registered. SpiceBush is ready to upload.");
+            ShowTrayBalloon(g_app.mainWindow, APP_NAME, "Registered OK!", 10000);
+            ShowWindow(hwnd, SW_HIDE);
+        } else if (lp) {
+            SetStatus(hwnd, (const char *)lp);
+            HeapFree(GetProcessHeap(), 0, (LPVOID)lp);
+        } else {
+            SetStatus(hwnd, "Registration failed. Check URL, credentials, OTP, role, and CIDR policy.");
+        }
         return 0;
     case WM_CLOSE:
         if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
@@ -996,6 +1129,19 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_REFRESH_STATS:
         RefreshStats();
         return 0;
+    case WM_PING_DONE:
+        if (wp) {
+            ShowTrayBalloon(hwnd, APP_NAME, "SwallowTail - Connected OK!", 10000);
+        } else {
+            ShowRegisterWindow();
+            if (lp) {
+                SetStatus(g_app.registerWindow, (const char *)lp);
+                HeapFree(GetProcessHeap(), 0, (LPVOID)lp);
+            } else {
+                SetStatus(g_app.registerWindow, "Connection check failed. Please register with SwallowTail again.");
+            }
+        }
+        return 0;
     case WM_DESTROY:
         SetEvent(g_app.stopEvent);
         RemoveTrayIcon(hwnd);
@@ -1010,7 +1156,7 @@ static void RegisterClasses(void)
     WNDCLASSA wc;
     ZeroMemory(&wc, sizeof(wc));
     wc.hInstance = g_app.instance;
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = AppIcon();
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpfnWndProc = MainWndProc;
@@ -1044,6 +1190,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     processor = CreateThread(NULL, 0, ProcessorThread, NULL, 0, NULL);
     if (processor) CloseHandle(processor);
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow();
+    else StartPingCheck();
     while (GetMessageA(&msg, NULL, 0, 0)) {
         if ((g_app.registerWindow && IsWindowVisible(g_app.registerWindow) && IsDialogMessageA(g_app.registerWindow, &msg))
             || (g_app.statsWindow && IsWindowVisible(g_app.statsWindow) && IsDialogMessageA(g_app.statsWindow, &msg))) {

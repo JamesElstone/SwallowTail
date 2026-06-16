@@ -38,6 +38,30 @@ CIDRs support IPv4 and IPv6, for example:
 2001:db8::/32
 ```
 
+## Ping
+
+Checks that the API is reachable and that the bearer upload token is still
+valid for the caller's network.
+
+Endpoint:
+
+```http
+GET /api/ping.php
+Authorization: Bearer <upload-token>
+```
+
+Successful response:
+
+```json
+{
+  "success": true,
+  "pong": true
+}
+```
+
+Invalid, expired, disabled, or out-of-CIDR tokens return `success: false` with
+an `errors` array.
+
 ## Preflight Quick Checksum
 
 Checks whether SwallowTail already knows about a likely matching CR2 before the
@@ -392,6 +416,7 @@ Successful response:
   "token": "stup_example",
   "token_id": 123,
   "api_url": "https://swallowtail.example.test/api",
+  "ping_url": "https://swallowtail.example.test/api/ping.php",
   "raw_upload_url": "https://swallowtail.example.test/api/raw-upload.php",
   "quick_checksum_url": "https://swallowtail.example.test/api/quick-checksum.php",
   "quick_checksum_algorithm": "fnv1a64",
