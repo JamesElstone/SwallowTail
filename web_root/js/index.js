@@ -1970,6 +1970,413 @@
         });
     }
 
+    function initialisePictureEditors(root = document) {
+        const editors = root.querySelectorAll ? root.querySelectorAll('[data-picture-editor="true"]') : [];
+
+        editors.forEach((editor) => {
+            if (!(editor instanceof HTMLElement) || editor.dataset.pictureEditorBound === '1') {
+                return;
+            }
+
+            editor.dataset.pictureEditorBound = '1';
+            const stage = editor.querySelector('[data-picture-editor-stage]');
+            const cropNode = editor.querySelector('[data-picture-editor-crop]');
+            const statusNode = editor.querySelector('[data-picture-editor-status]');
+            const cropReadout = editor.querySelector('[data-picture-editor-crop-readout]');
+            const profileUrl = String(editor.dataset.profileUrl || '').trim();
+            const sourceWidth = Math.max(1, Number.parseInt(String(editor.dataset.sourceWidth || '1'), 10));
+            const sourceHeight = Math.max(1, Number.parseInt(String(editor.dataset.sourceHeight || '1'), 10));
+            let imageNode = editor.querySelector('[data-picture-editor-image]');
+            let requestSequence = 0;
+            let submitTimer = null;
+            let pollTimer = null;
+            let dragState = null;
+
+            if (!(stage instanceof HTMLElement) || !(cropNode instanceof HTMLElement) || profileUrl === '') {
+                return;
+            }
+
+            let settings = {
+                crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight },
+                exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 },
+            };
+
+            try {
+                const parsed = JSON.parse(String(editor.dataset.settings || '{}'));
+                settings = {
+                    crop: {
+                        x: clampNumber(parsed?.crop?.x, 0, sourceWidth - 1),
+                        y: clampNumber(parsed?.crop?.y, 0, sourceHeight - 1),
+                        width: clampNumber(parsed?.crop?.width, 1, sourceWidth),
+                        height: clampNumber(parsed?.crop?.height, 1, sourceHeight),
+                    },
+                    exposure: {
+                        black: clampNumber(parsed?.exposure?.black, -100, 100),
+                        lightness: clampNumber(parsed?.exposure?.lightness, -100, 100),
+                        contrast: clampNumber(parsed?.exposure?.contrast, -100, 100),
+                        saturation: clampNumber(parsed?.exposure?.saturation, -100, 100),
+                    },
+                };
+            } catch (error) {
+                // Use neutral defaults if the embedded state is malformed.
+            }
+
+            settings.crop = normaliseCrop(settings.crop);
+
+            function clampNumber(value, min, max) {
+                const number = Number(value);
+
+                if (!Number.isFinite(number)) {
+                    return min;
+                }
+
+                return Math.max(min, Math.min(max, number));
+            }
+
+            function normaliseCrop(crop) {
+                const x = Math.round(clampNumber(crop.x, 0, sourceWidth - 1));
+                const y = Math.round(clampNumber(crop.y, 0, sourceHeight - 1));
+                const width = Math.round(clampNumber(crop.width, 1, sourceWidth - x));
+                const height = Math.round(clampNumber(crop.height, 1, sourceHeight - y));
+
+                return { x, y, width, height };
+            }
+
+            function setStatus(message, state = '') {
+                if (!(statusNode instanceof HTMLElement)) {
+                    return;
+                }
+
+                statusNode.textContent = message;
+                statusNode.dataset.pictureEditorState = state;
+            }
+
+            function displayBox() {
+                const stageRect = stage.getBoundingClientRect();
+
+                if (imageNode instanceof HTMLImageElement && imageNode.isConnected && imageNode.naturalWidth > 0) {
+                    const imageRect = imageNode.getBoundingClientRect();
+                    if (imageRect.width > 0 && imageRect.height > 0) {
+                        return {
+                            left: imageRect.left,
+                            top: imageRect.top,
+                            width: imageRect.width,
+                            height: imageRect.height,
+                            stageLeft: stageRect.left,
+                            stageTop: stageRect.top,
+                        };
+                    }
+                }
+
+                return {
+                    left: stageRect.left,
+                    top: stageRect.top,
+                    width: Math.max(1, stageRect.width),
+                    height: Math.max(1, stageRect.height),
+                    stageLeft: stageRect.left,
+                    stageTop: stageRect.top,
+                };
+            }
+
+            function renderCrop() {
+                settings.crop = normaliseCrop(settings.crop);
+                const box = displayBox();
+                const left = (settings.crop.x / sourceWidth) * box.width;
+                const top = (settings.crop.y / sourceHeight) * box.height;
+                const width = (settings.crop.width / sourceWidth) * box.width;
+                const height = (settings.crop.height / sourceHeight) * box.height;
+
+                cropNode.style.left = `${String(Math.round((box.left - box.stageLeft) + left))}px`;
+                cropNode.style.top = `${String(Math.round((box.top - box.stageTop) + top))}px`;
+                cropNode.style.width = `${String(Math.max(12, Math.round(width)))}px`;
+                cropNode.style.height = `${String(Math.max(12, Math.round(height)))}px`;
+
+                if (cropReadout instanceof HTMLElement) {
+                    cropReadout.textContent = `${String(settings.crop.x)}, ${String(settings.crop.y)} ${String(settings.crop.width)} x ${String(settings.crop.height)}`;
+                }
+            }
+
+            function pointInSource(event) {
+                const box = displayBox();
+                const x = ((event.clientX - box.left) / box.width) * sourceWidth;
+                const y = ((event.clientY - box.top) / box.height) * sourceHeight;
+
+                return {
+                    x: clampNumber(x, 0, sourceWidth),
+                    y: clampNumber(y, 0, sourceHeight),
+                };
+            }
+
+            function payload() {
+                return {
+                    photo_id: Number.parseInt(String(editor.dataset.photoId || '0'), 10),
+                    csrf_token: String(editor.dataset.csrfToken || ''),
+                    crop: {
+                        x: settings.crop.x,
+                        y: settings.crop.y,
+                        width: settings.crop.width,
+                        height: settings.crop.height,
+                    },
+                    exposure: {
+                        black: settings.exposure.black,
+                        lightness: settings.exposure.lightness,
+                        contrast: settings.exposure.contrast,
+                        saturation: settings.exposure.saturation,
+                    },
+                };
+            }
+
+            function clearPoll() {
+                if (pollTimer !== null) {
+                    window.clearTimeout(pollTimer);
+                    pollTimer = null;
+                }
+            }
+
+            function scheduleSubmit() {
+                if (submitTimer !== null) {
+                    window.clearTimeout(submitTimer);
+                }
+
+                setStatus('Queued', 'queued');
+                submitTimer = window.setTimeout(() => {
+                    submitTimer = null;
+                    submitPreview();
+                }, 500);
+            }
+
+            async function submitPreview() {
+                const sequence = ++requestSequence;
+                clearPoll();
+                setStatus('Rendering', 'processing');
+
+                try {
+                    const response = await sendAjax(profileUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload()),
+                    });
+
+                    if (sequence !== requestSequence) {
+                        return;
+                    }
+
+                    if (!response || response.success === false || !response.status_url) {
+                        setStatus('Failed', 'failed');
+                        return;
+                    }
+
+                    pollPreviewStatus(String(response.status_url), sequence, 0, Date.now());
+                } catch (error) {
+                    if (sequence === requestSequence) {
+                        setStatus('Failed', 'failed');
+                    }
+                    console.error(error);
+                }
+            }
+
+            async function pollPreviewStatus(statusUrl, sequence, attempt, startedAt) {
+                if (sequence !== requestSequence || !editor.isConnected) {
+                    return;
+                }
+
+                if ((Date.now() - startedAt) > 60000) {
+                    setStatus('Timed out', 'failed');
+                    return;
+                }
+
+                try {
+                    const response = await sendAjax(statusUrl);
+
+                    if (sequence !== requestSequence) {
+                        return;
+                    }
+
+                    const state = String(response?.status || 'queued');
+                    if (state === 'succeeded' && response?.preview_url) {
+                        swapPreviewImage(String(response.preview_url));
+                        setStatus('Ready', 'ready');
+                        return;
+                    }
+
+                    if (state === 'failed' || state === 'cancelled') {
+                        setStatus(state === 'cancelled' ? 'Cancelled' : 'Failed', 'failed');
+                        return;
+                    }
+
+                    setStatus(state === 'processing' ? 'Rendering' : 'Queued', state);
+                    const delay = attempt < 5 ? 750 : 1500;
+                    pollTimer = window.setTimeout(() => {
+                        pollPreviewStatus(statusUrl, sequence, attempt + 1, startedAt);
+                    }, delay);
+                } catch (error) {
+                    if (sequence === requestSequence) {
+                        setStatus('Failed', 'failed');
+                    }
+                    console.error(error);
+                }
+            }
+
+            function swapPreviewImage(url) {
+                const emptyNode = editor.querySelector('[data-picture-editor-empty]');
+                if (!(imageNode instanceof HTMLImageElement)) {
+                    imageNode = document.createElement('img');
+                    imageNode.setAttribute('alt', 'Photo preview');
+                    imageNode.dataset.pictureEditorImage = 'true';
+                    imageNode.addEventListener('load', renderCrop);
+                    stage.insertBefore(imageNode, cropNode);
+                }
+
+                if (emptyNode instanceof HTMLElement) {
+                    emptyNode.remove();
+                }
+
+                imageNode.src = url;
+            }
+
+            editor.querySelectorAll('[data-picture-editor-field]').forEach((field) => {
+                if (!(field instanceof HTMLInputElement)) {
+                    return;
+                }
+
+                const key = String(field.dataset.pictureEditorField || '');
+                const number = editor.querySelector(`[data-picture-editor-number="${escapeCssIdentifier(key)}"]`);
+                const sync = (value) => {
+                    const next = clampNumber(value, -100, 100);
+                    settings.exposure[key] = next;
+                    field.value = String(next);
+                    if (number instanceof HTMLInputElement) {
+                        number.value = String(next);
+                    }
+                    scheduleSubmit();
+                };
+
+                field.addEventListener('input', () => sync(field.value));
+                if (number instanceof HTMLInputElement) {
+                    number.addEventListener('input', () => sync(number.value));
+                }
+            });
+
+            cropNode.addEventListener('pointerdown', (event) => {
+                if (!(event.target instanceof HTMLElement)) {
+                    return;
+                }
+
+                event.preventDefault();
+                const point = pointInSource(event);
+                const handle = String(event.target.dataset.pictureEditorHandle || '');
+                dragState = {
+                    mode: handle !== '' ? handle : 'move',
+                    pointerId: event.pointerId,
+                    startPoint: point,
+                    startCrop: { ...settings.crop },
+                };
+                cropNode.setPointerCapture(event.pointerId);
+            });
+
+            stage.addEventListener('pointerdown', (event) => {
+                if (event.target === cropNode || (event.target instanceof HTMLElement && event.target.closest('[data-picture-editor-crop]'))) {
+                    return;
+                }
+
+                event.preventDefault();
+                const point = pointInSource(event);
+                settings.crop = normaliseCrop({
+                    x: point.x,
+                    y: point.y,
+                    width: Math.max(1, sourceWidth * 0.05),
+                    height: Math.max(1, sourceHeight * 0.05),
+                });
+                dragState = {
+                    mode: 'draw',
+                    pointerId: event.pointerId,
+                    startPoint: point,
+                    startCrop: { ...settings.crop },
+                };
+                stage.setPointerCapture(event.pointerId);
+                renderCrop();
+            });
+
+            const updateDrag = (event) => {
+                if (!dragState || dragState.pointerId !== event.pointerId) {
+                    return;
+                }
+
+                const point = pointInSource(event);
+                const start = dragState.startCrop;
+                const minSize = Math.max(16, Math.round(Math.min(sourceWidth, sourceHeight) * 0.01));
+
+                if (dragState.mode === 'move') {
+                    const deltaX = Math.round(point.x - dragState.startPoint.x);
+                    const deltaY = Math.round(point.y - dragState.startPoint.y);
+                    settings.crop = normaliseCrop({
+                        ...start,
+                        x: clampNumber(start.x + deltaX, 0, sourceWidth - start.width),
+                        y: clampNumber(start.y + deltaY, 0, sourceHeight - start.height),
+                    });
+                } else if (dragState.mode === 'draw') {
+                    const left = Math.min(dragState.startPoint.x, point.x);
+                    const top = Math.min(dragState.startPoint.y, point.y);
+                    settings.crop = normaliseCrop({
+                        x: left,
+                        y: top,
+                        width: Math.max(minSize, Math.abs(point.x - dragState.startPoint.x)),
+                        height: Math.max(minSize, Math.abs(point.y - dragState.startPoint.y)),
+                    });
+                } else {
+                    let left = start.x;
+                    let top = start.y;
+                    let right = start.x + start.width;
+                    let bottom = start.y + start.height;
+
+                    if (dragState.mode.includes('n')) {
+                        top = clampNumber(point.y, 0, bottom - minSize);
+                    }
+                    if (dragState.mode.includes('s')) {
+                        bottom = clampNumber(point.y, top + minSize, sourceHeight);
+                    }
+                    if (dragState.mode.includes('w')) {
+                        left = clampNumber(point.x, 0, right - minSize);
+                    }
+                    if (dragState.mode.includes('e')) {
+                        right = clampNumber(point.x, left + minSize, sourceWidth);
+                    }
+
+                    settings.crop = normaliseCrop({
+                        x: left,
+                        y: top,
+                        width: right - left,
+                        height: bottom - top,
+                    });
+                }
+
+                renderCrop();
+            };
+
+            const finishDrag = (event) => {
+                if (!dragState || dragState.pointerId !== event.pointerId) {
+                    return;
+                }
+
+                dragState = null;
+                scheduleSubmit();
+            };
+
+            stage.addEventListener('pointermove', updateDrag);
+            cropNode.addEventListener('pointermove', updateDrag);
+            stage.addEventListener('pointerup', finishDrag);
+            cropNode.addEventListener('pointerup', finishDrag);
+            stage.addEventListener('pointercancel', finishDrag);
+            cropNode.addEventListener('pointercancel', finishDrag);
+
+            if (imageNode instanceof HTMLImageElement) {
+                imageNode.addEventListener('load', renderCrop);
+            }
+            window.addEventListener('resize', renderCrop);
+            renderCrop();
+        });
+    }
+
     function initialiseButtonTitleVisibility() {
         let syncingButtonTitles = false;
         const syncSafely = (root = document) => {
@@ -2047,6 +2454,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    initialisePictureEditors(replacement);
                     initialiseCardAutoRefresh(replacement);
                     return;
                 }
@@ -2068,6 +2476,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    initialisePictureEditors(replacement);
                     initialiseCardAutoRefresh(replacement);
                 }
             } catch (error) {
@@ -2810,6 +3219,7 @@
     initialiseRawUploadForms(document);
     initialisePasswordRequirementPanels(document);
     initialiseTableCondensedControls(document);
+    initialisePictureEditors(document);
     initialiseCardAutoRefresh(document);
     initialiseButtonTitleVisibility();
     logFlashMessages(document.getElementById('flash-messages'));

@@ -27,7 +27,7 @@ final class _picture_viewer extends PageContextFramework
     public function cards(): array
     {
         return [
-            'picture_viewer',
+            'picture_editor',
         ];
     }
 
@@ -41,6 +41,7 @@ final class _picture_viewer extends PageContextFramework
                 'page_id' => 'picture_viewer',
                 'page_cards' => $this->cards(),
                 'photo_id' => max(0, (int)$request->query('photo_id', 0)),
+                'csrf_token' => (new SessionAuthenticationService())->csrfToken(),
             ],
         ];
     }

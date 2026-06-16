@@ -180,7 +180,9 @@ final class SwallowtailConversionQueueService
         int $photoId,
         string $profilePath,
         int $profileVersion,
-        ?int $requestedByUserId = null
+        ?int $requestedByUserId = null,
+        ?int $outputWidth = null,
+        ?int $outputHeight = null
     ): ?int {
         $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
         if ($photo === null) {
@@ -203,8 +205,8 @@ final class SwallowtailConversionQueueService
             $profileVersion,
             'high',
             $requestedByUserId,
-            null,
-            null
+            $outputWidth,
+            $outputHeight
         );
     }
 

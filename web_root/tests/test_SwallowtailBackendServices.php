@@ -21,6 +21,7 @@ $harness->run(SwallowtailEventAccessService::class);
 $harness->run(SwallowtailConversionQueueService::class);
 $harness->run(SwallowtailStorageLocationService::class);
 $harness->run(SwallowtailImageServeService::class);
+$harness->run(SwallowtailPreviewProfileService::class);
 
 $swallowtailCreateSqliteSchema = static function (): void {
     InterfaceDB::execute('PRAGMA foreign_keys = OFF');
@@ -819,6 +820,107 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
     $harness->assertSame($previewPath, (string)$image['absolute_path']);
     $harness->assertSame('image/jpeg', (string)$image['content_type']);
     $harness->assertTrue(str_contains((string)$image['etag'], '"'));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edit settings and writes expected PP3', function () use ($harness): void {
+    $service = new SwallowtailPreviewProfileService();
+    $settings = $service->normaliseSettings([
+        'crop' => [
+            'x' => -20,
+            'y' => 490,
+            'width' => 700,
+            'height' => 100,
+        ],
+        'exposure' => [
+            'black' => -120,
+            'lightness' => 25.5,
+            'contrast' => 135,
+            'saturation' => -12.25,
+        ],
+    ], 600, 500);
+    $content = $service->pp3Content($settings, 1600);
+
+    $harness->assertSame(0, (int)$settings['crop']['x']);
+    $harness->assertSame(490, (int)$settings['crop']['y']);
+    $harness->assertSame(600, (int)$settings['crop']['width']);
+    $harness->assertSame(10, (int)$settings['crop']['height']);
+    $harness->assertSame(-100.0, (float)$settings['exposure']['black']);
+    $harness->assertSame(100.0, (float)$settings['exposure']['contrast']);
+    $harness->assertTrue(str_contains($content, "[Exposure]\nAuto=false\nBlack=-100\nBrightness=25.5\nContrast=100\nSaturation=-12.25"));
+    $harness->assertTrue(str_contains($content, "[Crop]\nEnabled=true\nX=0\nY=490\nW=600\nH=10"));
+    $harness->assertTrue(str_contains($content, "[Resize]\nEnabled=true"));
+    $harness->assertTrue(str_contains($content, "AppliesTo=Cropped area\nMethod=Lanczos"));
+    $harness->assertTrue(str_contains($content, "Width=1600\nHeight=1600"));
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-preview-profile';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary preview profile storage', $root);
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0009.CR2');
+    $photoId = (int)$result['photo_id'];
+    $event = $library->createEvent('Preview Edit Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+
+    $service = new SwallowtailPreviewProfileService();
+    $denied = $service->enqueuePreview($photoId, 404, [
+        'crop' => ['x' => 10, 'y' => 20, 'width' => 100, 'height' => 120],
+        'exposure' => ['black' => 1, 'lightness' => 2, 'contrast' => 3, 'saturation' => 4],
+    ]);
+    $queued = $service->enqueuePreview($photoId, 303, [
+        'crop' => ['x' => 10, 'y' => 20, 'width' => 100, 'height' => 120],
+        'exposure' => ['black' => 1, 'lightness' => 2, 'contrast' => 3, 'saturation' => 4],
+    ]);
+
+    $harness->assertTrue(empty($denied['success']));
+    $harness->assertTrue(!empty($queued['success']));
+    $harness->assertSame(2, (int)($queued['profile_version'] ?? 0));
+    $harness->assertTrue((int)($queued['job_id'] ?? 0) > 0);
+    $harness->assertTrue(str_contains((string)($queued['preview_url'] ?? ''), 'v=2'));
+    $harness->assertTrue(str_contains((string)($queued['status_url'] ?? ''), 'profile_version=2'));
+
+    $job = InterfaceDB::fetchOne(
+        "SELECT pp3_path, profile_version, requested_by_user_id, priority, output_width, output_height
+         FROM swallowtail_photo_conversion_jobs
+         WHERE id = :id",
+        ['id' => (int)$queued['job_id']]
+    );
+
+    $harness->assertTrue(is_array($job));
+    $profilePath = (string)($job['pp3_path'] ?? '');
+    $harness->assertSame(2, (int)($job['profile_version'] ?? 0));
+    $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
+    $harness->assertSame('high', (string)($job['priority'] ?? ''));
+    $harness->assertSame(1600, (int)($job['output_width'] ?? 0));
+    $harness->assertSame(1600, (int)($job['output_height'] ?? 0));
+    $harness->assertTrue($profilePath !== '');
+    $harness->assertTrue(is_file($profilePath));
+    $harness->assertTrue(!str_starts_with($profilePath, APP_ROOT));
+    $harness->assertTrue(str_contains($profilePath, DIRECTORY_SEPARATOR . 'profiles' . DIRECTORY_SEPARATOR));
+    $harness->assertTrue(str_contains((string)file_get_contents($profilePath), "[Crop]\nEnabled=true\nX=10\nY=20\nW=100\nH=120"));
+
+    InterfaceDB::prepareExecute(
+        "UPDATE swallowtail_photo_conversion_jobs
+         SET status = 'succeeded'
+         WHERE id = :id",
+        ['id' => (int)$queued['job_id']]
+    );
+    $status = $service->previewStatus($photoId, (int)$queued['job_id'], 2, 303);
+    $harness->assertTrue(!empty($status['success']));
+    $harness->assertSame('succeeded', (string)($status['status'] ?? ''));
+    $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$queued['job_id']));
 
     @unlink($source);
 });

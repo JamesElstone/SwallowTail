@@ -147,6 +147,24 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIn("Width=512", Path(profile_args[1]).read_text(encoding="utf-8"))
         self.assertIn("Height=512", Path(profile_args[1]).read_text(encoding="utf-8"))
 
+    def test_preview_dimensions_add_resize_profile_after_user_profile(self) -> None:
+        pp3 = self.root / "preview-v2.pp3"
+        pp3.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
+        result = RawTherapeeRunner(
+            RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
+        ).render(
+            job(self.root, pp3_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
+            str(self.root / "work"),
+        )
+
+        profile_args = [result.command[index + 1] for index, value in enumerate(result.command) if value == "-p"]
+        self.assertEqual(str(pp3), profile_args[0])
+        self.assertTrue(profile_args[1].endswith("-resize.pp3"))
+        resize_profile = Path(profile_args[1]).read_text(encoding="utf-8")
+        self.assertIn("AppliesTo=Cropped area", resize_profile)
+        self.assertIn("Width=1600", resize_profile)
+        self.assertIn("Height=1600", resize_profile)
+
     def test_rawtherapee_nonzero_exit_is_reported(self) -> None:
         failing = Path(__file__).parent / "fixtures" / "fake_rawtherapee_fail.py"
         result = RawTherapeeRunner(
