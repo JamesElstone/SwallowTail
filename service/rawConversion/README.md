@@ -48,7 +48,7 @@ python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.
 For host smoke testing:
 
 ```sh
-sh tools/bin/rawConversionSmokeTest.sh --input=/home/james.elstone/TEST.CR2
+sudo sh tools/bin/rawConversionSmokeTest.sh --input=/home/james.elstone/TEST.CR2
 ```
 
 The smoke test uses `/storage/1/swallowtail-raw-smoke` by default, waits for all
