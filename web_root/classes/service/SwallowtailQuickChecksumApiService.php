@@ -31,7 +31,7 @@ final class SwallowtailQuickChecksumApiService
         }
 
         $uploadToken = $this->photoLibraryService->authenticateUploadToken(
-            $this->tokenFromRequest($request),
+            $this->photoLibraryService->uploadTokenFromRequest($request),
             $request->remoteAddress()
         );
 
@@ -72,16 +72,6 @@ final class SwallowtailQuickChecksumApiService
             'matched_on' => $sizeBytes === null ? 'hash' : 'hash_size',
             'photo_id' => is_array($photo) ? (int)($photo['id'] ?? 0) : null,
         ]);
-    }
-
-    private function tokenFromRequest(RequestFramework $request): string
-    {
-        $authorization = trim((string)$request->header('Authorization', ''));
-        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match) === 1) {
-            return trim($match[1]);
-        }
-
-        return '';
     }
 
     private function sizeBytesFromRequest(RequestFramework $request): ?int

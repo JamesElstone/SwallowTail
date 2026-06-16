@@ -70,6 +70,7 @@ typedef struct AppState {
     char iniPath[MAX_PATH];
     char queuePath[MAX_PATH];
     char uploadedPath[MAX_PATH];
+    char logPath[MAX_PATH];
     char siteUrl[MAX_TEXT];
     char apiUrl[MAX_TEXT];
     char uploadToken[MAX_TEXT];
@@ -86,6 +87,7 @@ static DWORD WINAPI ProcessorThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
 static DWORD WINAPI PingThread(LPVOID param);
+static void LogMessage(const char *format, ...);
 
 static HICON AppIcon(void)
 {
@@ -175,6 +177,7 @@ static void EnsureAppStorage(void)
     PathJoin(g_app.iniPath, sizeof(g_app.iniPath), g_app.appDir, "spicebush.ini");
     PathJoin(g_app.queuePath, sizeof(g_app.queuePath), g_app.appDir, "queue.tsv");
     PathJoin(g_app.uploadedPath, sizeof(g_app.uploadedPath), g_app.appDir, "uploaded.tsv");
+    PathJoin(g_app.logPath, sizeof(g_app.logPath), g_app.appDir, "spicebush.log");
 
     computer[0] = '\0';
     GetComputerNameA(computer, &computerLen);
@@ -196,6 +199,12 @@ static void LoadConfig(void)
     GetPrivateProfileStringA("spicebush", "api_url", "", g_app.apiUrl, sizeof(g_app.apiUrl), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "upload_token", "", g_app.uploadToken, sizeof(g_app.uploadToken), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.deviceId, sizeof(g_app.deviceId), g_app.iniPath);
+    LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s",
+        g_app.siteUrl,
+        g_app.apiUrl,
+        g_app.uploadToken[0] != '\0' ? "yes" : "no",
+        (unsigned)lstrlenA(g_app.uploadToken),
+        g_app.deviceId);
 }
 
 static void SaveConfig(void)
@@ -204,6 +213,12 @@ static void SaveConfig(void)
     WritePrivateProfileStringA("spicebush", "api_url", g_app.apiUrl, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "upload_token", g_app.uploadToken, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
+    LogMessage("Saved config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s",
+        g_app.siteUrl,
+        g_app.apiUrl,
+        g_app.uploadToken[0] != '\0' ? "yes" : "no",
+        (unsigned)lstrlenA(g_app.uploadToken),
+        g_app.deviceId);
 }
 
 static void AppendLine(const char *path, const char *line)
@@ -213,6 +228,40 @@ static void AppendLine(const char *path, const char *line)
     if (file == INVALID_HANDLE_VALUE) return;
     WriteFile(file, line, lstrlenA(line), &written, NULL);
     CloseHandle(file);
+}
+
+static void LogMessage(const char *format, ...)
+{
+    char text[1400], line[1700], stamp[64];
+    SYSTEMTIME now;
+    va_list args;
+
+    if (g_app.logPath[0] == '\0') return;
+
+    va_start(args, format);
+#if defined(_MSC_VER) && _MSC_VER >= 1400
+    _vsnprintf_s(text, sizeof(text), _TRUNCATE, format, args);
+#elif defined(_MSC_VER)
+    _vsnprintf(text, sizeof(text) - 1, format, args);
+    text[sizeof(text) - 1] = '\0';
+#else
+    vsnprintf(text, sizeof(text), format, args);
+    text[sizeof(text) - 1] = '\0';
+#endif
+    va_end(args);
+
+    GetLocalTime(&now);
+    SbSnprintf(stamp, sizeof(stamp) - 1, "%04u-%02u-%02u %02u:%02u:%02u",
+        (unsigned)now.wYear,
+        (unsigned)now.wMonth,
+        (unsigned)now.wDay,
+        (unsigned)now.wHour,
+        (unsigned)now.wMinute,
+        (unsigned)now.wSecond);
+    stamp[sizeof(stamp) - 1] = '\0';
+    SbSnprintf(line, sizeof(line) - 1, "%s %s\r\n", stamp, text);
+    line[sizeof(line) - 1] = '\0';
+    AppendLine(g_app.logPath, line);
 }
 
 static int QueueContainsLocked(const char *path)
@@ -428,15 +477,30 @@ static int HttpSimpleRequest(const char *method, const char *url, const char *he
     DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
     DWORD got, used = 0, statusSize = sizeof(DWORD);
     int ok = 0;
-    if (!ParseUrl(url, &parsed)) return 0;
+    if (!ParseUrl(url, &parsed)) {
+        LogMessage("HTTP %s failed before send: could not parse URL %s", method, url);
+        return 0;
+    }
     if (parsed.secure) flags |= INTERNET_FLAG_SECURE;
     internet = InternetOpenA("SpiceBush/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!internet) goto done;
+    if (!internet) {
+        LogMessage("HTTP %s %s failed: InternetOpen error=%lu", method, url, GetLastError());
+        goto done;
+    }
     connect = InternetConnectA(internet, parsed.host, parsed.port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    if (!connect) goto done;
+    if (!connect) {
+        LogMessage("HTTP %s %s failed: InternetConnect host=%s port=%u error=%lu", method, url, parsed.host, (unsigned)parsed.port, GetLastError());
+        goto done;
+    }
     request = HttpOpenRequestA(connect, method, parsed.path, "HTTP/1.1", NULL, NULL, flags, 0);
-    if (!request) goto done;
-    if (!HttpSendRequestA(request, headers, headers ? lstrlenA(headers) : 0, (LPVOID)body, bodyLen)) goto done;
+    if (!request) {
+        LogMessage("HTTP %s %s failed: HttpOpenRequest path=%s error=%lu", method, url, parsed.path, GetLastError());
+        goto done;
+    }
+    if (!HttpSendRequestA(request, headers, headers ? lstrlenA(headers) : 0, (LPVOID)body, bodyLen)) {
+        LogMessage("HTTP %s %s failed: HttpSendRequest error=%lu header_length=%u body_length=%lu", method, url, GetLastError(), (unsigned)(headers ? lstrlenA(headers) : 0), bodyLen);
+        goto done;
+    }
     *status = 0;
     HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, status, &statusSize, NULL);
     if (response && responseSize > 0) response[0] = '\0';
@@ -444,6 +508,7 @@ static int HttpSimpleRequest(const char *method, const char *url, const char *he
         used += got;
         response[used] = '\0';
     }
+    LogMessage("HTTP %s %s completed: status=%lu response_bytes=%lu", method, url, *status, used);
     ok = 1;
 done:
     if (request) InternetCloseHandle(request);
@@ -568,15 +633,23 @@ static void BuildRegisterEndpoint(const char *siteUrl, char *endpoint, DWORD end
 
 static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
 {
-    char url[2048], encodedHash[128], headers[1400], response[4096];
+    char url[2048], encodedHash[128], headers[1800], response[4096];
     DWORD status = 0;
     int exists = 0;
     if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') return 0;
     UrlEncode(hash, encodedHash, sizeof(encodedHash));
     SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
     url[sizeof(url) - 1] = '\0';
-    SbSnprintf(headers, sizeof(headers) - 1, "Authorization: Bearer %s\r\n", g_app.uploadToken);
+    SbSnprintf(headers, sizeof(headers) - 1,
+        "Authorization: Bearer %s\r\n"
+        "X-SwallowTail-Upload-Token: %s\r\n",
+        g_app.uploadToken,
+        g_app.uploadToken);
     headers[sizeof(headers) - 1] = '\0';
+    LogMessage("Quick checksum request prepared: url=%s token_present=%s token_length=%u auth_header=yes fallback_header=yes",
+        url,
+        g_app.uploadToken[0] != '\0' ? "yes" : "no",
+        (unsigned)lstrlenA(g_app.uploadToken));
     if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) return 0;
     if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) return 1;
     return 0;
@@ -584,7 +657,7 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
 
 static DWORD WINAPI PingThread(LPVOID param)
 {
-    char url[MAX_TEXT * 2], headers[MAX_TEXT + 128], response[4096], errorText[512];
+    char url[MAX_TEXT * 2], headers[(MAX_TEXT * 2) + 160], response[4096], errorText[512];
     char *postedError = NULL;
     DWORD status = 0;
     int requestOk;
@@ -592,21 +665,32 @@ static DWORD WINAPI PingThread(LPVOID param)
 
     SbSnprintf(url, sizeof(url) - 1, "%s/ping.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
-    SbSnprintf(headers, sizeof(headers) - 1, "Authorization: Bearer %s\r\n", g_app.uploadToken);
+    SbSnprintf(headers, sizeof(headers) - 1,
+        "Authorization: Bearer %s\r\n"
+        "X-SwallowTail-Upload-Token: %s\r\n",
+        g_app.uploadToken,
+        g_app.uploadToken);
     headers[sizeof(headers) - 1] = '\0';
+    LogMessage("Ping request prepared: url=%s token_present=%s token_length=%u auth_header=yes fallback_header=yes",
+        url,
+        g_app.uploadToken[0] != '\0' ? "yes" : "no",
+        (unsigned)lstrlenA(g_app.uploadToken));
 
     requestOk = HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response));
     if (requestOk && status == 200 && JsonBoolValue(response, "pong", &requestOk) && requestOk) {
+        LogMessage("Ping succeeded: status=%lu", status);
         PostMessageA(g_app.mainWindow, WM_PING_DONE, 1, 0);
         return 0;
     }
 
     if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+        LogMessage("Ping failed with server error: status=%lu error=%s", status, errorText);
         postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 48);
         if (postedError) {
             SbSnprintf(postedError, lstrlenA(errorText) + 48, "Connection check failed: %s", errorText);
         }
     } else {
+        LogMessage("Ping failed without JSON error: request_ok=%s status=%lu", requestOk ? "yes" : "no", status);
         postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 180);
         if (postedError) {
             if (requestOk && status > 0) {
@@ -648,11 +732,17 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     if (parsed.secure) flags |= INTERNET_FLAG_SECURE;
     SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
+        "X-SwallowTail-Upload-Token: %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
         "X-Swallowtail-Device-ID: %s\r\n",
-        g_app.uploadToken, filename, g_app.deviceId);
+        g_app.uploadToken, g_app.uploadToken, filename, g_app.deviceId);
     headers[sizeof(headers) - 1] = '\0';
+    LogMessage("Raw upload request prepared: url=%s filename=%s token_present=%s token_length=%u auth_header=yes fallback_header=yes",
+        url,
+        filename,
+        g_app.uploadToken[0] != '\0' ? "yes" : "no",
+        (unsigned)lstrlenA(g_app.uploadToken));
 
     file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (file == INVALID_HANDLE_VALUE) goto done;
@@ -1187,6 +1277,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     g_app.queueEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     g_app.stopEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
     EnsureAppStorage();
+    LogMessage("SpiceBush starting: app_dir=%s ini_path=%s log_path=%s", g_app.appDir, g_app.iniPath, g_app.logPath);
     LoadConfig();
     RegisterClasses();
     g_app.mainWindow = CreateWindowA("SpiceBushMain", APP_NAME, WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, instance, NULL);
@@ -1208,5 +1299,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
     if (g_app.stopEvent) CloseHandle(g_app.stopEvent);
+    LogMessage("SpiceBush exiting.");
     return 0;
 }

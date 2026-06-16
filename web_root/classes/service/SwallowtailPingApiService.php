@@ -30,7 +30,7 @@ final class SwallowtailPingApiService
             ], 503);
         }
 
-        $token = $this->tokenFromRequest($request);
+        $token = $this->photoLibraryService->uploadTokenFromRequest($request);
         $remoteAddress = $request->remoteAddress();
         $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $remoteAddress);
 
@@ -49,13 +49,4 @@ final class SwallowtailPingApiService
         ]);
     }
 
-    private function tokenFromRequest(RequestFramework $request): string
-    {
-        $authorization = trim((string)$request->header('Authorization', ''));
-        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match) === 1) {
-            return trim($match[1]);
-        }
-
-        return '';
-    }
 }

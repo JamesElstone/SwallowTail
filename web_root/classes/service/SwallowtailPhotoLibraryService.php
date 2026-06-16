@@ -397,6 +397,23 @@ final class SwallowtailPhotoLibraryService
         return $row;
     }
 
+    public function uploadTokenFromRequest(RequestFramework $request): string
+    {
+        $authorization = trim((string)$request->header('Authorization', ''));
+        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match) === 1) {
+            return trim($match[1]);
+        }
+
+        foreach (['X-SwallowTail-Upload-Token', 'X-Swallowtail-Upload-Token'] as $header) {
+            $token = trim((string)$request->header($header, ''));
+            if ($token !== '') {
+                return $token;
+            }
+        }
+
+        return '';
+    }
+
     public function explainUploadTokenAuthenticationFailure(string $token, ?string $remoteAddress = null): string
     {
         if (

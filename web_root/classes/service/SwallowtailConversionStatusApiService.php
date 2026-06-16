@@ -33,7 +33,7 @@ final class SwallowtailConversionStatusApiService
         }
 
         $uploadToken = $this->photoLibraryService->authenticateUploadToken(
-            $this->tokenFromRequest($request),
+            $this->photoLibraryService->uploadTokenFromRequest($request),
             $request->remoteAddress()
         );
 
@@ -67,16 +67,6 @@ final class SwallowtailConversionStatusApiService
             'jobs' => $this->jobsForPhoto($photoId),
             'derivatives' => $this->derivativesForPhoto($photoId),
         ]);
-    }
-
-    private function tokenFromRequest(RequestFramework $request): string
-    {
-        $authorization = trim((string)$request->header('Authorization', ''));
-        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match) === 1) {
-            return trim($match[1]);
-        }
-
-        return '';
     }
 
     private function jobsForPhoto(int $photoId): array
