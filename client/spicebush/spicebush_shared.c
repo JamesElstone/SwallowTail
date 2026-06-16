@@ -26,6 +26,28 @@ void sb_safe_copy(char *dst, size_t dst_size, const char *src)
     dst[dst_size - 1] = '\0';
 }
 
+int sb_normalise_device_id(char *device_id, size_t device_id_size)
+{
+    const char *prefix = "spicebush-";
+    size_t prefix_len = strlen(prefix);
+    char normalised[128];
+    size_t i;
+
+    if (device_id_size == 0 || strlen(device_id) <= prefix_len) {
+        return 0;
+    }
+
+    for (i = 0; i < prefix_len; i++) {
+        if (tolower((unsigned char)device_id[i]) != (unsigned char)prefix[i]) {
+            return 0;
+        }
+    }
+
+    sb_safe_copy(normalised, sizeof(normalised), device_id + prefix_len);
+    sb_safe_copy(device_id, device_id_size, normalised);
+    return 1;
+}
+
 void sb_path_join(char *dst, size_t dst_size, const char *left, const char *right, char separator)
 {
     size_t len;

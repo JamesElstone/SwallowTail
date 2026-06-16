@@ -81,6 +81,7 @@ static AppState g_app;
 
 static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static void ShowRegisterWindow(void);
 static DWORD WINAPI ProcessorThread(LPVOID param);
@@ -164,6 +165,29 @@ static void SetStatus(HWND hwnd, const char *text)
     if (status) SetWindowTextA(status, text);
 }
 
+static int NormaliseDeviceId(char *deviceId, DWORD deviceIdSize)
+{
+    const char *prefix = "spicebush-";
+    int prefixLen = lstrlenA(prefix);
+    char normalised[128];
+    int i;
+
+    if (deviceIdSize == 0 || lstrlenA(deviceId) <= prefixLen) {
+        return 0;
+    }
+
+    for (i = 0; i < prefixLen; i++) {
+        char a = deviceId[i];
+        char b = prefix[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (a != b) return 0;
+    }
+
+    SafeCopy(normalised, sizeof(normalised), deviceId + prefixLen);
+    SafeCopy(deviceId, deviceIdSize, normalised);
+    return 1;
+}
+
 static void EnsureAppStorage(void)
 {
     char appData[MAX_PATH];
@@ -182,8 +206,7 @@ static void EnsureAppStorage(void)
     computer[0] = '\0';
     GetComputerNameA(computer, &computerLen);
     if (computer[0] == '\0') SafeCopy(computer, sizeof(computer), "windows-client");
-    SbSnprintf(g_app.deviceId, sizeof(g_app.deviceId) - 1, "spicebush-%s", computer);
-    g_app.deviceId[sizeof(g_app.deviceId) - 1] = '\0';
+    SafeCopy(g_app.deviceId, sizeof(g_app.deviceId), computer);
 
     if (GetFileAttributesA(g_app.iniPath) == INVALID_FILE_ATTRIBUTES) {
         WritePrivateProfileStringA("spicebush", "site_url", "", g_app.iniPath);
@@ -199,6 +222,10 @@ static void LoadConfig(void)
     GetPrivateProfileStringA("spicebush", "api_url", "", g_app.apiUrl, sizeof(g_app.apiUrl), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "upload_token", "", g_app.uploadToken, sizeof(g_app.uploadToken), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.deviceId, sizeof(g_app.deviceId), g_app.iniPath);
+    if (NormaliseDeviceId(g_app.deviceId, sizeof(g_app.deviceId))) {
+        WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
+        LogMessage("Normalised legacy device_id prefix; device_id=%s", g_app.deviceId);
+    }
     LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s",
         g_app.siteUrl,
         g_app.apiUrl,
@@ -977,7 +1004,33 @@ static HWND StatusLabel(HWND parent, const char *text, int x, int y, int w, int 
 
 static HWND Edit(HWND parent, int id, const char *text, int x, int y, int w, int h, DWORD style)
 {
-    return CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL);
+    HWND edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL);
+    SetWindowLongPtrA(edit, GWLP_USERDATA, SetWindowLongPtrA(edit, GWLP_WNDPROC, (LONG_PTR)RegisterEditWndProc));
+    return edit;
+}
+
+static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    WNDPROC original = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+
+    if (msg == WM_GETDLGCODE) {
+        MSG *keyMsg = (MSG *)lp;
+        LRESULT code = CallWindowProcA(original, hwnd, msg, wp, lp);
+        if (keyMsg && keyMsg->message == WM_KEYDOWN && keyMsg->wParam == VK_RETURN) {
+            return code | DLGC_WANTMESSAGE;
+        }
+        return code;
+    }
+
+    if (msg == WM_KEYDOWN && wp == VK_RETURN) {
+        HWND parent = GetParent(hwnd);
+        if (parent) {
+            SendMessageA(parent, WM_COMMAND, MAKEWPARAM(ID_REGISTER_SAVE, BN_CLICKED), (LPARAM)GetDlgItem(parent, ID_REGISTER_SAVE));
+            return 0;
+        }
+    }
+
+    return CallWindowProcA(original, hwnd, msg, wp, lp);
 }
 
 static void ShowRegisterWindow(void)
@@ -1143,7 +1196,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         g_app.registerStatus = StatusLabel(hwnd, "Enter registration details, then click Register.", 18, 202, 500, 72);
         return 0;
     case WM_COMMAND:
-        if (LOWORD(wp) == ID_REGISTER_SAVE) BeginRegister(hwnd);
+        if (LOWORD(wp) == ID_REGISTER_SAVE && IsWindowEnabled(GetDlgItem(hwnd, ID_REGISTER_SAVE))) BeginRegister(hwnd);
         else if (LOWORD(wp) == ID_REGISTER_QUIT) DestroyWindow(g_app.mainWindow);
         return 0;
     case WM_REGISTER_DONE:

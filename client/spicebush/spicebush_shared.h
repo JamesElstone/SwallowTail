@@ -36,6 +36,7 @@ typedef struct SpiceBushStats {
 typedef int (*SpiceBushScanCallback)(const char *path, void *context);
 
 void sb_safe_copy(char *dst, size_t dst_size, const char *src);
+int sb_normalise_device_id(char *device_id, size_t device_id_size);
 void sb_path_join(char *dst, size_t dst_size, const char *left, const char *right, char separator);
 int sb_ends_with_nocase(const char *text, const char *suffix);
 void sb_trim_trailing_slashes(char *text);

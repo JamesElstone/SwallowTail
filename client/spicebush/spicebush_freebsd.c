@@ -105,9 +105,11 @@ static void init_config(SpiceBushConfig *config)
     if (hostname[0] == '\0') {
         sb_safe_copy(hostname, sizeof(hostname), "freebsd");
     }
-    snprintf(config->device_id, sizeof(config->device_id), "spicebush-%s", hostname);
+    sb_safe_copy(config->device_id, sizeof(config->device_id), hostname);
 
     if (!sb_load_config(config)) {
+        sb_save_config(config);
+    } else if (sb_normalise_device_id(config->device_id, sizeof(config->device_id))) {
         sb_save_config(config);
     }
 }
