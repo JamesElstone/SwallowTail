@@ -32,12 +32,12 @@ final class SwallowtailRawUploadApiService
         }
 
         $token = $this->tokenFromRequest($request);
-        $uploadToken = $this->photoLibraryService->authenticateUploadToken($token);
+        $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $request->remoteAddress());
 
         if ($uploadToken === null) {
             return ResponseFramework::json([
                 'success' => false,
-                'errors' => ['Upload token was missing, invalid, expired, or disabled.'],
+                'errors' => ['Bearer upload token was missing, invalid, expired, disabled, or not allowed from this network.'],
             ], 401);
         }
 
@@ -84,7 +84,7 @@ final class SwallowtailRawUploadApiService
 
             $this->photoLibraryService->markUploadTokenUsed((int)$uploadToken['id']);
 
-            return ResponseFramework::json($result, !empty($result['duplicate']) ? 200 : 201);
+            return ResponseFramework::json($this->publicUploadResponse($result), !empty($result['duplicate']) ? 200 : 201);
         } finally {
             if ($temporaryFile !== null && is_file($temporaryFile)) {
                 @unlink($temporaryFile);
@@ -99,7 +99,7 @@ final class SwallowtailRawUploadApiService
             return trim($match[1]);
         }
 
-        return trim((string)$request->header('X-Swallowtail-Upload-Token', (string)$request->post('upload_token', '')));
+        return '';
     }
 
     private function uploadFileFromRequest(array $files): ?array
@@ -119,11 +119,31 @@ final class SwallowtailRawUploadApiService
         return null;
     }
 
+    private function publicUploadResponse(array $result): array
+    {
+        if (!isset($result['conversion_jobs']) || !is_array($result['conversion_jobs'])) {
+            return $result;
+        }
+
+        unset($result['conversion_jobs']['embedded']);
+
+        $result['conversion_job_id'] = null;
+        foreach ($result['conversion_jobs'] as $job) {
+            $jobId = (int)($job['job_id'] ?? 0);
+            if ($jobId > 0) {
+                $result['conversion_job_id'] = $jobId;
+                break;
+            }
+        }
+
+        return $result;
+    }
+
     private function filenameFromRequest(RequestFramework $request): string
     {
-        $filename = trim((string)$request->header('X-Swallowtail-Filename', (string)$request->query('filename', 'upload.CR3')));
+        $filename = trim((string)$request->header('X-Swallowtail-Filename', (string)$request->query('filename', 'upload.CR2')));
 
-        return $filename !== '' ? $filename : 'upload.CR3';
+        return $filename !== '' ? $filename : 'upload.CR2';
     }
 
     private function copyInputStreamToTemporaryFile(string $inputStream): string

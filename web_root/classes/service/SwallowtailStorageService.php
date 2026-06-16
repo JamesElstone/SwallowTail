@@ -111,7 +111,7 @@ final class SwallowtailStorageService
             throw new InvalidArgumentException('Original checksum must be a SHA-256 hex string.');
         }
 
-        if (!in_array($extension, ['cr2', 'cr3'], true)) {
+        if ($extension !== 'cr2') {
             throw new InvalidArgumentException('Unsupported RAW extension.');
         }
 

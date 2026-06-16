@@ -35,6 +35,12 @@ final class SwallowtailPhotoIngestService
             throw new RuntimeException('Unable to checksum RAW file.');
         }
 
+        $quickHash = hash_file(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM, $sourcePath);
+        if (!is_string($quickHash) || $quickHash === '') {
+            throw new RuntimeException('Unable to quick-checksum RAW file.');
+        }
+        $quickHash = strtolower($quickHash);
+
         $expectedSha256 = strtolower(trim((string)($context['expected_sha256'] ?? '')));
         if ($expectedSha256 !== '' && !hash_equals($expectedSha256, $sha256)) {
             return [
@@ -47,6 +53,7 @@ final class SwallowtailPhotoIngestService
         if ($existing !== null) {
             $recorded = $this->photoLibraryService->recordRawUpload([
                 'sha256' => $sha256,
+                'quick_hash' => $quickHash,
                 'original_filename' => $originalFilename,
                 'uploaded_via' => (string)($context['uploaded_via'] ?? 'api'),
                 'uploaded_by_user_id' => $context['uploaded_by_user_id'] ?? null,
@@ -60,6 +67,7 @@ final class SwallowtailPhotoIngestService
                 'duplicate' => true,
                 'photo_id' => (int)($recorded['photo']['id'] ?? $existing['id'] ?? 0),
                 'sha256' => $sha256,
+                'quick_hash' => $quickHash,
                 'warnings' => $validation['warnings'],
             ];
         }
@@ -73,6 +81,7 @@ final class SwallowtailPhotoIngestService
 
         $recorded = $this->photoLibraryService->recordRawUpload([
             'sha256' => $sha256,
+            'quick_hash' => $quickHash,
             'original_filename' => $originalFilename,
             'extension' => $validation['extension'],
             'bytes' => (int)$stored['bytes'],
@@ -85,7 +94,15 @@ final class SwallowtailPhotoIngestService
         ]);
 
         $photoId = (int)($recorded['photo']['id'] ?? 0);
-        $jobId = $this->conversionQueueService->enqueueRawConversion($photoId);
+        $conversionJobs = $this->conversionQueueService->enqueueRawConversionJobs($photoId);
+        $firstJobId = null;
+        foreach ($conversionJobs as $job) {
+            $jobId = (int)($job['job_id'] ?? 0);
+            if ($jobId > 0) {
+                $firstJobId = $jobId;
+                break;
+            }
+        }
 
         return [
             'success' => true,
@@ -93,8 +110,10 @@ final class SwallowtailPhotoIngestService
             'duplicate' => false,
             'photo_id' => $photoId,
             'sha256' => $sha256,
+            'quick_hash' => $quickHash,
             'storage_path' => $relativePath,
-            'conversion_job_id' => $jobId,
+            'conversion_job_id' => $firstJobId,
+            'conversion_jobs' => $conversionJobs,
             'warnings' => $validation['warnings'],
         ];
     }
@@ -116,8 +135,8 @@ final class SwallowtailPhotoIngestService
         }
 
         $extension = strtolower(pathinfo($originalFilename, PATHINFO_EXTENSION));
-        if (!in_array($extension, ['cr2', 'cr3'], true)) {
-            $errors[] = 'Only Canon .CR2 and .CR3 RAW files are supported.';
+        if ($extension !== 'cr2') {
+            $errors[] = 'Only Canon .CR2 RAW files are supported.';
         } elseif ($bytes > 0 && !$this->hasPlausibleCanonSignature($sourcePath, $extension)) {
             $warnings[] = 'RAW file signature could not be positively identified as Canon RAW.';
         }
@@ -145,12 +164,6 @@ final class SwallowtailPhotoIngestService
             return str_starts_with($header, "II*\0")
                 || str_starts_with($header, "MM\0*")
                 || str_contains($header, "CR\2");
-        }
-
-        if ($extension === 'cr3') {
-            return str_contains($header, 'ftypcrx')
-                || str_contains($header, 'ftypheic')
-                || str_contains($header, 'ftyp');
         }
 
         return false;

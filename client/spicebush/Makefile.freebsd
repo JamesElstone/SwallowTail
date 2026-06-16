@@ -1,0 +1,14 @@
+CC ?= cc
+CFLAGS ?= -O2 -Wall -Wextra -std=c99
+LDFLAGS ?=
+LDLIBS ?= -lssl -lcrypto
+
+OBJS = spicebush_freebsd.o spicebush_shared.o spicebush_http_freebsd.o
+
+spicebush: $(OBJS)
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+
+clean:
+	rm -f $(OBJS) spicebush
+
+.PHONY: clean

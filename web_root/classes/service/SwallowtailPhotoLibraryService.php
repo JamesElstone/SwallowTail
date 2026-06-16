@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoLibraryService
 {
+    public const QUICK_HASH_ALGORITHM = 'fnv1a64';
+
     public function schemaAvailable(): bool
     {
         foreach ($this->requiredTables() as $table) {
@@ -17,7 +19,7 @@ final class SwallowtailPhotoLibraryService
             }
         }
 
-        return true;
+        return InterfaceDB::columnExists('swallowtail_photos', 'original_quick_hash');
     }
 
     public function requiredTables(): array
@@ -29,6 +31,7 @@ final class SwallowtailPhotoLibraryService
             'swallowtail_event_photos',
             'swallowtail_event_permissions',
             'swallowtail_api_upload_tokens',
+            'swallowtail_api_upload_token_cidrs',
             'swallowtail_photo_audit',
             'swallowtail_photo_derivatives',
             'swallowtail_photo_conversion_jobs',
@@ -50,6 +53,43 @@ final class SwallowtailPhotoLibraryService
         return is_array($row) ? $row : null;
     }
 
+    public function photoByQuickHash(string $quickHash, ?int $bytes = null): ?array
+    {
+        $quickHash = $this->normaliseQuickHash($quickHash);
+        if (!InterfaceDB::tableExists('swallowtail_photos') || !InterfaceDB::columnExists('swallowtail_photos', 'original_quick_hash')) {
+            return null;
+        }
+
+        $where = 'original_quick_hash = :quick_hash';
+        $params = ['quick_hash' => $quickHash];
+
+        if ($bytes !== null) {
+            if ($bytes <= 0) {
+                return null;
+            }
+
+            $where .= ' AND original_bytes = :bytes';
+            $params['bytes'] = $bytes;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            'SELECT * FROM swallowtail_photos WHERE ' . $where . ' ORDER BY id ASC LIMIT 1',
+            $params
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    public function normaliseQuickHash(string $quickHash): string
+    {
+        $quickHash = strtolower(trim($quickHash));
+        if (preg_match('/^[a-f0-9]{16}$/', $quickHash) !== 1) {
+            throw new InvalidArgumentException('Quick checksum hash must be 16 lowercase hexadecimal characters.');
+        }
+
+        return $quickHash;
+    }
+
     public function photoById(int $photoId): ?array
     {
         if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photos')) {
@@ -69,9 +109,24 @@ final class SwallowtailPhotoLibraryService
         $this->assertSchemaAvailable();
 
         $sha256 = strtolower(trim((string)($upload['sha256'] ?? '')));
+        $quickHash = $this->normaliseOptionalQuickHash($upload['quick_hash'] ?? null);
         $existing = $this->photoByChecksum($sha256);
 
         if ($existing !== null) {
+            if ($quickHash !== null && trim((string)($existing['original_quick_hash'] ?? '')) === '') {
+                InterfaceDB::prepareExecute(
+                    "UPDATE swallowtail_photos
+                     SET original_quick_hash = :quick_hash
+                     WHERE id = :id
+                       AND (original_quick_hash IS NULL OR original_quick_hash = '')",
+                    [
+                        'id' => (int)$existing['id'],
+                        'quick_hash' => $quickHash,
+                    ]
+                );
+                $existing['original_quick_hash'] = $quickHash;
+            }
+
             $this->recordPhotoAudit(
                 (int)$existing['id'],
                 null,
@@ -98,6 +153,7 @@ final class SwallowtailPhotoLibraryService
                 original_extension,
                 original_bytes,
                 original_sha256,
+                original_quick_hash,
                 original_storage_path,
                 storage_location_id,
                 upload_state,
@@ -110,6 +166,7 @@ final class SwallowtailPhotoLibraryService
                 :original_extension,
                 :original_bytes,
                 :original_sha256,
+                :original_quick_hash,
                 :original_storage_path,
                 :storage_location_id,
                 'uploaded',
@@ -123,6 +180,7 @@ final class SwallowtailPhotoLibraryService
                 'original_extension' => strtolower(trim((string)($upload['extension'] ?? ''))),
                 'original_bytes' => max(0, (int)($upload['bytes'] ?? 0)),
                 'original_sha256' => $sha256,
+                'original_quick_hash' => $quickHash,
                 'original_storage_path' => trim((string)($upload['storage_path'] ?? '')),
                 'storage_location_id' => $this->nullablePositiveInt($upload['storage_location_id'] ?? null),
                 'uploaded_by_user_id' => $this->nullablePositiveInt($upload['uploaded_by_user_id'] ?? null),
@@ -252,43 +310,60 @@ final class SwallowtailPhotoLibraryService
         );
     }
 
-    public function createUploadToken(string $label, ?int $createdByUserId = null, ?DateTimeImmutable $expiresAt = null): array
+    public function createUploadToken(
+        string $label,
+        ?int $createdByUserId = null,
+        ?DateTimeImmutable $expiresAt = null,
+        array $cidrs = []
+    ): array
     {
         $this->assertSchemaAvailable();
 
         $token = 'stup_' . rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         $tokenHash = hash('sha256', $token);
+        $normalisedCidrs = $this->normaliseCidrs($cidrs);
 
-        InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_api_upload_tokens (
-                token_hash,
-                token_label,
-                created_by_user_id,
-                expires_at
-            ) VALUES (
-                :token_hash,
-                :token_label,
-                :created_by_user_id,
-                :expires_at
-            )",
-            [
-                'token_hash' => $tokenHash,
-                'token_label' => trim($label) !== '' ? trim($label) : 'Upload token',
-                'created_by_user_id' => $this->nullablePositiveInt($createdByUserId),
-                'expires_at' => $expiresAt?->format('Y-m-d H:i:s'),
-            ]
-        );
+        $tokenId = InterfaceDB::transaction(function () use ($tokenHash, $label, $createdByUserId, $expiresAt, $normalisedCidrs): int {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO swallowtail_api_upload_tokens (
+                    token_hash,
+                    token_label,
+                    created_by_user_id,
+                    expires_at
+                ) VALUES (
+                    :token_hash,
+                    :token_label,
+                    :created_by_user_id,
+                    :expires_at
+                )",
+                [
+                    'token_hash' => $tokenHash,
+                    'token_label' => trim($label) !== '' ? trim($label) : 'Upload token',
+                    'created_by_user_id' => $this->nullablePositiveInt($createdByUserId),
+                    'expires_at' => $expiresAt?->format('Y-m-d H:i:s'),
+                ]
+            );
+
+            $tokenId = $this->lastInsertId();
+            $this->replaceUploadTokenCidrs($tokenId, $normalisedCidrs);
+
+            return $tokenId;
+        });
 
         return [
-            'id' => $this->lastInsertId(),
+            'id' => $tokenId,
             'token' => $token,
             'token_hash' => $tokenHash,
+            'cidrs' => $normalisedCidrs,
         ];
     }
 
-    public function authenticateUploadToken(string $token): ?array
+    public function authenticateUploadToken(string $token, ?string $remoteAddress = null): ?array
     {
-        if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if (
+            !InterfaceDB::tableExists('swallowtail_api_upload_tokens')
+            || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')
+        ) {
             return null;
         }
 
@@ -308,7 +383,18 @@ final class SwallowtailPhotoLibraryService
             ['token_hash' => hash('sha256', $token)]
         );
 
-        return is_array($row) ? $row : null;
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $cidrs = $this->cidrsForUploadToken((int)($row['id'] ?? 0));
+        if (!$this->ipAllowedByCidrs((string)$remoteAddress, $cidrs)) {
+            return null;
+        }
+
+        $row['cidrs'] = $cidrs;
+
+        return $row;
     }
 
     public function markUploadTokenUsed(int $tokenId): void
@@ -321,6 +407,171 @@ final class SwallowtailPhotoLibraryService
             'UPDATE swallowtail_api_upload_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = :id',
             ['id' => $tokenId]
         );
+    }
+
+    public function listUploadTokens(): array
+    {
+        if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+            return [];
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT *
+             FROM swallowtail_api_upload_tokens
+             ORDER BY is_active DESC, created_at DESC, id DESC"
+        );
+        $tokens = [];
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $tokenId = (int)($row['id'] ?? 0);
+            $row['cidrs'] = $this->cidrsForUploadToken($tokenId);
+            $row['cidr_summary'] = implode(', ', $row['cidrs']);
+            $tokens[] = $row;
+        }
+
+        return $tokens;
+    }
+
+    public function uploadTokenById(int $tokenId): ?array
+    {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+            return null;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            'SELECT * FROM swallowtail_api_upload_tokens WHERE id = :id LIMIT 1',
+            ['id' => $tokenId]
+        );
+
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $row['cidrs'] = $this->cidrsForUploadToken($tokenId);
+        $row['cidr_summary'] = implode(', ', $row['cidrs']);
+
+        return $row;
+    }
+
+    public function updateUploadToken(int $tokenId, array $changes): array
+    {
+        $this->assertSchemaAvailable();
+
+        if ($tokenId <= 0 || $this->uploadTokenById($tokenId) === null) {
+            throw new InvalidArgumentException('Upload token was not found.');
+        }
+
+        $label = trim((string)($changes['token_label'] ?? $changes['label'] ?? ''));
+        if ($label === '') {
+            throw new InvalidArgumentException('Upload token label is required.');
+        }
+
+        $cidrs = $this->normaliseCidrs((array)($changes['cidrs'] ?? []));
+        $isActive = !empty($changes['is_active']) ? 1 : 0;
+        $canUploadRaw = array_key_exists('can_upload_raw', $changes) && empty($changes['can_upload_raw']) ? 0 : 1;
+        $expiresAt = $this->normaliseExpiresAt($changes['expires_at'] ?? null);
+
+        InterfaceDB::transaction(function () use ($tokenId, $label, $isActive, $canUploadRaw, $expiresAt, $cidrs): void {
+            InterfaceDB::prepareExecute(
+                "UPDATE swallowtail_api_upload_tokens
+                 SET token_label = :token_label,
+                     can_upload_raw = :can_upload_raw,
+                     is_active = :is_active,
+                     expires_at = :expires_at
+                 WHERE id = :id",
+                [
+                    'id' => $tokenId,
+                    'token_label' => $label,
+                    'can_upload_raw' => $canUploadRaw,
+                    'is_active' => $isActive,
+                    'expires_at' => $expiresAt,
+                ]
+            );
+
+            $this->replaceUploadTokenCidrs($tokenId, $cidrs);
+        });
+
+        $updated = $this->uploadTokenById($tokenId);
+        if ($updated === null) {
+            throw new RuntimeException('Upload token was not found after update.');
+        }
+
+        return $updated;
+    }
+
+    public function deleteUploadToken(int $tokenId): void
+    {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+            return;
+        }
+
+        if (InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')) {
+            InterfaceDB::prepareExecute(
+                'DELETE FROM swallowtail_api_upload_token_cidrs WHERE token_id = :token_id',
+                ['token_id' => $tokenId]
+            );
+        }
+
+        InterfaceDB::prepareExecute(
+            'DELETE FROM swallowtail_api_upload_tokens WHERE id = :id',
+            ['id' => $tokenId]
+        );
+    }
+
+    public function normaliseCidrs(array|string $cidrs): array
+    {
+        if (is_string($cidrs)) {
+            $cidrs = preg_split('/[\s,]+/', $cidrs) ?: [];
+        }
+
+        $normalised = [];
+        foreach ($cidrs as $cidr) {
+            $cidr = strtolower(trim((string)$cidr));
+            if ($cidr === '') {
+                continue;
+            }
+
+            $normalised[] = $this->normaliseCidr($cidr);
+        }
+
+        $normalised = array_values(array_unique($normalised));
+        if ($normalised === []) {
+            throw new InvalidArgumentException('At least one CIDR range is required.');
+        }
+
+        return $normalised;
+    }
+
+    public function ipAllowedByCidrs(string $ipAddress, array $cidrs): bool
+    {
+        $ipAddress = trim($ipAddress);
+        $ipBytes = @inet_pton($ipAddress);
+        if ($ipBytes === false || $cidrs === []) {
+            return false;
+        }
+
+        foreach ($cidrs as $cidr) {
+            $parts = explode('/', trim((string)$cidr), 2);
+            if (count($parts) !== 2) {
+                continue;
+            }
+
+            $networkBytes = @inet_pton($parts[0]);
+            if ($networkBytes === false || strlen($networkBytes) !== strlen($ipBytes)) {
+                continue;
+            }
+
+            $prefix = (int)$parts[1];
+            if ($this->binaryAddressInPrefix($ipBytes, $networkBytes, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function recordPhotoAudit(
@@ -402,6 +653,20 @@ final class SwallowtailPhotoLibraryService
         return $filename !== '' ? substr($filename, 0, 255) : 'upload.raw';
     }
 
+    private function normaliseOptionalQuickHash(mixed $value): ?string
+    {
+        if (!is_scalar($value) && $value !== null) {
+            return null;
+        }
+
+        $value = trim((string)$value);
+        if ($value === '') {
+            return null;
+        }
+
+        return $this->normaliseQuickHash($value);
+    }
+
     private function normaliseSlug(string $value): string
     {
         $slug = strtolower(trim($value));
@@ -409,6 +674,122 @@ final class SwallowtailPhotoLibraryService
         $slug = trim($slug, '-');
 
         return $slug !== '' ? substr($slug, 0, 180) : 'event';
+    }
+
+    private function normaliseCidr(string $cidr): string
+    {
+        $parts = explode('/', $cidr, 2);
+        if (count($parts) !== 2) {
+            throw new InvalidArgumentException('Upload token CIDR values must include a prefix length.');
+        }
+
+        $address = trim($parts[0]);
+        $prefixRaw = trim($parts[1]);
+        if ($address === '' || $prefixRaw === '' || preg_match('/^\d+$/', $prefixRaw) !== 1) {
+            throw new InvalidArgumentException('Invalid upload token CIDR range.');
+        }
+
+        $bytes = @inet_pton($address);
+        if ($bytes === false) {
+            throw new InvalidArgumentException('Invalid upload token CIDR address.');
+        }
+
+        $bits = strlen($bytes) * 8;
+        $prefix = (int)$prefixRaw;
+        if ($prefix < 0 || $prefix > $bits) {
+            throw new InvalidArgumentException('Invalid upload token CIDR prefix length.');
+        }
+
+        return strtolower($address) . '/' . $prefix;
+    }
+
+    private function cidrsForUploadToken(int $tokenId): array
+    {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')) {
+            return [];
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT cidr
+             FROM swallowtail_api_upload_token_cidrs
+             WHERE token_id = :token_id
+             ORDER BY cidr",
+            ['token_id' => $tokenId]
+        );
+        $cidrs = [];
+
+        foreach ($rows as $row) {
+            $cidr = trim((string)($row['cidr'] ?? ''));
+            if ($cidr !== '') {
+                $cidrs[] = $cidr;
+            }
+        }
+
+        return $cidrs;
+    }
+
+    private function replaceUploadTokenCidrs(int $tokenId, array $cidrs): void
+    {
+        InterfaceDB::prepareExecute(
+            'DELETE FROM swallowtail_api_upload_token_cidrs WHERE token_id = :token_id',
+            ['token_id' => $tokenId]
+        );
+
+        foreach ($cidrs as $cidr) {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO swallowtail_api_upload_token_cidrs (
+                    token_id,
+                    cidr
+                ) VALUES (
+                    :token_id,
+                    :cidr
+                )",
+                [
+                    'token_id' => $tokenId,
+                    'cidr' => $cidr,
+                ]
+            );
+        }
+    }
+
+    private function binaryAddressInPrefix(string $ipBytes, string $networkBytes, int $prefix): bool
+    {
+        $bits = strlen($ipBytes) * 8;
+        if ($prefix < 0 || $prefix > $bits) {
+            return false;
+        }
+
+        $fullBytes = intdiv($prefix, 8);
+        if ($fullBytes > 0 && substr($ipBytes, 0, $fullBytes) !== substr($networkBytes, 0, $fullBytes)) {
+            return false;
+        }
+
+        $remainingBits = $prefix % 8;
+        if ($remainingBits === 0) {
+            return true;
+        }
+
+        $mask = (0xff << (8 - $remainingBits)) & 0xff;
+
+        return (ord($ipBytes[$fullBytes]) & $mask) === (ord($networkBytes[$fullBytes]) & $mask);
+    }
+
+    private function normaliseExpiresAt(mixed $value): ?string
+    {
+        if ($value instanceof DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        $value = trim((string)$value);
+        if ($value === '') {
+            return null;
+        }
+
+        try {
+            return (new DateTimeImmutable($value))->format('Y-m-d H:i:s');
+        } catch (Throwable) {
+            throw new InvalidArgumentException('Upload token expiry date was invalid.');
+        }
     }
 
     private function normaliseOptionalString(mixed $value, int $maxLength): ?string

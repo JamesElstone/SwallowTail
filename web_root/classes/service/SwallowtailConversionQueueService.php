@@ -14,20 +14,32 @@ final class SwallowtailConversionQueueService
 
     public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
     {
+        foreach ($this->enqueueRawConversionJobs($photoId, $priority) as $job) {
+            $jobId = $this->nullablePositiveInt($job['job_id'] ?? null);
+            if ($jobId !== null) {
+                return $jobId;
+            }
+        }
+
+        return null;
+    }
+
+    public function enqueueRawConversionJobs(int $photoId, string $priority = 'normal'): array
+    {
         if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
-            return null;
+            return [];
         }
 
         $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
         if ($photo === null) {
-            return null;
+            return [];
         }
 
         $sha256 = (string)($photo['original_sha256'] ?? '');
         $storageLocationId = $this->nullablePositiveInt($photo['storage_location_id'] ?? null);
         $storage = new SwallowtailStorageService($this->storageRootForLocation($storageLocationId));
         $inputPath = $storage->absolutePath((string)($photo['original_storage_path'] ?? ''));
-        $jobIds = [];
+        $jobs = [];
 
         foreach ([
             'embedded' => 'high',
@@ -38,7 +50,7 @@ final class SwallowtailConversionQueueService
         ] as $derivativeType => $jobPriority) {
             $outputStoragePath = $storage->derivativeRelativePath($sha256, $derivativeType);
             $dimensions = $this->dimensionsForDerivative($derivativeType);
-            $jobIds[] = $this->enqueueDerivativeJob(
+            $jobId = $this->enqueueDerivativeJob(
                 $photoId,
                 $derivativeType,
                 $inputPath,
@@ -52,15 +64,14 @@ final class SwallowtailConversionQueueService
                 $dimensions['width'],
                 $dimensions['height']
             );
+
+            $jobs[$derivativeType] = [
+                'job_id' => $jobId,
+                'status' => $jobId !== null ? 'queued' : 'not_queued',
+            ];
         }
 
-        foreach ($jobIds as $jobId) {
-            if ($jobId !== null) {
-                return $jobId;
-            }
-        }
-
-        return null;
+        return $jobs;
     }
 
     public function enqueueDerivativeJob(

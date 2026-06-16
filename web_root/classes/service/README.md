@@ -45,7 +45,7 @@ The UI should configure storage locations in the database rather than writing pa
 Coordinates RAW file ingest.
 
 - Accepts a local uploaded RAW file path.
-- Validates `.CR2` and `.CR3` filenames.
+- Validates `.CR2` filenames.
 - Checks for a plausible Canon RAW signature.
 - Computes the SHA-256 checksum.
 - Detects duplicate uploads by checksum before storing another copy.
@@ -75,7 +75,8 @@ This service is deliberately database-focused. Filesystem writes should go throu
 Implements the backend API workflow for RAW uploads.
 
 - Expects `POST`.
-- Authenticates upload clients using a bearer token or `X-Swallowtail-Upload-Token`.
+- Authenticates upload clients using `Authorization: Bearer <upload-token>`.
+- Restricts upload tokens to their configured CIDR ranges.
 - Accepts multipart uploads using `raw_file` or `file`.
 - Can also read a raw request body for simpler hardware clients.
 - Supports optional `X-Swallowtail-Checksum-SHA256` verification.
@@ -144,6 +145,7 @@ The Swallowtail services expect the migration `2026_05_31_001_swallowtail_photo_
 - `swallowtail_events`
 - `swallowtail_storage_locations`
 - `swallowtail_api_upload_tokens`
+- `swallowtail_api_upload_token_cidrs`
 - `swallowtail_photos`
 - `swallowtail_event_photos`
 - `swallowtail_event_permissions`
@@ -160,4 +162,3 @@ Run the complete test index from the project root:
 ```powershell
 php web_root\tests\index.php
 ```
-
