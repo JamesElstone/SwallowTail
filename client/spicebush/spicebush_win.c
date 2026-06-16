@@ -22,7 +22,6 @@
 
 #define ID_TRAY_REGISTER 1001
 #define ID_TRAY_STATS 1002
-#define ID_TRAY_SCAN 1003
 #define ID_TRAY_EXIT 1004
 
 #define ID_REGISTER_URL 2001
@@ -34,6 +33,7 @@
 #define ID_REGISTER_QUIT 2007
 
 #define ID_STATS_SCAN 3001
+#define ID_STATS_PING 3002
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
 
@@ -51,6 +51,7 @@ typedef struct AppState {
     HWND registerStatus;
     HWND statsLabels[10];
     HICON registerLogoIcon;
+    HFONT uiFont;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
     HANDLE stopEvent;
@@ -96,6 +97,42 @@ static HICON AppIcon(void)
         g_app.registerLogoIcon = (HICON)LoadImageA(g_app.instance, MAKEINTRESOURCEA(IDR_SPICEBUSH_ICON), IMAGE_ICON, 64, 64, LR_DEFAULTCOLOR);
     }
     return g_app.registerLogoIcon ? g_app.registerLogoIcon : LoadIcon(NULL, IDI_APPLICATION);
+}
+
+static HFONT AppFont(void)
+{
+    HDC hdc;
+    int height;
+
+    if (g_app.uiFont) return g_app.uiFont;
+
+    hdc = GetDC(NULL);
+    height = hdc ? -MulDiv(8, GetDeviceCaps(hdc, LOGPIXELSY), 72) : -11;
+    if (hdc) ReleaseDC(NULL, hdc);
+
+    g_app.uiFont = CreateFontA(
+        height,
+        0,
+        0,
+        0,
+        FW_NORMAL,
+        FALSE,
+        FALSE,
+        FALSE,
+        ANSI_CHARSET,
+        OUT_TT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_SWISS,
+        "Tahoma");
+
+    return g_app.uiFont ? g_app.uiFont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+}
+
+static HWND SetAppFont(HWND hwnd)
+{
+    if (hwnd) SendMessageA(hwnd, WM_SETFONT, (WPARAM)AppFont(), TRUE);
+    return hwnd;
 }
 
 static int SbSnprintf(char *buffer, size_t bufferSize, const char *format, ...)
@@ -984,7 +1021,6 @@ static void ShowTrayMenu(HWND hwnd)
     SetForegroundWindow(hwnd);
     AppendMenuA(menu, MF_STRING, ID_TRAY_REGISTER, "Register...");
     AppendMenuA(menu, MF_STRING, ID_TRAY_STATS, "Statistics");
-    AppendMenuA(menu, MF_STRING, ID_TRAY_SCAN, "Scan Existing Drives");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, ID_TRAY_EXIT, "Exit");
     GetCursorPos(&pt);
@@ -994,19 +1030,25 @@ static void ShowTrayMenu(HWND hwnd)
 
 static HWND Label(HWND parent, const char *text, int x, int y, int w, int h)
 {
-    return CreateWindowA("STATIC", text, WS_CHILD | WS_VISIBLE, x, y, w, h, parent, NULL, g_app.instance, NULL);
+    return SetAppFont(CreateWindowA("STATIC", text, WS_CHILD | WS_VISIBLE, x, y, w, h, parent, NULL, g_app.instance, NULL));
 }
 
 static HWND StatusLabel(HWND parent, const char *text, int x, int y, int w, int h)
 {
-    return CreateWindowExA(WS_EX_CLIENTEDGE, "STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT, x, y, w, h, parent, (HMENU)ID_REGISTER_STATUS, g_app.instance, NULL);
+    return SetAppFont(CreateWindowExA(WS_EX_CLIENTEDGE, "STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT, x, y, w, h, parent, (HMENU)ID_REGISTER_STATUS, g_app.instance, NULL));
 }
 
 static HWND Edit(HWND parent, int id, const char *text, int x, int y, int w, int h, DWORD style)
 {
     HWND edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL);
+    SetAppFont(edit);
     SetWindowLongPtrA(edit, GWLP_USERDATA, SetWindowLongPtrA(edit, GWLP_WNDPROC, (LONG_PTR)RegisterEditWndProc));
     return edit;
+}
+
+static HWND Button(HWND parent, int id, const char *text, int x, int y, int w, int h, DWORD style)
+{
+    return SetAppFont(CreateWindowA("BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL));
 }
 
 static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -1191,8 +1233,8 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         Edit(hwnd, ID_REGISTER_PASSWORD, "", 210, 88, 270, 22, ES_PASSWORD);
         Label(hwnd, "OTP", 110, 125, 90, 20);
         Edit(hwnd, ID_REGISTER_OTP, "", 210, 123, 120, 22, 0);
-        CreateWindowA("BUTTON", "Register", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 210, 161, 100, 28, hwnd, (HMENU)ID_REGISTER_SAVE, g_app.instance, NULL);
-        CreateWindowA("BUTTON", "Quit", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 320, 161, 80, 28, hwnd, (HMENU)ID_REGISTER_QUIT, g_app.instance, NULL);
+        Button(hwnd, ID_REGISTER_SAVE, "Register", 210, 161, 100, 28, BS_DEFPUSHBUTTON);
+        Button(hwnd, ID_REGISTER_QUIT, "Quit", 320, 161, 80, 28, 0);
         g_app.registerStatus = StatusLabel(hwnd, "Enter registration details, then click Register.", 18, 202, 500, 72);
         return 0;
     case WM_COMMAND:
@@ -1232,12 +1274,21 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         for (i = 0; i < 10; i++) {
             g_app.statsLabels[i] = Label(hwnd, "", 18, 18 + i * 24, 380, 20);
         }
-        CreateWindowA("BUTTON", "Scan Existing Drives", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 18, 260, 160, 28, hwnd, (HMENU)ID_STATS_SCAN, g_app.instance, NULL);
+        Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", 18, 260, 160, 28, 0);
+        Button(hwnd, ID_STATS_PING, "Ping", 188, 260, 70, 28, 0);
         SetTimer(hwnd, 1, 1000, NULL);
         RefreshStats();
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_STATS_SCAN) ScanExistingDrives(1);
+        else if (LOWORD(wp) == ID_STATS_PING) {
+            if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
+                ShowRegisterWindow();
+                SetStatus(g_app.registerWindow, "Register with SwallowTail before pinging the API.");
+            } else {
+                StartPingCheck();
+            }
+        }
         return 0;
     case WM_TIMER:
         RefreshStats();
@@ -1266,7 +1317,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         switch (LOWORD(wp)) {
         case ID_TRAY_REGISTER: ShowRegisterWindow(); break;
         case ID_TRAY_STATS: ShowStatsWindow(); break;
-        case ID_TRAY_SCAN: ScanExistingDrives(1); break;
         case ID_TRAY_EXIT: DestroyWindow(hwnd); break;
         }
         return 0;
@@ -1349,6 +1399,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     }
     DeleteCriticalSection(&g_app.lock);
     if (g_app.registerLogoIcon) DestroyIcon(g_app.registerLogoIcon);
+    if (g_app.uiFont) DeleteObject(g_app.uiFont);
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
     if (g_app.stopEvent) CloseHandle(g_app.stopEvent);
