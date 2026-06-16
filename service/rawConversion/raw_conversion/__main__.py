@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import signal
 
 from .config import ensure_runtime_directories, load_config
 from .health import run_health_checks
@@ -30,6 +31,12 @@ def main() -> int:
 
     if args.once:
         return 0 if worker.run_once() else 2
+
+    def handle_shutdown(_signum, _frame) -> None:
+        worker.request_shutdown()
+
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
 
     worker.run_forever()
     return 0

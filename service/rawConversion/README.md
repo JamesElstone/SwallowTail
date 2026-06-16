@@ -31,7 +31,13 @@ rotation config.
 python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --health
 service swallowtail_raw_conversion start
 service swallowtail_raw_conversion status
+service swallowtail_raw_conversion migrate
 ```
+
+`migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration
+lock, remembers whether the worker was running, stops it so current conversion
+work can drain cleanly, runs `php tools/php/setupDb.php --migrate-only` from the
+project root, and starts the worker again if it was running before.
 
 The service command is:
 
@@ -52,7 +58,7 @@ sudo sh tools/bin/rawConversionSmokeTest.sh --input=/home/james.elstone/TEST.CR2
 ```
 
 The smoke test uses `/storage/1/swallowtail-raw-smoke` by default, waits for all
-four derivative jobs to succeed, verifies non-empty output files, and cleans up
+five derivative jobs to succeed, verifies non-empty output files, and cleans up
 the rows/files it created unless `--keep-artifacts` is supplied.
 
 ## Rendering Notes

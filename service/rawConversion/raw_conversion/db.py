@@ -97,6 +97,7 @@ class ConversionDatabase:
              LIMIT 1
             """
         )
+        self.connection.rollback()
         return int(row["id"]) if row else None
 
     def claim_job(self, job_id: int) -> ConversionJob | None:
@@ -137,6 +138,7 @@ class ConversionDatabase:
             """,
             (job.photo_id, job.profile_version),
         )
+        self.connection.rollback()
         return row is not None
 
     def complete_job(self, job: ConversionJob, output_path: str, command: list[str], stderr: str, duration: float) -> None:

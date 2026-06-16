@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
@@ -22,6 +23,12 @@ class ConversionWorker:
         self.redis = RedisQueue(config.redis)
         self.runner = RawTherapeeRunner(config.rawtherapee)
         self.embedded = EmbeddedJpegExtractor()
+        self.shutdown_requested = threading.Event()
+
+    def request_shutdown(self) -> None:
+        if not self.shutdown_requested.is_set():
+            self.log.info("Shutdown requested; finishing active conversion jobs before exit")
+            self.shutdown_requested.set()
 
     def run_forever(self) -> None:
         removed = self.cleanup_stale_temp_dirs()
@@ -34,8 +41,8 @@ class ConversionWorker:
 
         with ThreadPoolExecutor(max_workers=self.config.rawtherapee.maximum_threads) as executor:
             futures: set[Future] = set()
-            while True:
-                while len(futures) < self.config.rawtherapee.maximum_threads:
+            while not self.shutdown_requested.is_set() or futures:
+                while not self.shutdown_requested.is_set() and len(futures) < self.config.rawtherapee.maximum_threads:
                     job_id = self._next_job_id()
                     if job_id is None:
                         break
@@ -43,12 +50,14 @@ class ConversionWorker:
                     futures.add(future)
 
                 if not futures:
-                    time.sleep(self.config.worker.poll_interval_seconds)
+                    self.shutdown_requested.wait(self.config.worker.poll_interval_seconds)
                     continue
 
                 done, futures = wait(futures, timeout=1, return_when=FIRST_COMPLETED)
                 for future in done:
                     future.result()
+
+        self.log.info("Raw conversion worker stopped")
 
     def run_once(self) -> bool:
         self.cleanup_stale_temp_dirs()
