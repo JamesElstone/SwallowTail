@@ -136,17 +136,92 @@ int sb_compute_fnv1a64(const char *path, char *hex, size_t hex_size, sb_u64 *siz
     return 1;
 }
 
-int sb_uploaded_contains(const char *uploaded_path, const char *hash, sb_u64 size_bytes)
+static int sb_hash_bucket_path(const SpiceBushConfig *config, const char *hash, char *path, size_t path_size)
 {
-    FILE *file = fopen(uploaded_path, "r");
-    char line[SB_PATH + 128];
-    char needle[128];
+    char name[8];
+    if (hash == NULL
+        || strlen(hash) < 2
+        || !isxdigit((unsigned char)hash[0])
+        || !isxdigit((unsigned char)hash[1])) {
+        return 0;
+    }
+    if (!sb_mkdir_if_needed(config->uploaded_dir)) {
+        return 0;
+    }
+    name[0] = (char)tolower((unsigned char)hash[0]);
+    name[1] = (char)tolower((unsigned char)hash[1]);
+    name[2] = '.';
+    name[3] = 't';
+    name[4] = 's';
+    name[5] = 'v';
+    name[6] = '\0';
+    sb_path_join(path, path_size, config->uploaded_dir, name, '/');
+    return 1;
+}
+
+static void sb_parse_uploaded_line(char *line, SpiceBushUploadedRecord *record)
+{
+    char *hash;
+    char *size;
+    char *photo_id;
+    char *status;
+    char *source;
+
+    memset(record, 0, sizeof(*record));
+    sb_trim(line);
+    hash = line;
+    size = strchr(hash, '\t');
+    if (size == NULL) {
+        return;
+    }
+    *size++ = '\0';
+    photo_id = strchr(size, '\t');
+    if (photo_id == NULL) {
+        return;
+    }
+    *photo_id++ = '\0';
+    status = strchr(photo_id, '\t');
+    if (status == NULL) {
+        sb_safe_copy(record->hash, sizeof(record->hash), hash);
+        record->size_bytes = (sb_u64)strtoull(size, NULL, 10);
+        record->photo_id = 0;
+        sb_safe_copy(record->status, sizeof(record->status), "uploaded");
+        sb_safe_copy(record->source_path, sizeof(record->source_path), photo_id);
+        return;
+    }
+    *status++ = '\0';
+    source = strchr(status, '\t');
+    if (source == NULL) {
+        return;
+    }
+    *source++ = '\0';
+    sb_safe_copy(record->hash, sizeof(record->hash), hash);
+    record->size_bytes = (sb_u64)strtoull(size, NULL, 10);
+    record->photo_id = strtoul(photo_id, NULL, 10);
+    sb_safe_copy(record->status, sizeof(record->status), status);
+    sb_safe_copy(record->source_path, sizeof(record->source_path), source);
+}
+
+int sb_uploaded_lookup(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, SpiceBushUploadedRecord *record)
+{
+    FILE *file;
+    char path[SB_PATH];
+    char line[SB_PATH + 256];
+
+    if (!sb_hash_bucket_path(config, hash, path, sizeof(path))) {
+        return 0;
+    }
+    file = fopen(path, "r");
     if (file == NULL) {
         return 0;
     }
-    snprintf(needle, sizeof(needle), "%s\t%llu\t", hash, (unsigned long long)size_bytes);
     while (fgets(line, sizeof(line), file) != NULL) {
-        if (strncmp(line, needle, strlen(needle)) == 0) {
+        SpiceBushUploadedRecord candidate;
+        sb_parse_uploaded_line(line, &candidate);
+        if (strcmp(candidate.hash, hash) == 0 && candidate.size_bytes == size_bytes) {
+            if (record != NULL) {
+                *record = candidate;
+            }
             fclose(file);
             return 1;
         }
@@ -155,15 +230,68 @@ int sb_uploaded_contains(const char *uploaded_path, const char *hash, sb_u64 siz
     return 0;
 }
 
-int sb_mark_uploaded(const char *uploaded_path, const char *hash, sb_u64 size_bytes, const char *path)
+int sb_uploaded_contains(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes)
 {
-    FILE *file = fopen(uploaded_path, "a");
+    return sb_uploaded_lookup(config, hash, size_bytes, NULL);
+}
+
+int sb_mark_uploaded(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, unsigned long photo_id, const char *status, const char *path)
+{
+    FILE *file;
+    char bucket_path[SB_PATH];
+
+    if (sb_uploaded_contains(config, hash, size_bytes)) {
+        return 1;
+    }
+    if (!sb_hash_bucket_path(config, hash, bucket_path, sizeof(bucket_path))) {
+        return 0;
+    }
+    file = fopen(bucket_path, "a");
     if (file == NULL) {
         return 0;
     }
-    fprintf(file, "%s\t%llu\t%s\n", hash, (unsigned long long)size_bytes, path);
+    fprintf(file, "%s\t%llu\t%lu\t%s\t%s\n",
+        hash,
+        (unsigned long long)size_bytes,
+        photo_id,
+        status != NULL && status[0] != '\0' ? status : "uploaded",
+        path != NULL ? path : "");
     fclose(file);
     return 1;
+}
+
+int sb_migrate_uploaded_cache(SpiceBushConfig *config)
+{
+    FILE *file;
+    char migrated[SB_PATH];
+    char line[SB_PATH + 256];
+    int migrated_count = 0;
+
+    if (config->uploaded_path[0] == '\0') {
+        return 0;
+    }
+    file = fopen(config->uploaded_path, "r");
+    if (file == NULL) {
+        return 0;
+    }
+    while (fgets(line, sizeof(line), file) != NULL) {
+        SpiceBushUploadedRecord record;
+        sb_parse_uploaded_line(line, &record);
+        if (record.hash[0] == '\0' || record.size_bytes == 0) {
+            continue;
+        }
+        if (record.status[0] == '\0') {
+            sb_safe_copy(record.status, sizeof(record.status), "uploaded");
+        }
+        if (sb_mark_uploaded(config, record.hash, record.size_bytes, record.photo_id, record.status, record.source_path)) {
+            migrated_count++;
+        }
+    }
+    fclose(file);
+    snprintf(migrated, sizeof(migrated), "%s.migrated", config->uploaded_path);
+    remove(migrated);
+    rename(config->uploaded_path, migrated);
+    return migrated_count;
 }
 
 int sb_scan_tree(const char *root, int max_depth, SpiceBushScanCallback callback, void *context)
@@ -389,4 +517,35 @@ int sb_json_bool_value(const char *json, const char *key, int *value)
         return 1;
     }
     return 0;
+}
+
+int sb_json_ulong_value(const char *json, const char *key, unsigned long *value)
+{
+    char needle[128];
+    const char *p;
+    unsigned long parsed = 0;
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    p = strstr(json, needle);
+    if (p == NULL) {
+        return 0;
+    }
+    p = strchr(p + strlen(needle), ':');
+    if (p == NULL) {
+        return 0;
+    }
+    p++;
+    while (*p != '\0' && isspace((unsigned char)*p)) {
+        p++;
+    }
+    if (!isdigit((unsigned char)*p)) {
+        return 0;
+    }
+    while (isdigit((unsigned char)*p)) {
+        parsed = parsed * 10UL + (unsigned long)(*p - '0');
+        p++;
+    }
+    if (value != NULL) {
+        *value = parsed;
+    }
+    return 1;
 }

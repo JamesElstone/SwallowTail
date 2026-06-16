@@ -97,7 +97,12 @@ static void init_config(SpiceBushConfig *config)
     sb_mkdir_if_needed(config->app_dir);
     sb_path_join(config->ini_path, sizeof(config->ini_path), config->app_dir, "spicebush.ini", '/');
     sb_path_join(config->queue_path, sizeof(config->queue_path), config->app_dir, "queue.tsv", '/');
+    sb_path_join(config->queue_done_path, sizeof(config->queue_done_path), config->app_dir, "queue-done.tsv", '/');
+    sb_path_join(config->queue_next_id_path, sizeof(config->queue_next_id_path), config->app_dir, "queue-next-id.txt", '/');
     sb_path_join(config->uploaded_path, sizeof(config->uploaded_path), config->app_dir, "uploaded.tsv", '/');
+    sb_path_join(config->uploaded_dir, sizeof(config->uploaded_dir), config->app_dir, "uploaded", '/');
+    sb_mkdir_if_needed(config->uploaded_dir);
+    sb_migrate_uploaded_cache(config);
 
     hostname[0] = '\0';
     gethostname(hostname, sizeof(hostname) - 1);
@@ -121,6 +126,37 @@ static int require_registered(const SpiceBushConfig *config)
         return 0;
     }
     return 1;
+}
+
+static unsigned long next_queue_id(SpiceBushConfig *config)
+{
+    FILE *file;
+    unsigned long id = 1;
+
+    file = fopen(config->queue_next_id_path, "r");
+    if (file != NULL) {
+        if (fscanf(file, "%lu", &id) != 1 || id == 0) {
+            id = 1;
+        }
+        fclose(file);
+    }
+
+    file = fopen(config->queue_next_id_path, "w");
+    if (file != NULL) {
+        fprintf(file, "%lu\n", id + 1);
+        fclose(file);
+    }
+
+    return id;
+}
+
+static void queue_retry(SpiceBushConfig *config, const char *path)
+{
+    FILE *queue = fopen(config->queue_path, "a");
+    if (queue != NULL) {
+        fprintf(queue, "%lu\t%s\n", next_queue_id(config), path);
+        fclose(queue);
+    }
 }
 
 static int register_client(SpiceBushCli *cli, const char *url, const char *username, const char *password, const char *otp_code)
@@ -182,7 +218,7 @@ static int register_client(SpiceBushCli *cli, const char *url, const char *usern
     return 1;
 }
 
-static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes)
+static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, unsigned long *photo_id)
 {
     char encoded_hash[128];
     char url[SB_TEXT * 3];
@@ -190,6 +226,9 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     char response[4096];
     long status = 0;
     int exists = 0;
+    if (photo_id != NULL) {
+        *photo_id = 0;
+    }
 
     sb_url_encode(hash, encoded_hash, sizeof(encoded_hash));
     snprintf(
@@ -205,7 +244,11 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     if (!sb_http_request("GET", url, headers, NULL, 0, &status, response, sizeof(response))) {
         return 0;
     }
-    return status == 200 && sb_json_bool_value(response, "exists", &exists) && exists;
+    if (status == 200 && sb_json_bool_value(response, "exists", &exists) && exists) {
+        sb_json_ulong_value(response, "photo_id", photo_id);
+        return 1;
+    }
+    return 0;
 }
 
 static int upload_file(const SpiceBushConfig *config, const char *path, const char *hash, sb_u64 size_bytes)
@@ -214,6 +257,8 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
     char headers[SB_TEXT * 2];
     char response[4096];
     long status = 0;
+    unsigned long photo_id = 0;
+    int duplicate = 0;
 
     snprintf(url, sizeof(url), "%s/raw-upload.php", config->api_url);
     snprintf(
@@ -232,7 +277,9 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         return 0;
     }
     if ((status == 200 || status == 201) && strstr(response, "\"success\":true") != NULL) {
-        sb_mark_uploaded(config->uploaded_path, hash, size_bytes, path);
+        sb_json_ulong_value(response, "photo_id", &photo_id);
+        sb_json_bool_value(response, "duplicate", &duplicate);
+        sb_mark_uploaded(config, hash, size_bytes, photo_id, duplicate ? "duplicate" : "uploaded", path);
         return 1;
     }
     fprintf(stderr, "Upload failed with HTTP %ld for %s\n%s\n", status, path, response);
@@ -245,6 +292,7 @@ static int process_cr2(const char *path, void *context)
     char hash[32];
     sb_u64 size_bytes = 0;
     unsigned long start;
+    unsigned long photo_id = 0;
 
     cli->stats.found++;
     printf("found: %s\n", path);
@@ -255,15 +303,15 @@ static int process_cr2(const char *path, void *context)
         return 1;
     }
 
-    if (sb_uploaded_contains(cli->config.uploaded_path, hash, size_bytes)) {
+    if (sb_uploaded_contains(&cli->config, hash, size_bytes)) {
         cli->stats.skipped_local++;
         printf("  skipped: local uploaded cache has %s %llu\n", hash, (unsigned long long)size_bytes);
         return 1;
     }
 
-    if (server_knows_file(&cli->config, hash, size_bytes)) {
+    if (server_knows_file(&cli->config, hash, size_bytes, &photo_id)) {
         cli->stats.known++;
-        sb_mark_uploaded(cli->config.uploaded_path, hash, size_bytes, path);
+        sb_mark_uploaded(&cli->config, hash, size_bytes, photo_id, "server_known", path);
         printf("  known: SwallowTail already has %s\n", hash);
         return 1;
     }
@@ -275,12 +323,8 @@ static int process_cr2(const char *path, void *context)
         cli->stats.upload_millis += (sb_u64)(tick_millis() - start);
         printf("  uploaded\n");
     } else {
-        FILE *queue = fopen(cli->config.queue_path, "a");
         cli->stats.failed++;
-        if (queue != NULL) {
-            fprintf(queue, "%s\n", path);
-            fclose(queue);
-        }
+        queue_retry(&cli->config, path);
         printf("  queued for retry: %s\n", cli->config.queue_path);
     }
 

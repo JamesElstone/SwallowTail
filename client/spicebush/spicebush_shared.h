@@ -16,12 +16,23 @@ typedef struct SpiceBushConfig {
     char app_dir[SB_PATH];
     char ini_path[SB_PATH];
     char queue_path[SB_PATH];
+    char queue_done_path[SB_PATH];
+    char queue_next_id_path[SB_PATH];
     char uploaded_path[SB_PATH];
+    char uploaded_dir[SB_PATH];
     char site_url[SB_TEXT];
     char api_url[SB_TEXT];
     char upload_token[SB_TEXT];
     char device_id[128];
 } SpiceBushConfig;
+
+typedef struct SpiceBushUploadedRecord {
+    char hash[17];
+    sb_u64 size_bytes;
+    unsigned long photo_id;
+    char status[32];
+    char source_path[SB_PATH];
+} SpiceBushUploadedRecord;
 
 typedef struct SpiceBushStats {
     unsigned long found;
@@ -44,8 +55,10 @@ const char *sb_basename(const char *path);
 int sb_mkdir_if_needed(const char *path);
 
 int sb_compute_fnv1a64(const char *path, char *hex, size_t hex_size, sb_u64 *size_bytes);
-int sb_uploaded_contains(const char *uploaded_path, const char *hash, sb_u64 size_bytes);
-int sb_mark_uploaded(const char *uploaded_path, const char *hash, sb_u64 size_bytes, const char *path);
+int sb_uploaded_lookup(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, SpiceBushUploadedRecord *record);
+int sb_uploaded_contains(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes);
+int sb_mark_uploaded(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, unsigned long photo_id, const char *status, const char *path);
+int sb_migrate_uploaded_cache(SpiceBushConfig *config);
 
 int sb_scan_tree(const char *root, int max_depth, SpiceBushScanCallback callback, void *context);
 
@@ -56,5 +69,6 @@ void sb_url_encode(const char *src, char *dst, size_t dst_size);
 void sb_json_escape(const char *src, char *dst, size_t dst_size);
 int sb_json_string_value(const char *json, const char *key, char *out, size_t out_size);
 int sb_json_bool_value(const char *json, const char *key, int *value);
+int sb_json_ulong_value(const char *json, const char *key, unsigned long *value);
 
 #endif

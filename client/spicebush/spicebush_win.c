@@ -9,6 +9,7 @@
 #include <wininet.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define APP_NAME "SpiceBush"
@@ -36,22 +37,39 @@
 #define ID_STATS_PING 3002
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
+#define STATS_LABEL_COUNT 16
 
 typedef unsigned __int64 U64;
 
+#ifndef NOTIFYICON_VERSION
+#define NOTIFYICON_VERSION 3
+#endif
+
 typedef struct QueueItem {
+    DWORD id;
     char path[MAX_PATH];
 } QueueItem;
+
+typedef struct ScanStats {
+    DWORD folders;
+    DWORD files;
+    DWORD cr2;
+    DWORD queued;
+    DWORD duplicateQueue;
+    DWORD errors;
+} ScanStats;
 
 typedef struct AppState {
     HINSTANCE instance;
     HWND mainWindow;
     HWND registerWindow;
     HWND statsWindow;
+    HWND balloonWindow;
     HWND registerStatus;
-    HWND statsLabels[10];
+    HWND statsLabels[STATS_LABEL_COUNT];
     HICON registerLogoIcon;
     HFONT uiFont;
+    HANDLE instanceMutex;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
     HANDLE stopEvent;
@@ -67,15 +85,22 @@ typedef struct AppState {
     LONG activeScans;
     LONG processing;
     U64 totalUploadMillis;
+    DWORD nextQueueId;
+    DWORD queueDoneSinceCompact;
     char appDir[MAX_PATH];
     char iniPath[MAX_PATH];
     char queuePath[MAX_PATH];
+    char queueDonePath[MAX_PATH];
+    char queueNextIdPath[MAX_PATH];
     char uploadedPath[MAX_PATH];
+    char uploadedDir[MAX_PATH];
     char logPath[MAX_PATH];
     char siteUrl[MAX_TEXT];
     char apiUrl[MAX_TEXT];
     char uploadToken[MAX_TEXT];
     char deviceId[128];
+    char balloonTitle[128];
+    char balloonMessage[256];
 } AppState;
 
 static AppState g_app;
@@ -84,12 +109,17 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+static LRESULT CALLBACK BalloonWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static void ShowRegisterWindow(void);
 static DWORD WINAPI ProcessorThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
 static DWORD WINAPI PingThread(LPVOID param);
 static void LogMessage(const char *format, ...);
+static void BuildTrayTooltip(char *tip, DWORD tipSize);
+static void UpdateTrayTooltip(HWND hwnd);
+static void MigrateUploadedCache(void);
+static void CompactQueueIfNeeded(void);
 
 static HICON AppIcon(void)
 {
@@ -225,7 +255,81 @@ static int NormaliseDeviceId(char *deviceId, DWORD deviceIdSize)
     return 1;
 }
 
-static void EnsureAppStorage(void)
+static int IsDigitChar(char ch)
+{
+    return ch >= '0' && ch <= '9';
+}
+
+static int IsRotatedLogName(const char *name)
+{
+    return lstrlenA(name) == 24
+        && strncmp(name, "spicebush-", 10) == 0
+        && IsDigitChar(name[10])
+        && IsDigitChar(name[11])
+        && IsDigitChar(name[12])
+        && IsDigitChar(name[13])
+        && name[14] == '-'
+        && IsDigitChar(name[15])
+        && IsDigitChar(name[16])
+        && name[17] == '-'
+        && IsDigitChar(name[18])
+        && IsDigitChar(name[19])
+        && lstrcmpiA(name + 20, ".log") == 0;
+}
+
+static void BuildDailyLogPath(void)
+{
+    SYSTEMTIME now;
+    char fileName[32];
+
+    GetLocalTime(&now);
+    SbSnprintf(fileName, sizeof(fileName), "spicebush-%04u-%02u-%02u.log",
+        (unsigned)now.wYear,
+        (unsigned)now.wMonth,
+        (unsigned)now.wDay);
+    PathJoin(g_app.logPath, sizeof(g_app.logPath), g_app.appDir, fileName);
+}
+
+static void CleanupOldLogs(void)
+{
+    char pattern[MAX_PATH];
+    char path[MAX_PATH];
+    WIN32_FIND_DATAA data;
+    HANDLE find;
+    FILETIME nowFt;
+    ULARGE_INTEGER nowValue;
+    ULARGE_INTEGER cutoffValue;
+    ULARGE_INTEGER fileValue;
+    const ULONGLONG dayTicks = 24ULL * 60ULL * 60ULL * 10000000ULL;
+
+    GetSystemTimeAsFileTime(&nowFt);
+    nowValue.LowPart = nowFt.dwLowDateTime;
+    nowValue.HighPart = nowFt.dwHighDateTime;
+    if (nowValue.QuadPart < (31ULL * dayTicks)) return;
+    cutoffValue.QuadPart = nowValue.QuadPart - (31ULL * dayTicks);
+
+    PathJoin(pattern, sizeof(pattern), g_app.appDir, "spicebush-*.log");
+    find = FindFirstFileA(pattern, &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !IsRotatedLogName(data.cFileName)) continue;
+        fileValue.LowPart = data.ftLastWriteTime.dwLowDateTime;
+        fileValue.HighPart = data.ftLastWriteTime.dwHighDateTime;
+        if (fileValue.QuadPart < cutoffValue.QuadPart) {
+            PathJoin(path, sizeof(path), g_app.appDir, data.cFileName);
+            if (DeleteFileA(path)) {
+                LogMessage("Deleted old log file: path=%s", path);
+            } else {
+                LogMessage("Could not delete old log file: path=%s error=%lu", path, GetLastError());
+            }
+        }
+    } while (FindNextFileA(find, &data));
+
+    FindClose(find);
+}
+
+static void EnsureAppPaths(void)
 {
     char appData[MAX_PATH];
     char computer[128];
@@ -237,14 +341,24 @@ static void EnsureAppStorage(void)
     CreateDirectoryA(g_app.appDir, NULL);
     PathJoin(g_app.iniPath, sizeof(g_app.iniPath), g_app.appDir, "spicebush.ini");
     PathJoin(g_app.queuePath, sizeof(g_app.queuePath), g_app.appDir, "queue.tsv");
+    PathJoin(g_app.queueDonePath, sizeof(g_app.queueDonePath), g_app.appDir, "queue-done.tsv");
+    PathJoin(g_app.queueNextIdPath, sizeof(g_app.queueNextIdPath), g_app.appDir, "queue-next-id.txt");
     PathJoin(g_app.uploadedPath, sizeof(g_app.uploadedPath), g_app.appDir, "uploaded.tsv");
-    PathJoin(g_app.logPath, sizeof(g_app.logPath), g_app.appDir, "spicebush.log");
+    PathJoin(g_app.uploadedDir, sizeof(g_app.uploadedDir), g_app.appDir, "uploaded");
+    BuildDailyLogPath();
 
     computer[0] = '\0';
     GetComputerNameA(computer, &computerLen);
     if (computer[0] == '\0') SafeCopy(computer, sizeof(computer), "windows-client");
     SafeCopy(g_app.deviceId, sizeof(g_app.deviceId), computer);
+}
 
+static void EnsureAppStorage(void)
+{
+    EnsureAppPaths();
+    CleanupOldLogs();
+    CreateDirectoryA(g_app.uploadedDir, NULL);
+    MigrateUploadedCache();
     if (GetFileAttributesA(g_app.iniPath) == INVALID_FILE_ATTRIBUTES) {
         WritePrivateProfileStringA("spicebush", "site_url", "", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "api_url", "", g_app.iniPath);
@@ -337,24 +451,277 @@ static int QueueContainsLocked(const char *path)
     return 0;
 }
 
-static void RewriteQueueFileLocked(void)
+static int IsHexChar(char ch)
 {
-    char tmp[MAX_PATH];
-    HANDLE file;
-    DWORD i, written;
-    PathJoin(tmp, sizeof(tmp), g_app.appDir, "queue.tmp");
-    file = CreateFileA(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return;
-    for (i = 0; i < g_app.queueCount; i++) {
-        WriteFile(file, g_app.queue[i].path, lstrlenA(g_app.queue[i].path), &written, NULL);
-        WriteFile(file, "\r\n", 2, &written, NULL);
-    }
-    CloseHandle(file);
-    MoveFileExA(tmp, g_app.queuePath, MOVEFILE_REPLACE_EXISTING);
+    return (ch >= '0' && ch <= '9')
+        || (ch >= 'a' && ch <= 'f')
+        || (ch >= 'A' && ch <= 'F');
 }
 
-static void QueuePushInternal(const char *path, int persist, int countFound)
+static char LowerHexChar(char ch)
 {
+    if (ch >= 'A' && ch <= 'F') return (char)(ch - 'A' + 'a');
+    return ch;
+}
+
+static U64 ParseU64(const char *text)
+{
+#if defined(_MSC_VER)
+    return _strtoui64(text, NULL, 10);
+#else
+    return strtoull(text, NULL, 10);
+#endif
+}
+
+static int UploadedBucketPath(const char *hash, char *path, DWORD pathSize)
+{
+    char name[8];
+    if (!hash || !IsHexChar(hash[0]) || !IsHexChar(hash[1])) return 0;
+    CreateDirectoryA(g_app.uploadedDir, NULL);
+    name[0] = LowerHexChar(hash[0]);
+    name[1] = LowerHexChar(hash[1]);
+    SafeCopy(name + 2, sizeof(name) - 2, ".tsv");
+    PathJoin(path, pathSize, g_app.uploadedDir, name);
+    return 1;
+}
+
+static int ParseUploadedLine(char *line, char *hash, DWORD hashSize, U64 *sizeBytes, DWORD *photoId, char *status, DWORD statusSize, char *path, DWORD pathSize)
+{
+    char *size;
+    char *id;
+    char *state;
+    char *source;
+    char *end;
+    if (hashSize > 0) hash[0] = '\0';
+    if (statusSize > 0) status[0] = '\0';
+    if (pathSize > 0) path[0] = '\0';
+    if (sizeBytes) *sizeBytes = 0;
+    if (photoId) *photoId = 0;
+    size = strchr(line, '\t');
+    if (!size) return 0;
+    *size++ = '\0';
+    id = strchr(size, '\t');
+    if (!id) return 0;
+    *id++ = '\0';
+    state = strchr(id, '\t');
+    if (!state) {
+        SafeCopy(hash, hashSize, line);
+        if (sizeBytes) *sizeBytes = ParseU64(size);
+        SafeCopy(status, statusSize, "uploaded");
+        SafeCopy(path, pathSize, id);
+        return 1;
+    }
+    *state++ = '\0';
+    source = strchr(state, '\t');
+    if (!source) return 0;
+    *source++ = '\0';
+    end = strpbrk(source, "\r\n");
+    if (end) *end = '\0';
+    SafeCopy(hash, hashSize, line);
+    if (sizeBytes) *sizeBytes = ParseU64(size);
+    if (photoId) *photoId = strtoul(id, NULL, 10);
+    SafeCopy(status, statusSize, state);
+    SafeCopy(path, pathSize, source);
+    return 1;
+}
+
+static int ReadWholeFileFirstLine(const char *path, char *line, DWORD lineSize)
+{
+    HANDLE file;
+    DWORD got = 0;
+    DWORD i;
+    if (lineSize == 0) return 0;
+    line[0] = '\0';
+    file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    if (ReadFile(file, line, lineSize - 1, &got, NULL)) {
+        line[got] = '\0';
+        for (i = 0; i < got; i++) {
+            if (line[i] == '\r' || line[i] == '\n') {
+                line[i] = '\0';
+                break;
+            }
+        }
+    }
+    CloseHandle(file);
+    return line[0] != '\0';
+}
+
+static void SaveNextQueueId(void)
+{
+    char line[64];
+    HANDLE file;
+    DWORD written;
+    SbSnprintf(line, sizeof(line), "%lu\r\n", (unsigned long)g_app.nextQueueId);
+    file = CreateFileA(g_app.queueNextIdPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMessage("Could not save next queue id: path=%s error=%lu", g_app.queueNextIdPath, GetLastError());
+        return;
+    }
+    WriteFile(file, line, lstrlenA(line), &written, NULL);
+    CloseHandle(file);
+}
+
+static void LoadNextQueueId(void)
+{
+    char line[64];
+    DWORD value;
+    if (ReadWholeFileFirstLine(g_app.queueNextIdPath, line, sizeof(line))) {
+        value = strtoul(line, NULL, 10);
+        if (value > 0) {
+            g_app.nextQueueId = value;
+            return;
+        }
+    }
+    g_app.nextQueueId = 1;
+}
+
+static DWORD AllocateQueueId(void)
+{
+    DWORD id;
+    EnterCriticalSection(&g_app.lock);
+    id = g_app.nextQueueId++;
+    if (g_app.nextQueueId == 0) g_app.nextQueueId = 1;
+    LeaveCriticalSection(&g_app.lock);
+    SaveNextQueueId();
+    return id;
+}
+
+static void AppendQueueRecord(DWORD id, const char *path)
+{
+    char line[MAX_PATH + 64];
+    SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, path);
+    AppendLine(g_app.queuePath, line);
+}
+
+static void AppendQueueDone(DWORD id, const char *result)
+{
+    char line[128];
+    SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, result);
+    AppendLine(g_app.queueDonePath, line);
+    g_app.queueDoneSinceCompact++;
+}
+
+static int UploadedContains(const char *hash, U64 sizeBytes)
+{
+    HANDLE file;
+    char bucket[MAX_PATH], buffer[4096], line[MAX_PATH + 256];
+    DWORD got, i, lineLen = 0;
+    int found = 0;
+    if (!UploadedBucketPath(hash, bucket, sizeof(bucket))) return 0;
+    file = CreateFileA(bucket, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    while (!found && ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
+        for (i = 0; i < got && !found; i++) {
+            char ch = buffer[i];
+            if (ch == '\r') continue;
+            if (ch == '\n') {
+                char storedHash[32], status[32], path[MAX_PATH];
+                U64 storedSize = 0;
+                DWORD photoId = 0;
+                line[lineLen] = '\0';
+                if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), path, sizeof(path))
+                    && lstrcmpiA(storedHash, hash) == 0
+                    && storedSize == sizeBytes) found = 1;
+                lineLen = 0;
+            } else if (lineLen + 1 < sizeof(line)) {
+                line[lineLen++] = ch;
+            }
+        }
+    }
+    if (!found && lineLen > 0) {
+        char storedHash[32], status[32], path[MAX_PATH];
+        U64 storedSize = 0;
+        DWORD photoId = 0;
+        line[lineLen] = '\0';
+        if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), path, sizeof(path))
+            && lstrcmpiA(storedHash, hash) == 0
+            && storedSize == sizeBytes) found = 1;
+    }
+    CloseHandle(file);
+    if (found) LogMessage("Local uploaded bucket dedupe hit: bucket=%s hash=%s size=%I64u", bucket, hash, sizeBytes);
+    return found;
+}
+
+static void MarkUploadedStatus(const char *hash, U64 sizeBytes, DWORD photoId, const char *status, const char *path)
+{
+    char bucket[MAX_PATH];
+    char line[MAX_PATH + 256];
+    if (UploadedContains(hash, sizeBytes)) return;
+    if (!UploadedBucketPath(hash, bucket, sizeof(bucket))) {
+        LogMessage("Could not build uploaded bucket path: hash=%s", hash);
+        return;
+    }
+    SbSnprintf(line, sizeof(line), "%s\t%I64u\t%lu\t%s\t%s\r\n", hash, sizeBytes, (unsigned long)photoId, status, path);
+    AppendLine(bucket, line);
+    LogMessage("Marked uploaded bucket: hash=%s size=%I64u photo_id=%lu status=%s path=%s", hash, sizeBytes, (unsigned long)photoId, status, path);
+}
+
+static void MigrateUploadedCache(void)
+{
+    HANDLE file;
+    char buffer[4096], line[MAX_PATH + 256], migrated[MAX_PATH];
+    DWORD got, i, lineLen = 0, migratedCount = 0, malformed = 0;
+
+    if (GetFileAttributesA(g_app.uploadedPath) == INVALID_FILE_ATTRIBUTES) return;
+    file = CreateFileA(g_app.uploadedPath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMessage("Uploaded cache migration skipped: could not open path=%s error=%lu", g_app.uploadedPath, GetLastError());
+        return;
+    }
+    LogMessage("Uploaded cache migration start: source=%s target_dir=%s", g_app.uploadedPath, g_app.uploadedDir);
+    while (ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
+        for (i = 0; i < got; i++) {
+            char ch = buffer[i];
+            if (ch == '\r') continue;
+            if (ch == '\n') {
+                char storedHash[32], status[32], source[MAX_PATH];
+                U64 storedSize = 0;
+                DWORD photoId = 0;
+                line[lineLen] = '\0';
+                if (lineLen > 0 && ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), source, sizeof(source))) {
+                    MarkUploadedStatus(storedHash, storedSize, photoId, status[0] ? status : "uploaded", source);
+                    migratedCount++;
+                } else if (lineLen > 0) {
+                    malformed++;
+                    LogMessage("Uploaded cache migration ignored malformed row: %s", line);
+                }
+                lineLen = 0;
+            } else if (lineLen + 1 < sizeof(line)) {
+                line[lineLen++] = ch;
+            }
+        }
+    }
+    if (lineLen > 0) {
+        char storedHash[32], status[32], source[MAX_PATH];
+        U64 storedSize = 0;
+        DWORD photoId = 0;
+        line[lineLen] = '\0';
+        if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), source, sizeof(source))) {
+            MarkUploadedStatus(storedHash, storedSize, photoId, status[0] ? status : "uploaded", source);
+            migratedCount++;
+        } else {
+            malformed++;
+            LogMessage("Uploaded cache migration ignored malformed row: %s", line);
+        }
+    }
+    CloseHandle(file);
+    SafeCopy(migrated, sizeof(migrated), g_app.uploadedPath);
+    lstrcatA(migrated, ".migrated");
+    DeleteFileA(migrated);
+    if (MoveFileA(g_app.uploadedPath, migrated)) {
+        LogMessage("Uploaded cache migration complete: migrated=%lu malformed=%lu archived=%s", (unsigned long)migratedCount, (unsigned long)malformed, migrated);
+    } else {
+        LogMessage("Uploaded cache migration completed but archive rename failed: migrated=%lu malformed=%lu error=%lu", (unsigned long)migratedCount, (unsigned long)malformed, GetLastError());
+    }
+}
+
+static int QueuePushInternal(DWORD id, const char *path, int persist, int countFound)
+{
+    int result = 0;
+    DWORD queueCount = 0;
+    DWORD queueCapacity = 0;
+    if (id == 0) id = AllocateQueueId();
     EnterCriticalSection(&g_app.lock);
     if (!QueueContainsLocked(path)) {
         if (g_app.queueCount == g_app.queueCapacity) {
@@ -368,64 +735,142 @@ static void QueuePushInternal(const char *path, int persist, int countFound)
             }
         }
         if (g_app.queueCount < g_app.queueCapacity) {
+            g_app.queue[g_app.queueCount].id = id;
             SafeCopy(g_app.queue[g_app.queueCount].path, sizeof(g_app.queue[g_app.queueCount].path), path);
             g_app.queueCount++;
             if (persist) {
-                AppendLine(g_app.queuePath, path);
-                AppendLine(g_app.queuePath, "\r\n");
+                AppendQueueRecord(id, path);
             }
             if (countFound) {
                 InterlockedIncrement(&g_app.totalFound);
             }
             SetEvent(g_app.queueEvent);
+            result = 1;
         }
+    } else {
+        result = -1;
     }
+    queueCount = g_app.queueCount;
+    queueCapacity = g_app.queueCapacity;
     LeaveCriticalSection(&g_app.lock);
     PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+    if (!persist && !countFound) {
+        return result;
+    }
+    if (result == 1) {
+        LogMessage("Queue add: id=%lu path=%s persist=%s count_found=%s", (unsigned long)id, path, persist ? "yes" : "no", countFound ? "yes" : "no");
+    } else if (result == -1) {
+        LogMessage("Queue duplicate suppressed: path=%s", path);
+    } else {
+        LogMessage("Queue add failed: path=%s capacity=%lu count=%lu", path, (unsigned long)queueCapacity, (unsigned long)queueCount);
+    }
+    return result;
 }
 
 static void QueuePush(const char *path)
 {
-    QueuePushInternal(path, 1, 1);
+    QueuePushInternal(0, path, 1, 1);
 }
 
-static void QueueRequeue(const char *path)
+static void QueueRequeue(DWORD id, const char *path)
 {
-    QueuePushInternal(path, 1, 0);
+    QueuePushInternal(id, path, 0, 0);
 }
 
-static int QueuePop(char *path, DWORD pathSize)
+static int QueuePop(DWORD *id, char *path, DWORD pathSize)
 {
     DWORD i;
+    DWORD remaining = 0;
     int hasItem = 0;
     EnterCriticalSection(&g_app.lock);
     if (g_app.queueCount > 0) {
+        if (id) *id = g_app.queue[0].id;
         SafeCopy(path, pathSize, g_app.queue[0].path);
         for (i = 1; i < g_app.queueCount; i++) {
             g_app.queue[i - 1] = g_app.queue[i];
         }
         g_app.queueCount--;
-        RewriteQueueFileLocked();
+        remaining = g_app.queueCount;
         hasItem = 1;
     }
     LeaveCriticalSection(&g_app.lock);
+    if (hasItem) LogMessage("Queue pop: id=%lu path=%s remaining=%lu", id ? (unsigned long)*id : 0, path, (unsigned long)remaining);
     return hasItem;
 }
 
-static void LoadQueue(void)
+static int CompareDword(const void *a, const void *b)
 {
-    HANDLE file = CreateFileA(g_app.queuePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    char buffer[4096];
-    char line[MAX_PATH];
-    DWORD got, i, lineLen = 0;
-    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD left = *(const DWORD *)a;
+    DWORD right = *(const DWORD *)b;
+    return left < right ? -1 : (left > right ? 1 : 0);
+}
+
+static int DoneIdContains(const DWORD *ids, DWORD count, DWORD id)
+{
+    DWORD low = 0;
+    DWORD high = count;
+    while (low < high) {
+        DWORD mid = low + (high - low) / 2;
+        if (ids[mid] == id) return 1;
+        if (ids[mid] < id) low = mid + 1;
+        else high = mid;
+    }
+    return 0;
+}
+
+static int ParseQueueLine(char *line, DWORD *id, char *path, DWORD pathSize, int assignLegacyId)
+{
+    char *tab;
+    char *end;
+    if (id) *id = 0;
+    if (pathSize > 0) path[0] = '\0';
+    end = strpbrk(line, "\r\n");
+    if (end) *end = '\0';
+    if (line[0] == '\0') return 0;
+    tab = strchr(line, '\t');
+    if (!tab) {
+        if (!assignLegacyId) return 0;
+        if (id) *id = AllocateQueueId();
+        SafeCopy(path, pathSize, line);
+        return 1;
+    }
+    *tab++ = '\0';
+    if (id) *id = strtoul(line, NULL, 10);
+    SafeCopy(path, pathSize, tab);
+    return id && *id > 0 && path[0] != '\0';
+}
+
+static DWORD *LoadDoneIds(DWORD *doneCount)
+{
+    HANDLE file = CreateFileA(g_app.queueDonePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    char buffer[4096], line[256];
+    DWORD got, i, lineLen = 0, count = 0, capacity = 0;
+    DWORD *ids = NULL;
+    if (doneCount) *doneCount = 0;
+    if (file == INVALID_HANDLE_VALUE) return NULL;
     while (ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
         for (i = 0; i < got; i++) {
             char ch = buffer[i];
             if (ch == '\r') continue;
             if (ch == '\n') {
                 line[lineLen] = '\0';
-                if (lineLen > 0) QueuePushInternal(line, 0, 0);
+                if (lineLen > 0) {
+                    DWORD id = strtoul(line, NULL, 10);
+                    if (id > 0) {
+                        if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
+                        if (count == capacity) {
+                            DWORD next = capacity == 0 ? 256 : capacity * 2;
+                            DWORD *newIds = ids
+                                ? (DWORD *)HeapReAlloc(GetProcessHeap(), 0, ids, sizeof(DWORD) * next)
+                                : (DWORD *)HeapAlloc(GetProcessHeap(), 0, sizeof(DWORD) * next);
+                            if (newIds) {
+                                ids = newIds;
+                                capacity = next;
+                            }
+                        }
+                        if (count < capacity) ids[count++] = id;
+                    }
+                }
                 lineLen = 0;
             } else if (lineLen + 1 < sizeof(line)) {
                 line[lineLen++] = ch;
@@ -433,10 +878,162 @@ static void LoadQueue(void)
         }
     }
     if (lineLen > 0) {
+        DWORD id;
         line[lineLen] = '\0';
-        QueuePushInternal(line, 0, 0);
+        id = strtoul(line, NULL, 10);
+        if (id > 0) {
+            if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
+            if (count == capacity) {
+                DWORD *newIds = ids
+                    ? (DWORD *)HeapReAlloc(GetProcessHeap(), 0, ids, sizeof(DWORD) * (capacity + 1))
+                    : (DWORD *)HeapAlloc(GetProcessHeap(), 0, sizeof(DWORD));
+                if (newIds) {
+                    ids = newIds;
+                    capacity++;
+                }
+            }
+            if (count < capacity) ids[count++] = id;
+        }
     }
     CloseHandle(file);
+    if (count > 1) qsort(ids, count, sizeof(DWORD), CompareDword);
+    if (doneCount) *doneCount = count;
+    return ids;
+}
+
+static void LoadQueue(void)
+{
+    HANDLE file;
+    DWORD *doneIds;
+    DWORD doneCount = 0;
+    char buffer[4096];
+    char line[MAX_PATH + 64];
+    DWORD got, i, lineLen = 0, loaded = 0, skipped = 0, malformed = 0, legacyRows = 0;
+    LoadNextQueueId();
+    doneIds = LoadDoneIds(&doneCount);
+    file = CreateFileA(g_app.queuePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMessage("Queue loaded from disk: path=%s count=0 done_count=%lu", g_app.queuePath, (unsigned long)doneCount);
+        if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
+        return;
+    }
+    while (ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
+        for (i = 0; i < got; i++) {
+            char ch = buffer[i];
+            if (ch == '\r') continue;
+            if (ch == '\n') {
+                DWORD id = 0;
+                char path[MAX_PATH];
+                line[lineLen] = '\0';
+                if (lineLen > 0 && strchr(line, '\t') == NULL) legacyRows++;
+                if (lineLen > 0 && ParseQueueLine(line, &id, path, sizeof(path), 1)) {
+                    if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
+                    if (!DoneIdContains(doneIds, doneCount, id)) {
+                        QueuePushInternal(id, path, 0, 0);
+                        loaded++;
+                    } else {
+                        skipped++;
+                    }
+                } else if (lineLen > 0) {
+                    malformed++;
+                    LogMessage("Queue malformed row ignored: %s", line);
+                }
+                lineLen = 0;
+            } else if (lineLen + 1 < sizeof(line)) {
+                line[lineLen++] = ch;
+            }
+        }
+    }
+    if (lineLen > 0) {
+        DWORD id = 0;
+        char path[MAX_PATH];
+        line[lineLen] = '\0';
+        if (strchr(line, '\t') == NULL) legacyRows++;
+        if (ParseQueueLine(line, &id, path, sizeof(path), 1)) {
+            if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
+            if (!DoneIdContains(doneIds, doneCount, id)) {
+                QueuePushInternal(id, path, 0, 0);
+                loaded++;
+            } else {
+                skipped++;
+            }
+        } else {
+            malformed++;
+            LogMessage("Queue malformed row ignored: %s", line);
+        }
+    }
+    CloseHandle(file);
+    if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
+    SaveNextQueueId();
+    LogMessage("Queue loaded from disk: path=%s loaded=%lu skipped_done=%lu done_count=%lu malformed=%lu legacy_rows=%lu memory_count=%lu",
+        g_app.queuePath,
+        (unsigned long)loaded,
+        (unsigned long)skipped,
+        (unsigned long)doneCount,
+        (unsigned long)malformed,
+        (unsigned long)legacyRows,
+        (unsigned long)g_app.queueCount);
+    if (legacyRows > 0) {
+        g_app.queueDoneSinceCompact = 1000;
+        CompactQueueIfNeeded();
+    }
+}
+
+static U64 FileSizeOrZero(const char *path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    ULARGE_INTEGER size;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) return 0;
+    size.LowPart = data.nFileSizeLow;
+    size.HighPart = data.nFileSizeHigh;
+    return size.QuadPart;
+}
+
+static void CompactQueueIfNeeded(void)
+{
+    char tmp[MAX_PATH];
+    HANDLE file;
+    HANDLE doneFile;
+    DWORD i, written;
+    DWORD pendingCount;
+    U64 doneSize;
+
+    doneSize = FileSizeOrZero(g_app.queueDonePath);
+    if (g_app.queueDoneSinceCompact < 1000 && doneSize <= 1048576ULL) return;
+
+    PathJoin(tmp, sizeof(tmp), g_app.appDir, "queue.tmp");
+    EnterCriticalSection(&g_app.lock);
+    pendingCount = g_app.queueCount;
+    file = CreateFileA(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LeaveCriticalSection(&g_app.lock);
+        LogMessage("Queue compaction failed: could not create temp path=%s error=%lu", tmp, GetLastError());
+        return;
+    }
+    for (i = 0; i < g_app.queueCount; i++) {
+        char line[MAX_PATH + 64];
+        SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)g_app.queue[i].id, g_app.queue[i].path);
+        if (!WriteFile(file, line, lstrlenA(line), &written, NULL)) {
+            CloseHandle(file);
+            DeleteFileA(tmp);
+            LeaveCriticalSection(&g_app.lock);
+            LogMessage("Queue compaction failed: write error=%lu", GetLastError());
+            return;
+        }
+    }
+    FlushFileBuffers(file);
+    CloseHandle(file);
+    if (!MoveFileExA(tmp, g_app.queuePath, MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileA(tmp);
+        LeaveCriticalSection(&g_app.lock);
+        LogMessage("Queue compaction failed: replace error=%lu", GetLastError());
+        return;
+    }
+    doneFile = CreateFileA(g_app.queueDonePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (doneFile != INVALID_HANDLE_VALUE) CloseHandle(doneFile);
+    g_app.queueDoneSinceCompact = 0;
+    LeaveCriticalSection(&g_app.lock);
+    LogMessage("Queue compaction complete: pending=%lu done_size=%I64u", (unsigned long)pendingCount, doneSize);
 }
 
 static int ComputeFnv1a64(const char *path, char *hex, DWORD hexSize, U64 *sizeBytes)
@@ -460,44 +1057,6 @@ static int ComputeFnv1a64(const char *path, char *hex, DWORD hexSize, U64 *sizeB
     hex[hexSize - 1] = '\0';
     if (sizeBytes) *sizeBytes = total;
     return 1;
-}
-
-static int UploadedContains(const char *hash, U64 sizeBytes)
-{
-    HANDLE file = CreateFileA(g_app.uploadedPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    char buffer[4096], needle[64], line[1024];
-    DWORD got, i, lineLen = 0;
-    int found = 0;
-    if (file == INVALID_HANDLE_VALUE) return 0;
-    SbSnprintf(needle, sizeof(needle) - 1, "%s\t%I64u\t", hash, sizeBytes);
-    needle[sizeof(needle) - 1] = '\0';
-    while (!found && ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
-        for (i = 0; i < got && !found; i++) {
-            char ch = buffer[i];
-            if (ch == '\r') continue;
-            if (ch == '\n') {
-                line[lineLen] = '\0';
-                if (strncmp(line, needle, lstrlenA(needle)) == 0) found = 1;
-                lineLen = 0;
-            } else if (lineLen + 1 < sizeof(line)) {
-                line[lineLen++] = ch;
-            }
-        }
-    }
-    if (!found && lineLen > 0) {
-        line[lineLen] = '\0';
-        if (strncmp(line, needle, lstrlenA(needle)) == 0) found = 1;
-    }
-    CloseHandle(file);
-    return found;
-}
-
-static void MarkUploaded(const char *hash, U64 sizeBytes, const char *path)
-{
-    char line[MAX_PATH + 128];
-    SbSnprintf(line, sizeof(line) - 1, "%s\t%I64u\t%s\r\n", hash, sizeBytes, path);
-    line[sizeof(line) - 1] = '\0';
-    AppendLine(g_app.uploadedPath, line);
 }
 
 typedef struct ParsedUrl {
@@ -647,6 +1206,28 @@ static int JsonBoolValue(const char *json, const char *key, int *value)
     return 0;
 }
 
+static int JsonDwordValue(const char *json, const char *key, DWORD *value)
+{
+    char needle[128];
+    const char *p;
+    DWORD parsed = 0;
+    SbSnprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
+    needle[sizeof(needle) - 1] = '\0';
+    p = strstr(json, needle);
+    if (!p) return 0;
+    p = strchr(p + lstrlenA(needle), ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p < '0' || *p > '9') return 0;
+    while (*p >= '0' && *p <= '9') {
+        parsed = parsed * 10 + (DWORD)(*p - '0');
+        p++;
+    }
+    if (value) *value = parsed;
+    return 1;
+}
+
 static void UrlEncode(const char *src, char *dst, DWORD dstSize)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -695,11 +1276,12 @@ static void BuildRegisterEndpoint(const char *siteUrl, char *endpoint, DWORD end
     }
 }
 
-static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
+static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
 {
     char url[2048], encodedHash[128], headers[1800], response[4096];
     DWORD status = 0;
     int exists = 0;
+    if (photoId) *photoId = 0;
     if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') return 0;
     UrlEncode(hash, encodedHash, sizeof(encodedHash));
     SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
@@ -714,8 +1296,16 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
         url,
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken));
-    if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) return 0;
-    if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) return 1;
+    if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) {
+        LogMessage("Quick checksum request failed before response: hash=%s size=%I64u", hash, sizeBytes);
+        return 0;
+    }
+    if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) {
+        JsonDwordValue(response, "photo_id", photoId);
+        LogMessage("Server dedupe hit: hash=%s size=%I64u photo_id=%lu", hash, sizeBytes, photoId ? (unsigned long)*photoId : 0);
+        return 1;
+    }
+    LogMessage("Server dedupe miss or unavailable: status=%lu hash=%s size=%I64u", status, hash, sizeBytes);
     return 0;
 }
 
@@ -788,6 +1378,8 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     DWORD got, wrote, status = 0, statusSize = sizeof(DWORD), used = 0;
     BYTE buf[65536];
     int ok = 0;
+    int duplicate = 0;
+    DWORD photoId = 0;
     const char *slash = strrchr(path, '\\');
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
     SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
@@ -832,31 +1424,54 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         response[used] = '\0';
     }
     ok = (status == 200 || status == 201) && strstr(response, "\"success\":true") != NULL;
+    if (ok) {
+        JsonDwordValue(response, "photo_id", &photoId);
+        JsonBoolValue(response, "duplicate", &duplicate);
+    }
+    LogMessage("Raw upload completed: status=%lu ok=%s response_bytes=%lu path=%s hash=%s size=%I64u",
+        status,
+        ok ? "yes" : "no",
+        used,
+        path,
+        hash,
+        sizeBytes);
 done:
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
     if (request) InternetCloseHandle(request);
     if (connect) InternetCloseHandle(connect);
     if (internet) InternetCloseHandle(internet);
-    if (ok) MarkUploaded(hash, sizeBytes, path);
+    if (ok) MarkUploadedStatus(hash, sizeBytes, photoId, duplicate ? "duplicate" : "uploaded", path);
     return ok;
 }
 
-static void ProcessPath(const char *path)
+static void ProcessPath(DWORD queueId, const char *path)
 {
     char hash[32];
     U64 sizeBytes = 0;
+    DWORD photoId = 0;
     DWORD start = GetTickCount();
+    LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
     if (!ComputeFnv1a64(path, hash, sizeof(hash), &sizeBytes)) {
         InterlockedIncrement(&g_app.totalFailed);
+        LogMessage("Process failed: could not hash path=%s", path);
+        AppendQueueDone(queueId, "failed_permanent");
+        CompactQueueIfNeeded();
         return;
     }
+    LogMessage("Process hash complete: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
     if (UploadedContains(hash, sizeBytes)) {
         InterlockedIncrement(&g_app.totalSkippedLocal);
+        LogMessage("Process skipped local dedupe: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        AppendQueueDone(queueId, "local_duplicate");
+        CompactQueueIfNeeded();
         return;
     }
-    if (CheckServerKnowsFile(hash, sizeBytes)) {
-        MarkUploaded(hash, sizeBytes, path);
+    if (CheckServerKnowsFile(hash, sizeBytes, &photoId)) {
+        MarkUploadedStatus(hash, sizeBytes, photoId, "server_known", path);
         InterlockedIncrement(&g_app.totalKnown);
+        LogMessage("Process skipped server dedupe: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        AppendQueueDone(queueId, "server_known");
+        CompactQueueIfNeeded();
         return;
     }
     if (UploadFileRaw(path, hash, sizeBytes)) {
@@ -865,9 +1480,13 @@ static void ProcessPath(const char *path)
         g_app.totalUploadMillis += elapsed;
         LeaveCriticalSection(&g_app.lock);
         InterlockedIncrement(&g_app.totalUploaded);
+        LogMessage("Process uploaded: path=%s hash=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
+        AppendQueueDone(queueId, "uploaded");
+        CompactQueueIfNeeded();
     } else {
         InterlockedIncrement(&g_app.totalFailed);
-        QueueRequeue(path);
+        LogMessage("Process upload failed; requeueing: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        QueueRequeue(queueId, path);
         Sleep(5000);
     }
 }
@@ -876,15 +1495,16 @@ static DWORD WINAPI ProcessorThread(LPVOID param)
 {
     HANDLE handles[2];
     char path[MAX_PATH];
+    DWORD queueId = 0;
     (void)param;
     handles[0] = g_app.stopEvent;
     handles[1] = g_app.queueEvent;
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         if (wait == WAIT_OBJECT_0) break;
-        while (QueuePop(path, sizeof(path))) {
+        while (QueuePop(&queueId, path, sizeof(path))) {
             InterlockedExchange(&g_app.processing, 1);
-            ProcessPath(path);
+            ProcessPath(queueId, path);
             InterlockedExchange(&g_app.processing, 0);
             PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
             if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
@@ -893,7 +1513,7 @@ static DWORD WINAPI ProcessorThread(LPVOID param)
     return 0;
 }
 
-static void ScanFolder(const char *folder, int depth, int maxDepth)
+static void ScanFolder(const char *folder, int depth, int maxDepth, ScanStats *stats)
 {
     char pattern[MAX_PATH], child[MAX_PATH];
     WIN32_FIND_DATAA data;
@@ -901,14 +1521,30 @@ static void ScanFolder(const char *folder, int depth, int maxDepth)
     if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return;
     PathJoin(pattern, sizeof(pattern), folder, "*");
     find = FindFirstFileA(pattern, &data);
-    if (find == INVALID_HANDLE_VALUE) return;
+    if (find == INVALID_HANDLE_VALUE) {
+        if (stats) stats->errors++;
+        LogMessage("Scan folder open failed: folder=%s error=%lu", folder, GetLastError());
+        return;
+    }
+    if (stats) stats->folders++;
     do {
         if (lstrcmpA(data.cFileName, ".") == 0 || lstrcmpA(data.cFileName, "..") == 0) continue;
         PathJoin(child, sizeof(child), folder, data.cFileName);
         if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            if (depth < maxDepth) ScanFolder(child, depth + 1, maxDepth);
+            if (depth < maxDepth) ScanFolder(child, depth + 1, maxDepth, stats);
         } else if (EndsWithNoCase(data.cFileName, ".cr2")) {
-            QueuePush(child);
+            int queued;
+            if (stats) {
+                stats->files++;
+                stats->cr2++;
+            }
+            queued = QueuePushInternal(0, child, 1, 1);
+            if (stats) {
+                if (queued == 1) stats->queued++;
+                else if (queued == -1) stats->duplicateQueue++;
+            }
+        } else if (stats) {
+            stats->files++;
         }
     } while (FindNextFileA(find, &data));
     FindClose(find);
@@ -922,9 +1558,20 @@ typedef struct ScanRequest {
 static DWORD WINAPI ScanDriveThread(LPVOID param)
 {
     ScanRequest *request = (ScanRequest *)param;
+    ScanStats stats;
+    ZeroMemory(&stats, sizeof(stats));
     InterlockedIncrement(&g_app.activeScans);
     InterlockedIncrement(&g_app.totalScannedDrives);
-    ScanFolder(request->root, 0, request->maxDepth);
+    LogMessage("Scan drive start: root=%s max_depth=%d", request->root, request->maxDepth);
+    ScanFolder(request->root, 0, request->maxDepth, &stats);
+    LogMessage("Scan drive complete: root=%s folders=%lu files=%lu cr2=%lu queued=%lu duplicate_queue=%lu errors=%lu",
+        request->root,
+        (unsigned long)stats.folders,
+        (unsigned long)stats.files,
+        (unsigned long)stats.cr2,
+        (unsigned long)stats.queued,
+        (unsigned long)stats.duplicateQueue,
+        (unsigned long)stats.errors);
     InterlockedDecrement(&g_app.activeScans);
     HeapFree(GetProcessHeap(), 0, request);
     PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
@@ -941,21 +1588,27 @@ static void StartScanDrive(char letter, int maxDepth)
     request->root[2] = '\\';
     request->root[3] = '\0';
     request->maxDepth = maxDepth;
+    LogMessage("Scan drive queued: root=%s max_depth=%d", request->root, maxDepth);
     thread = CreateThread(NULL, 0, ScanDriveThread, request, 0, NULL);
     if (thread) CloseHandle(thread);
-    else HeapFree(GetProcessHeap(), 0, request);
+    else {
+        LogMessage("Scan drive thread create failed: root=%s error=%lu", request->root, GetLastError());
+        HeapFree(GetProcessHeap(), 0, request);
+    }
 }
 
 static void ScanExistingDrives(int recursive)
 {
     DWORD mask = GetLogicalDrives();
     int i;
+    LogMessage("Scan existing drives requested: recursive=%s mask=0x%08lx", recursive ? "yes" : "no", (unsigned long)mask);
     for (i = 0; i < 26; i++) {
         if (mask & (1UL << i)) {
             char root[] = "A:\\";
             UINT type;
             root[0] = (char)('A' + i);
             type = GetDriveTypeA(root);
+            LogMessage("Scan existing drive candidate: root=%s type=%u", root, (unsigned)type);
             if (type == DRIVE_REMOVABLE || type == DRIVE_FIXED) {
                 StartScanDrive((char)('A' + i), recursive ? 255 : 3);
             }
@@ -968,50 +1621,184 @@ static void HandleDeviceArrival(LPARAM lp)
     DEV_BROADCAST_HDR *hdr = (DEV_BROADCAST_HDR *)lp;
     DWORD mask;
     int i;
-    if (!hdr || hdr->dbch_devicetype != DBT_DEVTYP_VOLUME) return;
+    if (!hdr) {
+        LogMessage("Device arrival ignored: missing header.");
+        return;
+    }
+    if (hdr->dbch_devicetype != DBT_DEVTYP_VOLUME) {
+        LogMessage("Device arrival ignored: devicetype=%lu", (unsigned long)hdr->dbch_devicetype);
+        return;
+    }
     mask = ((DEV_BROADCAST_VOLUME *)hdr)->dbcv_unitmask;
+    LogMessage("Device arrival volume mask=0x%08lx", (unsigned long)mask);
     for (i = 0; i < 26; i++) {
         if (mask & (1UL << i)) StartScanDrive((char)('A' + i), 3);
     }
 }
 
+static DWORD NotifyIconDataSize(void)
+{
+#ifdef NOTIFYICONDATA_V2_SIZE
+    return NOTIFYICONDATA_V2_SIZE;
+#else
+    return sizeof(NOTIFYICONDATAA);
+#endif
+}
+
+static void InitNotifyIconData(NOTIFYICONDATAA *nid, HWND hwnd)
+{
+    ZeroMemory(nid, sizeof(*nid));
+    nid->cbSize = NotifyIconDataSize();
+    nid->hWnd = hwnd;
+    nid->uID = 1;
+}
+
 static void AddTrayIcon(HWND hwnd)
 {
     NOTIFYICONDATAA nid;
-    ZeroMemory(&nid, sizeof(nid));
-    nid.cbSize = sizeof(nid);
-    nid.hWnd = hwnd;
-    nid.uID = 1;
+    BOOL ok;
+    char tip[128];
+    InitNotifyIconData(&nid, hwnd);
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = AppIcon();
-    SafeCopy(nid.szTip, sizeof(nid.szTip), APP_NAME);
-    Shell_NotifyIconA(NIM_ADD, &nid);
+    BuildTrayTooltip(tip, sizeof(tip));
+    SafeCopy(nid.szTip, sizeof(nid.szTip), tip);
+    ok = Shell_NotifyIconA(NIM_ADD, &nid);
+    LogMessage("Tray icon add: ok=%s error=%lu cbSize=%lu", ok ? "yes" : "no", ok ? 0 : GetLastError(), (unsigned long)nid.cbSize);
+    if (ok) {
+        nid.uVersion = NOTIFYICON_VERSION;
+        ok = Shell_NotifyIconA(NIM_SETVERSION, &nid);
+        LogMessage("Tray icon set version: ok=%s error=%lu version=%u", ok ? "yes" : "no", ok ? 0 : GetLastError(), (unsigned)nid.uVersion);
+    }
 }
 
 static void RemoveTrayIcon(HWND hwnd)
 {
     NOTIFYICONDATAA nid;
-    ZeroMemory(&nid, sizeof(nid));
-    nid.cbSize = sizeof(nid);
-    nid.hWnd = hwnd;
-    nid.uID = 1;
-    Shell_NotifyIconA(NIM_DELETE, &nid);
+    BOOL ok;
+    InitNotifyIconData(&nid, hwnd);
+    ok = Shell_NotifyIconA(NIM_DELETE, &nid);
+    LogMessage("Tray icon remove: ok=%s error=%lu", ok ? "yes" : "no", ok ? 0 : GetLastError());
+}
+
+static const char *PluralPhoto(LONG value)
+{
+    return value == 1 ? "photo" : "photos";
+}
+
+static void BuildTrayTooltip(char *tip, DWORD tipSize)
+{
+    LONG found;
+    LONG alreadyUploaded;
+    LONG pending;
+    LONG active;
+    LONG processing;
+    const char *status = "Idle";
+
+    EnterCriticalSection(&g_app.lock);
+    found = g_app.totalFound;
+    alreadyUploaded = g_app.totalKnown + g_app.totalSkippedLocal;
+    pending = (LONG)g_app.queueCount;
+    active = g_app.activeScans;
+    processing = g_app.processing;
+    LeaveCriticalSection(&g_app.lock);
+
+    if (active > 0 && (processing || pending > 0)) status = "Scanning/uploading";
+    else if (processing || pending > 0) status = "Uploading";
+    else if (active > 0) status = "Scanning";
+
+    SbSnprintf(tip, tipSize, "SpiceBush: %s. %ld %s found, %ld already uploaded, %ld waiting.",
+        status,
+        found,
+        PluralPhoto(found),
+        alreadyUploaded,
+        pending);
+}
+
+static void UpdateTrayTooltip(HWND hwnd)
+{
+    NOTIFYICONDATAA nid;
+    char tip[128];
+    if (!hwnd) return;
+    InitNotifyIconData(&nid, hwnd);
+    nid.uFlags = NIF_TIP;
+    BuildTrayTooltip(tip, sizeof(tip));
+    SafeCopy(nid.szTip, sizeof(nid.szTip), tip);
+    Shell_NotifyIconA(NIM_MODIFY, &nid);
+}
+
+static void ShowFallbackBalloon(HWND owner, const char *title, const char *message, UINT timeoutMillis)
+{
+    RECT workArea;
+    int width = 280;
+    int height = 86;
+    int x;
+    int y;
+
+    SafeCopy(g_app.balloonTitle, sizeof(g_app.balloonTitle), title);
+    SafeCopy(g_app.balloonMessage, sizeof(g_app.balloonMessage), message);
+
+    if (!g_app.balloonWindow) {
+        g_app.balloonWindow = CreateWindowExA(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            "SpiceBushBalloon",
+            APP_NAME,
+            WS_POPUP | WS_BORDER,
+            0,
+            0,
+            width,
+            height,
+            owner,
+            NULL,
+            g_app.instance,
+            NULL);
+    }
+
+    if (!g_app.balloonWindow) {
+        LogMessage("Fallback balloon create failed: error=%lu", GetLastError());
+        return;
+    }
+
+    if (!SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    x = workArea.right - width - 12;
+    y = workArea.bottom - height - 12;
+    if (x < workArea.left) x = workArea.left;
+    if (y < workArea.top) y = workArea.top;
+
+    SetWindowPos(g_app.balloonWindow, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(g_app.balloonWindow, NULL, TRUE);
+    SetTimer(g_app.balloonWindow, 1, timeoutMillis > 0 ? timeoutMillis : 10000, NULL);
+    LogMessage("Fallback balloon show: title=%s message=%s timeout=%u", title, message, (unsigned)timeoutMillis);
 }
 
 static void ShowTrayBalloon(HWND hwnd, const char *title, const char *message, UINT timeoutMillis)
 {
     NOTIFYICONDATAA nid;
-    ZeroMemory(&nid, sizeof(nid));
-    nid.cbSize = sizeof(nid);
-    nid.hWnd = hwnd;
-    nid.uID = 1;
-    nid.uFlags = NIF_INFO;
+    BOOL ok;
+    InitNotifyIconData(&nid, hwnd);
+    nid.uFlags = NIF_INFO | NIF_ICON | NIF_TIP;
+    nid.hIcon = AppIcon();
+    SafeCopy(nid.szTip, sizeof(nid.szTip), APP_NAME);
     SafeCopy(nid.szInfoTitle, sizeof(nid.szInfoTitle), title);
     SafeCopy(nid.szInfo, sizeof(nid.szInfo), message);
     nid.uTimeout = timeoutMillis;
     nid.dwInfoFlags = NIIF_INFO;
-    Shell_NotifyIconA(NIM_MODIFY, &nid);
+    ok = Shell_NotifyIconA(NIM_MODIFY, &nid);
+    LogMessage("Tray balloon show: ok=%s error=%lu title=%s message=%s timeout=%u cbSize=%lu",
+        ok ? "yes" : "no",
+        ok ? 0 : GetLastError(),
+        title,
+        message,
+        (unsigned)timeoutMillis,
+        (unsigned long)nid.cbSize);
+    ShowFallbackBalloon(hwnd, title, message, timeoutMillis);
 }
 
 static void ShowTrayMenu(HWND hwnd)
@@ -1087,43 +1874,144 @@ static void ShowRegisterWindow(void)
 static void ShowStatsWindow(void)
 {
     if (!g_app.statsWindow) {
-        g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 430, 330, NULL, NULL, g_app.instance, NULL);
+        g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 460, 470, NULL, NULL, g_app.instance, NULL);
     }
     ShowWindow(g_app.statsWindow, SW_SHOWNORMAL);
     SetForegroundWindow(g_app.statsWindow);
     PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
 }
 
+static void FormatCount(LONG value, char *out, DWORD outSize)
+{
+    char raw[32];
+    char tmp[40];
+    int rawLen;
+    int rawPos;
+    int tmpPos = 0;
+    int digits = 0;
+
+    SbSnprintf(raw, sizeof(raw), "%ld", value);
+    rawLen = lstrlenA(raw);
+    for (rawPos = rawLen - 1; rawPos >= 0 && tmpPos < (int)sizeof(tmp) - 1; rawPos--) {
+        if (digits == 3) {
+            tmp[tmpPos++] = ',';
+            digits = 0;
+        }
+        tmp[tmpPos++] = raw[rawPos];
+        digits++;
+    }
+    rawPos = 0;
+    while (tmpPos > 0 && rawPos < (int)outSize - 1) {
+        out[rawPos++] = tmp[--tmpPos];
+    }
+    if (outSize > 0) out[rawPos] = '\0';
+}
+
+static void FormatDuration(U64 millis, char *out, DWORD outSize)
+{
+    U64 minutes = millis / 60000ULL;
+    U64 hours = minutes / 60ULL;
+    U64 days = hours / 24ULL;
+
+    minutes %= 60ULL;
+    hours %= 24ULL;
+
+    if (millis == 0) {
+        SafeCopy(out, outSize, "0 minutes");
+    } else if (days > 0) {
+        SbSnprintf(out, outSize, "%I64u days %I64u hours", days, hours);
+    } else if (hours > 0) {
+        SbSnprintf(out, outSize, "%I64u hours %I64u minutes", hours, minutes);
+    } else if (minutes > 0) {
+        SbSnprintf(out, outSize, "%I64u minutes", minutes);
+    } else {
+        SafeCopy(out, outSize, "less than 1 minute");
+    }
+}
+
 static void RefreshStats(void)
 {
     char text[256];
+    char foundText[32];
+    char uploadedText[32];
+    char alreadyText[32];
+    char pendingText[32];
+    char failedText[32];
+    char scannedText[32];
+    char activeText[32];
+    char queueText[32];
+    char etaText[80];
+    const char *status = "Idle";
     LONG pending;
+    LONG found;
+    LONG uploaded;
+    LONG alreadyUploaded;
+    LONG failed;
+    LONG scanned;
+    LONG active;
+    LONG processing;
+    LONG progress = 0;
     U64 avg = 0;
+    U64 etaMillis = 0;
     EnterCriticalSection(&g_app.lock);
     pending = (LONG)g_app.queueCount;
+    found = g_app.totalFound;
+    uploaded = g_app.totalUploaded;
+    alreadyUploaded = g_app.totalKnown + g_app.totalSkippedLocal;
+    failed = g_app.totalFailed;
+    scanned = g_app.totalScannedDrives;
+    active = g_app.activeScans;
+    processing = g_app.processing;
     if (g_app.totalUploaded > 0) avg = g_app.totalUploadMillis / (U64)g_app.totalUploaded;
     LeaveCriticalSection(&g_app.lock);
+    UpdateTrayTooltip(g_app.mainWindow);
     if (!g_app.statsWindow) return;
-    SbSnprintf(text, sizeof(text), "Total CR2 uploaded since launch: %ld", g_app.totalUploaded);
-    SetWindowTextA(g_app.statsLabels[0], text);
-    SbSnprintf(text, sizeof(text), "Total CR2 found since launch: %ld", g_app.totalFound);
+
+    if (found > 0) progress = ((uploaded + alreadyUploaded) * 100L) / found;
+    if (progress > 100) progress = 100;
+    if (active > 0 && (processing || pending > 0)) status = "Scanning and uploading";
+    else if (processing || pending > 0) status = "Uploading";
+    else if (active > 0) status = "Scanning";
+
+    FormatCount(found, foundText, sizeof(foundText));
+    FormatCount(uploaded, uploadedText, sizeof(uploadedText));
+    FormatCount(alreadyUploaded, alreadyText, sizeof(alreadyText));
+    FormatCount(pending, pendingText, sizeof(pendingText));
+    FormatCount(failed, failedText, sizeof(failedText));
+    FormatCount(scanned, scannedText, sizeof(scannedText));
+    FormatCount(active, activeText, sizeof(activeText));
+    FormatCount(pending, queueText, sizeof(queueText));
+    etaMillis = avg * (U64)pending;
+    FormatDuration(etaMillis, etaText, sizeof(etaText));
+
+    SetWindowTextA(g_app.statsLabels[0], "SwallowTail RAW CR2 Photo Uploads");
+    SbSnprintf(text, sizeof(text), "Status: %s", status);
     SetWindowTextA(g_app.statsLabels[1], text);
-    SbSnprintf(text, sizeof(text), "Already known by SwallowTail: %ld", g_app.totalKnown);
+    SbSnprintf(text, sizeof(text), "Upload progress: %ld%%", progress);
     SetWindowTextA(g_app.statsLabels[2], text);
-    SbSnprintf(text, sizeof(text), "Yet to upload: %ld of %ld (%ld%%)", pending, g_app.totalFound, g_app.totalFound > 0 ? (pending * 100L) / g_app.totalFound : 0L);
+    SbSnprintf(text, sizeof(text), "Upload queue: %s waiting", queueText);
     SetWindowTextA(g_app.statsLabels[3], text);
-    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
-    SetWindowTextA(g_app.statsLabels[4], text);
-    SbSnprintf(text, sizeof(text), "Skipped from local uploaded file: %ld", g_app.totalSkippedLocal);
+    SetWindowTextA(g_app.statsLabels[4], "");
+    SbSnprintf(text, sizeof(text), "Files found: %s", foundText);
     SetWindowTextA(g_app.statsLabels[5], text);
-    SbSnprintf(text, sizeof(text), "Failed attempts since launch: %ld", g_app.totalFailed);
+    SbSnprintf(text, sizeof(text), "Uploaded this session: %s", uploadedText);
     SetWindowTextA(g_app.statsLabels[6], text);
-    SbSnprintf(text, sizeof(text), "Scanned drives since launch: %ld", g_app.totalScannedDrives);
+    SbSnprintf(text, sizeof(text), "Already uploaded: %s", alreadyText);
     SetWindowTextA(g_app.statsLabels[7], text);
-    SbSnprintf(text, sizeof(text), "Active scans: %ld", g_app.activeScans);
+    SbSnprintf(text, sizeof(text), "Waiting to upload: %s", pendingText);
     SetWindowTextA(g_app.statsLabels[8], text);
-    SbSnprintf(text, sizeof(text), "Uploader: %s", g_app.processing ? "processing" : "idle");
+    SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
     SetWindowTextA(g_app.statsLabels[9], text);
+    SetWindowTextA(g_app.statsLabels[10], "");
+    SbSnprintf(text, sizeof(text), "Drives scanned this session: %s", scannedText);
+    SetWindowTextA(g_app.statsLabels[11], text);
+    SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
+    SetWindowTextA(g_app.statsLabels[12], text);
+    SetWindowTextA(g_app.statsLabels[13], "");
+    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms per file", avg);
+    SetWindowTextA(g_app.statsLabels[14], text);
+    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SetWindowTextA(g_app.statsLabels[15], text);
 }
 
 typedef struct RegisterRequest {
@@ -1271,11 +2159,11 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     (void)lp;
     switch (msg) {
     case WM_CREATE:
-        for (i = 0; i < 10; i++) {
-            g_app.statsLabels[i] = Label(hwnd, "", 18, 18 + i * 24, 380, 20);
+        for (i = 0; i < STATS_LABEL_COUNT; i++) {
+            g_app.statsLabels[i] = Label(hwnd, "", 18, 18 + i * 22, 410, 20);
         }
-        Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", 18, 260, 160, 28, 0);
-        Button(hwnd, ID_STATS_PING, "Ping", 188, 260, 70, 28, 0);
+        Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", 18, 388, 160, 28, 0);
+        Button(hwnd, ID_STATS_PING, "Ping", 188, 388, 70, 28, 0);
         SetTimer(hwnd, 1, 1000, NULL);
         RefreshStats();
         return 0;
@@ -1297,6 +2185,57 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+static LRESULT CALLBACK BalloonWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+    case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            RECT rc;
+            RECT titleRc;
+            RECT messageRc;
+            HBRUSH brush = CreateSolidBrush(RGB(255, 255, 225));
+
+            GetClientRect(hwnd, &rc);
+            FillRect(hdc, &rc, brush ? brush : (HBRUSH)(COLOR_INFOBK + 1));
+            if (brush) DeleteObject(brush);
+
+            SelectObject(hdc, AppFont());
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(0, 0, 0));
+
+            titleRc = rc;
+            titleRc.left += 12;
+            titleRc.top += 10;
+            titleRc.right -= 12;
+            titleRc.bottom = titleRc.top + 20;
+            DrawTextA(hdc, g_app.balloonTitle, -1, &titleRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            messageRc = rc;
+            messageRc.left += 12;
+            messageRc.top += 34;
+            messageRc.right -= 12;
+            messageRc.bottom -= 10;
+            DrawTextA(hdc, g_app.balloonMessage, -1, &messageRc, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
+
+            EndPaint(hwnd, &ps);
+        }
+        return 0;
+    case WM_TIMER:
+        KillTimer(hwnd, 1);
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+        KillTimer(hwnd, 1);
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    }
+
     return DefWindowProcA(hwnd, msg, wp, lp);
 }
 
@@ -1365,6 +2304,9 @@ static void RegisterClasses(void)
     wc.lpfnWndProc = StatsWndProc;
     wc.lpszClassName = "SpiceBushStats";
     RegisterClassA(&wc);
+    wc.lpfnWndProc = BalloonWndProc;
+    wc.lpszClassName = "SpiceBushBalloon";
+    RegisterClassA(&wc);
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int show)
@@ -1376,6 +2318,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     (void)show;
     ZeroMemory(&g_app, sizeof(g_app));
     g_app.instance = instance;
+    EnsureAppPaths();
+    g_app.instanceMutex = CreateMutexA(NULL, TRUE, "Local\\SpiceBush.SingleInstance");
+    if (!g_app.instanceMutex) {
+        LogMessage("SpiceBush could not create single-instance mutex; exiting. error=%lu", GetLastError());
+        return 1;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        LogMessage("SpiceBush duplicate instance detected; exiting before startup.");
+        CloseHandle(g_app.instanceMutex);
+        return 0;
+    }
     InitializeCriticalSection(&g_app.lock);
     g_app.queueEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     g_app.stopEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
@@ -1398,11 +2351,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
         DispatchMessageA(&msg);
     }
     DeleteCriticalSection(&g_app.lock);
+    if (g_app.balloonWindow) DestroyWindow(g_app.balloonWindow);
     if (g_app.registerLogoIcon) DestroyIcon(g_app.registerLogoIcon);
     if (g_app.uiFont) DeleteObject(g_app.uiFont);
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
     if (g_app.stopEvent) CloseHandle(g_app.stopEvent);
+    if (g_app.instanceMutex) CloseHandle(g_app.instanceMutex);
     LogMessage("SpiceBush exiting.");
     return 0;
 }

@@ -9,11 +9,12 @@ FreeBSD base systems without bundling a runtime. It uses:
 
 - `%APPDATA%\SpiceBush\spicebush.ini` for configuration.
 - `~/.spicebush/spicebush.ini` on FreeBSD.
-- `%APPDATA%\SpiceBush\queue.tsv` for pending file paths.
-- `~/.spicebush/queue.tsv` on FreeBSD.
-- `%APPDATA%\SpiceBush\uploaded.tsv` for quick hashes that uploaded or were
-  already known by SwallowTail.
-- `~/.spicebush/uploaded.tsv` on FreeBSD.
+- `%APPDATA%\SpiceBush\queue.tsv` for queued work and
+  `%APPDATA%\SpiceBush\queue-done.tsv` for completed queue journal entries.
+- `~/.spicebush/queue.tsv` and `~/.spicebush/queue-done.tsv` on FreeBSD.
+- `%APPDATA%\SpiceBush\uploaded\xx.tsv` bucket files for quick hashes that
+  uploaded or were already known by SwallowTail.
+- `~/.spicebush/uploaded/xx.tsv` bucket files on FreeBSD.
 - WinINet/SChannel for Windows HTTP/HTTPS.
 - FreeBSD base OpenSSL for FreeBSD HTTP/HTTPS. No ports are required.
 - FNV-1a 64-bit quick checksums to match `GET /api/quick-checksum.php`.
@@ -161,8 +162,13 @@ Show textual statistics for the current run:
 - Existing-drive scans recurse through the selected drive. This is intentionally
   available only from the Statistics window because it can take time on large
   disks.
-- The local uploaded file stores quick hash plus size. SwallowTail still
-  computes and deduplicates the full upload server-side.
+- The local uploaded cache is bucketed by the first two quick-hash hex
+  characters. Each bucket stores quick hash, size, SwallowTail `photo_id`,
+  upload status, and source path. SwallowTail still computes and deduplicates
+  the full upload server-side.
+- The queue journal is append-oriented so large queues do not rewrite the whole
+  queue file after every processed CR2. Windows compacts the journal
+  periodically.
 - If a SwallowTail account uses MFA or required password change, registration
   should be treated as an interactive policy question. The current registration
   API accepts primary credentials and enforces `upload_tokens` card access.
