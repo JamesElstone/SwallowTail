@@ -1,0 +1,18 @@
+[
+{ type: install
+  message: <<EOM
+Before starting the worker, make sure the SwallowTail checkout exists at:
+
+  %%SWALLOWTAIL_ROOT%%
+
+Review the configuration file:
+
+  %%PREFIX%%/etc/swallowtail/raw-conversion.ini
+
+Then enable and start the service:
+
+  sysrc swallowtail_raw_conversion_enable=YES
+  service swallowtail_raw_conversion start
+EOM
+}
+]

@@ -1,0 +1,6 @@
+#!/bin/sh
+: ${swallowtail_raw_conversion_config:="%%PREFIX%%/etc/swallowtail/raw-conversion.ini"}
+: ${swallowtail_raw_conversion_project_root:="%%SWALLOWTAIL_ROOT%%"}
+export PYTHONPATH="${swallowtail_raw_conversion_project_root}/service/rawConversion"
+export PYTHONDONTWRITEBYTECODE=1
+exec "%%PYTHON_CMD%%" -m raw_conversion --config "${swallowtail_raw_conversion_config}"
