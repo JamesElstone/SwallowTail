@@ -36,6 +36,7 @@ $tempInput = null;
 $smokeLocationId = null;
 $originalSmokeLocationSortOrder = null;
 $createdSmokeLocation = false;
+$exitCode = 1;
 
 try {
     if (!is_file($input) || !is_readable($input)) {
@@ -148,10 +149,10 @@ try {
         'jobs' => $jobs,
         'derivatives' => $derivatives,
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
-    exit(0);
+    $exitCode = 0;
 } catch (Throwable $exception) {
     fwrite(STDERR, $exception->getMessage() . "\n");
-    exit(1);
+    $exitCode = 1;
 } finally {
     if ($tempInput !== null && is_file($tempInput)) {
         @unlink($tempInput);
@@ -215,3 +216,5 @@ try {
         }
     }
 }
+
+exit($exitCode);
