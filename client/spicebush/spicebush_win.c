@@ -16,6 +16,7 @@
 #define WM_REFRESH_STATS (WM_APP + 11)
 #define WM_REGISTER_DONE (WM_APP + 12)
 #define WM_PING_DONE (WM_APP + 13)
+#define WM_REGISTER_BALLOON (WM_APP + 14)
 
 #define IDR_SPICEBUSH_ICON 101
 
@@ -1016,7 +1017,7 @@ static void BeginRegister(HWND hwnd)
     GetDlgItemTextA(hwnd, ID_REGISTER_OTP, rr->otpCode, sizeof(rr->otpCode));
     if (rr->siteUrl[0] == '\0' || rr->username[0] == '\0' || rr->password[0] == '\0') {
         HeapFree(GetProcessHeap(), 0, rr);
-        SetStatus(hwnd, "URL, username, and password are required.");
+        SetStatus(hwnd, "URL, E-mail, and password are required.");
         return;
     }
     SetStatus(hwnd, "Registering...");
@@ -1059,8 +1060,8 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         EnableWindow(GetDlgItem(hwnd, ID_REGISTER_SAVE), TRUE);
         if (wp) {
             SetStatus(hwnd, "Registered. SpiceBush is ready to upload.");
-            ShowTrayBalloon(g_app.mainWindow, APP_NAME, "Registered OK!", 10000);
             ShowWindow(hwnd, SW_HIDE);
+            PostMessageA(g_app.mainWindow, WM_REGISTER_BALLOON, 0, 0);
         } else if (lp) {
             SetStatus(hwnd, (const char *)lp);
             HeapFree(GetProcessHeap(), 0, (LPVOID)lp);
@@ -1128,6 +1129,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_REFRESH_STATS:
         RefreshStats();
+        return 0;
+    case WM_REGISTER_BALLOON:
+        ShowTrayBalloon(hwnd, APP_NAME, "Registered OK!", 10000);
         return 0;
     case WM_PING_DONE:
         if (wp) {

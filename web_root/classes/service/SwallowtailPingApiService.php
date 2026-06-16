@@ -30,15 +30,14 @@ final class SwallowtailPingApiService
             ], 503);
         }
 
-        $uploadToken = $this->photoLibraryService->authenticateUploadToken(
-            $this->tokenFromRequest($request),
-            $request->remoteAddress()
-        );
+        $token = $this->tokenFromRequest($request);
+        $remoteAddress = $request->remoteAddress();
+        $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $remoteAddress);
 
         if ($uploadToken === null) {
             return ResponseFramework::json([
                 'success' => false,
-                'errors' => ['Bearer upload token was missing, invalid, expired, disabled, or not allowed from this network.'],
+                'errors' => [$this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress)],
             ], 401);
         }
 

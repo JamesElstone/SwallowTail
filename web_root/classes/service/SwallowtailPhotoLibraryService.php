@@ -397,6 +397,55 @@ final class SwallowtailPhotoLibraryService
         return $row;
     }
 
+    public function explainUploadTokenAuthenticationFailure(string $token, ?string $remoteAddress = null): string
+    {
+        if (
+            !InterfaceDB::tableExists('swallowtail_api_upload_tokens')
+            || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')
+        ) {
+            return 'Swallowtail photo database tables are not available. Run the database migrations.';
+        }
+
+        $token = trim($token);
+        if ($token === '') {
+            return 'Bearer upload token was missing.';
+        }
+
+        $row = InterfaceDB::fetchOne(
+            'SELECT * FROM swallowtail_api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
+            ['token_hash' => hash('sha256', $token)]
+        );
+
+        if (!is_array($row)) {
+            return 'Bearer upload token was not found. Register SpiceBush again to issue a fresh token.';
+        }
+
+        if ((int)($row['is_active'] ?? 0) !== 1) {
+            return 'Bearer upload token is disabled. Enable it in SwallowTail or register SpiceBush again.';
+        }
+
+        if ((int)($row['can_upload_raw'] ?? 0) !== 1) {
+            return 'Bearer upload token is not allowed to upload RAW files.';
+        }
+
+        if ($this->uploadTokenExpired((string)($row['expires_at'] ?? ''))) {
+            return 'Bearer upload token has expired. Register SpiceBush again to issue a fresh token.';
+        }
+
+        $cidrs = $this->cidrsForUploadToken((int)($row['id'] ?? 0));
+        if (!$this->ipAllowedByCidrs((string)$remoteAddress, $cidrs)) {
+            $ip = trim((string)$remoteAddress);
+            $cidrText = $cidrs === [] ? 'none' : implode(', ', $cidrs);
+            return sprintf(
+                'Bearer upload token is not allowed from this network. Client IP %s is outside allowed CIDR range(s): %s.',
+                $ip !== '' ? $ip : 'unknown',
+                $cidrText
+            );
+        }
+
+        return 'Bearer upload token was rejected.';
+    }
+
     public function markUploadTokenUsed(int $tokenId): void
     {
         if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
@@ -701,6 +750,21 @@ final class SwallowtailPhotoLibraryService
         }
 
         return strtolower($address) . '/' . $prefix;
+    }
+
+    private function uploadTokenExpired(string $expiresAt): bool
+    {
+        $expiresAt = trim($expiresAt);
+        if ($expiresAt === '') {
+            return false;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            'SELECT CASE WHEN :expires_at <= CURRENT_TIMESTAMP THEN 1 ELSE 0 END AS expired',
+            ['expires_at' => $expiresAt]
+        );
+
+        return is_array($row) && (int)($row['expired'] ?? 0) === 1;
     }
 
     private function cidrsForUploadToken(int $tokenId): array
