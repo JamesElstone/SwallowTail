@@ -33,6 +33,9 @@ $timeoutSeconds = max(10, (int)($options['timeout'] ?? 300));
 $keepArtifacts = array_key_exists('keep-artifacts', $options);
 $photoId = null;
 $tempInput = null;
+$smokeLocationId = null;
+$originalSmokeLocationSortOrder = null;
+$createdSmokeLocation = false;
 
 try {
     if (!is_file($input) || !is_readable($input)) {
@@ -51,12 +54,29 @@ try {
 
     if (InterfaceDB::tableExists('swallowtail_storage_locations')) {
         $root = (new SwallowtailStorageService($storageRoot))->storageRoot();
-        $existingLocationId = InterfaceDB::fetchColumn(
-            'SELECT id FROM swallowtail_storage_locations WHERE root_path = :root_path LIMIT 1',
+        $location = InterfaceDB::fetchOne(
+            'SELECT id, sort_order FROM swallowtail_storage_locations WHERE root_path = :root_path LIMIT 1',
             ['root_path' => $root]
         );
-        if ($existingLocationId === false || $existingLocationId === null) {
-            (new SwallowtailStorageLocationService())->registerLocation('Raw conversion smoke storage', $root);
+        if (!is_array($location)) {
+            $smokeLocationId = (new SwallowtailStorageLocationService())->registerLocation(
+                'Raw conversion smoke storage',
+                $root,
+                ['sort_order' => -1000]
+            );
+            $createdSmokeLocation = true;
+        } else {
+            $smokeLocationId = (int)$location['id'];
+            $originalSmokeLocationSortOrder = (int)$location['sort_order'];
+            InterfaceDB::prepareExecute(
+                "UPDATE swallowtail_storage_locations
+                 SET sort_order = -1000,
+                     is_active = 1,
+                     is_read_only = 0,
+                     is_full = 0
+                 WHERE id = :id",
+                ['id' => $smokeLocationId]
+            );
         }
     }
 
@@ -171,6 +191,27 @@ try {
 
         foreach (array_unique(array_filter($paths)) as $path) {
             @unlink($path);
+        }
+    }
+
+    if (!$keepArtifacts && $createdSmokeLocation && $smokeLocationId !== null) {
+        try {
+            InterfaceDB::prepareExecute(
+                'DELETE FROM swallowtail_storage_locations WHERE id = :id',
+                ['id' => $smokeLocationId]
+            );
+        } catch (Throwable) {
+        }
+    } elseif ($smokeLocationId !== null && $originalSmokeLocationSortOrder !== null) {
+        try {
+            InterfaceDB::prepareExecute(
+                'UPDATE swallowtail_storage_locations SET sort_order = :sort_order WHERE id = :id',
+                [
+                    'sort_order' => $originalSmokeLocationSortOrder,
+                    'id' => $smokeLocationId,
+                ]
+            );
+        } catch (Throwable) {
         }
     }
 }
