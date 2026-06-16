@@ -148,7 +148,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
             def is_stale_preview(self, _job) -> bool:
                 return False
 
-            def fail_job(self, _job, _message, retryable=True) -> None:
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
                 self.failed = True
 
         worker = ConversionWorker.__new__(ConversionWorker)

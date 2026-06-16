@@ -183,12 +183,13 @@ class ConversionDatabase:
             UPDATE swallowtail_photo_conversion_jobs
                SET status = 'succeeded',
                    completed_at = CURRENT_TIMESTAMP,
+                   duration_seconds = %s,
                    locked_at = NULL,
                    locked_by = NULL,
                    last_error = NULL
              WHERE id = %s
             """,
-            (job.id,),
+            (round(duration, 3), job.id),
         )
         self._execute("UPDATE swallowtail_photos SET conversion_state = 'ready' WHERE id = %s", (job.photo_id,))
         self._insert_audit(
@@ -198,7 +199,8 @@ class ConversionDatabase:
         )
         self.connection.commit()
 
-    def fail_job(self, job: ConversionJob, message: str, retryable: bool = True) -> None:
+    def fail_job(self, job: ConversionJob, message: str, retryable: bool = True, duration: float | None = None) -> None:
+        duration_seconds = round(duration, 3) if duration is not None else None
         status = "queued" if retryable and job.attempts < self.worker.max_attempts else "failed"
         if status == "queued":
             self._execute(
@@ -208,10 +210,11 @@ class ConversionDatabase:
                        locked_at = NULL,
                        locked_by = NULL,
                        last_error = %s,
+                       duration_seconds = %s,
                        available_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL %s SECOND)
                  WHERE id = %s
                 """,
-                (message[-4000:], self.worker.retry_delay_seconds, job.id),
+                (message[-4000:], duration_seconds, self.worker.retry_delay_seconds, job.id),
             )
         else:
             self._execute(
@@ -221,10 +224,11 @@ class ConversionDatabase:
                        completed_at = CURRENT_TIMESTAMP,
                        locked_at = NULL,
                        locked_by = NULL,
+                       duration_seconds = %s,
                        last_error = %s
                  WHERE id = %s
                 """,
-                (message[-4000:], job.id),
+                (duration_seconds, message[-4000:], job.id),
             )
             self._execute("UPDATE swallowtail_photos SET conversion_state = 'failed' WHERE id = %s", (job.photo_id,))
             self._insert_audit(job.photo_id, "photo_conversion_failed", {"job_id": job.id, "error": message[-4000:]})

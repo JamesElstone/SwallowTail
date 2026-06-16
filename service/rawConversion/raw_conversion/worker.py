@@ -66,6 +66,7 @@ class ConversionWorker:
     def process_job(self, job: ConversionJob) -> None:
         self.log.info("Processing job=%s photo=%s derivative=%s", job.id, job.photo_id, job.derivative_type)
         temp_dir = Path(self.config.worker.work_dir) / f"job-{job.id}"
+        render_duration: float | None = None
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +78,7 @@ class ConversionWorker:
 
             job.validate()
             result = self.runner.render(job, str(temp_dir))
+            render_duration = result.duration_seconds
             if result.exit_code != 0:
                 raise RuntimeError(f"rawtherapee-cli failed with exit code {result.exit_code}: {result.stderr}")
 
@@ -91,7 +93,7 @@ class ConversionWorker:
             self.log.info("Completed job=%s output=%s", job.id, final)
         except Exception as exc:
             self.log.exception("Conversion job %s failed", job.id)
-            self.db.fail_job(job, str(exc), retryable=True)
+            self.db.fail_job(job, str(exc), retryable=True, duration=render_duration)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
