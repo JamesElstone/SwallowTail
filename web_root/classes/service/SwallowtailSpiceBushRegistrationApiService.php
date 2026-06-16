@@ -13,6 +13,7 @@ final class SwallowtailSpiceBushRegistrationApiService
         private readonly UserAuthenticationService $userAuthenticationService = new UserAuthenticationService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
         private readonly CardAccessFramework $cardAccess = new CardAccessFramework(),
+        private readonly OtpService $otpService = new OtpService(),
     ) {
     }
 
@@ -41,6 +42,10 @@ final class SwallowtailSpiceBushRegistrationApiService
 
         if (!empty($user['must_change_password'])) {
             return $this->error(['This account must change its password before registering SpiceBush.'], 403);
+        }
+
+        if (!$this->otpSatisfied($request, $userId)) {
+            return $this->error(['A valid six digit OTP code is required for this account.'], 403);
         }
 
         try {
@@ -102,6 +107,17 @@ final class SwallowtailSpiceBushRegistrationApiService
         }
 
         return 'SpiceBush';
+    }
+
+    private function otpSatisfied(RequestFramework $request, int $userId): bool
+    {
+        if (!$this->otpService->isOTPenabled($userId)) {
+            return true;
+        }
+
+        $otpCode = trim((string)$request->post('otp_code', (string)$request->post('otp', '')));
+
+        return $this->otpService->checkOTP($userId, $otpCode, true);
     }
 
     private function apiUrl(RequestFramework $request): string

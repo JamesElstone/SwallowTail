@@ -7,6 +7,7 @@
 #include <shlobj.h>
 #include <dbt.h>
 #include <wininet.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -14,6 +15,8 @@
 #define WM_TRAYICON (WM_APP + 10)
 #define WM_REFRESH_STATS (WM_APP + 11)
 #define WM_REGISTER_DONE (WM_APP + 12)
+
+#define IDR_SPICEBUSH_ICON 101
 
 #define ID_TRAY_REGISTER 1001
 #define ID_TRAY_STATS 1002
@@ -23,8 +26,10 @@
 #define ID_REGISTER_URL 2001
 #define ID_REGISTER_USER 2002
 #define ID_REGISTER_PASSWORD 2003
-#define ID_REGISTER_SAVE 2004
-#define ID_REGISTER_STATUS 2005
+#define ID_REGISTER_OTP 2004
+#define ID_REGISTER_SAVE 2005
+#define ID_REGISTER_STATUS 2006
+#define ID_REGISTER_QUIT 2007
 
 #define ID_STATS_SCAN 3001
 #define MAX_TEXT 1024
@@ -43,6 +48,7 @@ typedef struct AppState {
     HWND statsWindow;
     HWND registerStatus;
     HWND statsLabels[10];
+    HICON registerLogoIcon;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
     HANDLE stopEvent;
@@ -76,6 +82,30 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static DWORD WINAPI ProcessorThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
+
+static int SbSnprintf(char *buffer, size_t bufferSize, const char *format, ...)
+{
+    int written;
+    va_list args;
+
+    if (bufferSize == 0) return -1;
+
+    va_start(args, format);
+#if defined(_MSC_VER) && _MSC_VER >= 1400
+    written = _vsnprintf_s(buffer, bufferSize, _TRUNCATE, format, args);
+#elif defined(_MSC_VER)
+    written = _vsnprintf(buffer, bufferSize - 1, format, args);
+    buffer[bufferSize - 1] = '\0';
+#else
+    written = vsnprintf(buffer, bufferSize, format, args);
+    if (written < 0 || (size_t)written >= bufferSize) {
+        buffer[bufferSize - 1] = '\0';
+    }
+#endif
+    va_end(args);
+
+    return written;
+}
 
 static void SafeCopy(char *dst, DWORD dstSize, const char *src)
 {
@@ -136,7 +166,7 @@ static void EnsureAppStorage(void)
     computer[0] = '\0';
     GetComputerNameA(computer, &computerLen);
     if (computer[0] == '\0') SafeCopy(computer, sizeof(computer), "windows-client");
-    _snprintf(g_app.deviceId, sizeof(g_app.deviceId) - 1, "spicebush-%s", computer);
+    SbSnprintf(g_app.deviceId, sizeof(g_app.deviceId) - 1, "spicebush-%s", computer);
     g_app.deviceId[sizeof(g_app.deviceId) - 1] = '\0';
 
     if (GetFileAttributesA(g_app.iniPath) == INVALID_FILE_ATTRIBUTES) {
@@ -300,7 +330,7 @@ static int ComputeFnv1a64(const char *path, char *hex, DWORD hexSize, U64 *sizeB
         total += got;
     }
     CloseHandle(file);
-    _snprintf(hex, hexSize - 1, "%016I64x", hash);
+    SbSnprintf(hex, hexSize - 1, "%016I64x", hash);
     hex[hexSize - 1] = '\0';
     if (sizeBytes) *sizeBytes = total;
     return 1;
@@ -313,7 +343,7 @@ static int UploadedContains(const char *hash, U64 sizeBytes)
     DWORD got, i, lineLen = 0;
     int found = 0;
     if (file == INVALID_HANDLE_VALUE) return 0;
-    _snprintf(needle, sizeof(needle) - 1, "%s\t%I64u\t", hash, sizeBytes);
+    SbSnprintf(needle, sizeof(needle) - 1, "%s\t%I64u\t", hash, sizeBytes);
     needle[sizeof(needle) - 1] = '\0';
     while (!found && ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
         for (i = 0; i < got && !found; i++) {
@@ -339,7 +369,7 @@ static int UploadedContains(const char *hash, U64 sizeBytes)
 static void MarkUploaded(const char *hash, U64 sizeBytes, const char *path)
 {
     char line[MAX_PATH + 128];
-    _snprintf(line, sizeof(line) - 1, "%s\t%I64u\t%s\r\n", hash, sizeBytes, path);
+    SbSnprintf(line, sizeof(line) - 1, "%s\t%I64u\t%s\r\n", hash, sizeBytes, path);
     line[sizeof(line) - 1] = '\0';
     AppendLine(g_app.uploadedPath, line);
 }
@@ -414,7 +444,7 @@ static int JsonStringValue(const char *json, const char *key, char *out, DWORD o
     char needle[128];
     const char *p;
     DWORD i = 0;
-    _snprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
+    SbSnprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
     needle[sizeof(needle) - 1] = '\0';
     p = strstr(json, needle);
     if (!p) return 0;
@@ -436,7 +466,7 @@ static int JsonBoolValue(const char *json, const char *key, int *value)
 {
     char needle[128];
     const char *p;
-    _snprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
+    SbSnprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
     needle[sizeof(needle) - 1] = '\0';
     p = strstr(json, needle);
     if (!p) return 0;
@@ -504,9 +534,9 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes)
     int exists = 0;
     if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') return 0;
     UrlEncode(hash, encodedHash, sizeof(encodedHash));
-    _snprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
+    SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
     url[sizeof(url) - 1] = '\0';
-    _snprintf(headers, sizeof(headers) - 1, "Authorization: Bearer %s\r\n", g_app.uploadToken);
+    SbSnprintf(headers, sizeof(headers) - 1, "Authorization: Bearer %s\r\n", g_app.uploadToken);
     headers[sizeof(headers) - 1] = '\0';
     if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) return 0;
     if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) return 1;
@@ -526,11 +556,11 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     int ok = 0;
     const char *slash = strrchr(path, '\\');
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
-    _snprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
+    SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
     if (!ParseUrl(url, &parsed)) return 0;
     if (parsed.secure) flags |= INTERNET_FLAG_SECURE;
-    _snprintf(headers, sizeof(headers) - 1,
+    SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
@@ -757,7 +787,7 @@ static HWND Edit(HWND parent, int id, const char *text, int x, int y, int w, int
 static void ShowRegisterWindow(void)
 {
     if (!g_app.registerWindow) {
-        g_app.registerWindow = CreateWindowA("SpiceBushRegister", "Register with SwallowTail", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 440, 230, NULL, NULL, g_app.instance, NULL);
+        g_app.registerWindow = CreateWindowExA(WS_EX_CONTROLPARENT, "SpiceBushRegister", "Register with SwallowTail", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 270, NULL, NULL, g_app.instance, NULL);
     }
     ShowWindow(g_app.registerWindow, SW_SHOWNORMAL);
     SetForegroundWindow(g_app.registerWindow);
@@ -783,25 +813,25 @@ static void RefreshStats(void)
     if (g_app.totalUploaded > 0) avg = g_app.totalUploadMillis / (U64)g_app.totalUploaded;
     LeaveCriticalSection(&g_app.lock);
     if (!g_app.statsWindow) return;
-    _snprintf(text, sizeof(text), "Total CR2 uploaded since launch: %ld", g_app.totalUploaded);
+    SbSnprintf(text, sizeof(text), "Total CR2 uploaded since launch: %ld", g_app.totalUploaded);
     SetWindowTextA(g_app.statsLabels[0], text);
-    _snprintf(text, sizeof(text), "Total CR2 found since launch: %ld", g_app.totalFound);
+    SbSnprintf(text, sizeof(text), "Total CR2 found since launch: %ld", g_app.totalFound);
     SetWindowTextA(g_app.statsLabels[1], text);
-    _snprintf(text, sizeof(text), "Already known by SwallowTail: %ld", g_app.totalKnown);
+    SbSnprintf(text, sizeof(text), "Already known by SwallowTail: %ld", g_app.totalKnown);
     SetWindowTextA(g_app.statsLabels[2], text);
-    _snprintf(text, sizeof(text), "Yet to upload: %ld of %ld (%ld%%)", pending, g_app.totalFound, g_app.totalFound > 0 ? (pending * 100L) / g_app.totalFound : 0L);
+    SbSnprintf(text, sizeof(text), "Yet to upload: %ld of %ld (%ld%%)", pending, g_app.totalFound, g_app.totalFound > 0 ? (pending * 100L) / g_app.totalFound : 0L);
     SetWindowTextA(g_app.statsLabels[3], text);
-    _snprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
+    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
     SetWindowTextA(g_app.statsLabels[4], text);
-    _snprintf(text, sizeof(text), "Skipped from local uploaded file: %ld", g_app.totalSkippedLocal);
+    SbSnprintf(text, sizeof(text), "Skipped from local uploaded file: %ld", g_app.totalSkippedLocal);
     SetWindowTextA(g_app.statsLabels[5], text);
-    _snprintf(text, sizeof(text), "Failed attempts since launch: %ld", g_app.totalFailed);
+    SbSnprintf(text, sizeof(text), "Failed attempts since launch: %ld", g_app.totalFailed);
     SetWindowTextA(g_app.statsLabels[6], text);
-    _snprintf(text, sizeof(text), "Scanned drives since launch: %ld", g_app.totalScannedDrives);
+    SbSnprintf(text, sizeof(text), "Scanned drives since launch: %ld", g_app.totalScannedDrives);
     SetWindowTextA(g_app.statsLabels[7], text);
-    _snprintf(text, sizeof(text), "Active scans: %ld", g_app.activeScans);
+    SbSnprintf(text, sizeof(text), "Active scans: %ld", g_app.activeScans);
     SetWindowTextA(g_app.statsLabels[8], text);
-    _snprintf(text, sizeof(text), "Uploader: %s", g_app.processing ? "processing" : "idle");
+    SbSnprintf(text, sizeof(text), "Uploader: %s", g_app.processing ? "processing" : "idle");
     SetWindowTextA(g_app.statsLabels[9], text);
 }
 
@@ -810,19 +840,21 @@ typedef struct RegisterRequest {
     char siteUrl[MAX_TEXT];
     char username[MAX_TEXT];
     char password[MAX_TEXT];
+    char otpCode[32];
 } RegisterRequest;
 
 static DWORD WINAPI RegisterThread(LPVOID param)
 {
     RegisterRequest *rr = (RegisterRequest *)param;
-    char endpoint[2048], u[MAX_TEXT * 2], p[MAX_TEXT * 2], d[256], json[4096], headers[256], response[8192];
+    char endpoint[2048], u[MAX_TEXT * 2], p[MAX_TEXT * 2], o[80], d[256], json[4096], headers[256], response[8192];
     char token[MAX_TEXT], apiUrl[MAX_TEXT];
     DWORD status = 0;
     BuildRegisterEndpoint(rr->siteUrl, endpoint, sizeof(endpoint));
     JsonEscape(rr->username, u, sizeof(u));
     JsonEscape(rr->password, p, sizeof(p));
+    JsonEscape(rr->otpCode, o, sizeof(o));
     JsonEscape(g_app.deviceId, d, sizeof(d));
-    _snprintf(json, sizeof(json) - 1, "{\"username\":\"%s\",\"password\":\"%s\",\"device_id\":\"%s\",\"token_label\":\"SpiceBush %s\"}", u, p, d, d);
+    SbSnprintf(json, sizeof(json) - 1, "{\"username\":\"%s\",\"password\":\"%s\",\"otp_code\":\"%s\",\"device_id\":\"%s\",\"token_label\":\"SpiceBush %s\"}", u, p, o, d, d);
     json[sizeof(json) - 1] = '\0';
     SafeCopy(headers, sizeof(headers), "Content-Type: application/json\r\n");
     if (HttpSimpleRequest("POST", endpoint, headers, (const BYTE *)json, lstrlenA(json), &status, response, sizeof(response))
@@ -838,6 +870,7 @@ static DWORD WINAPI RegisterThread(LPVOID param)
         PostMessageA(rr->hwnd, WM_REGISTER_DONE, 0, status);
     }
     SecureZeroMemory(rr->password, sizeof(rr->password));
+    SecureZeroMemory(rr->otpCode, sizeof(rr->otpCode));
     HeapFree(GetProcessHeap(), 0, rr);
     return 0;
 }
@@ -851,6 +884,7 @@ static void BeginRegister(HWND hwnd)
     GetDlgItemTextA(hwnd, ID_REGISTER_URL, rr->siteUrl, sizeof(rr->siteUrl));
     GetDlgItemTextA(hwnd, ID_REGISTER_USER, rr->username, sizeof(rr->username));
     GetDlgItemTextA(hwnd, ID_REGISTER_PASSWORD, rr->password, sizeof(rr->password));
+    GetDlgItemTextA(hwnd, ID_REGISTER_OTP, rr->otpCode, sizeof(rr->otpCode));
     if (rr->siteUrl[0] == '\0' || rr->username[0] == '\0' || rr->password[0] == '\0') {
         HeapFree(GetProcessHeap(), 0, rr);
         SetStatus(hwnd, "URL, username, and password are required.");
@@ -872,23 +906,40 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     (void)lp;
     switch (msg) {
     case WM_CREATE:
-        Label(hwnd, "URL", 18, 20, 100, 20);
-        Edit(hwnd, ID_REGISTER_URL, g_app.siteUrl, 130, 18, 270, 22, 0);
-        Label(hwnd, "Username", 18, 55, 100, 20);
-        Edit(hwnd, ID_REGISTER_USER, "", 130, 53, 270, 22, 0);
-        Label(hwnd, "Password", 18, 90, 100, 20);
-        Edit(hwnd, ID_REGISTER_PASSWORD, "", 130, 88, 270, 22, ES_PASSWORD);
-        CreateWindowA("BUTTON", "Register", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 130, 126, 100, 28, hwnd, (HMENU)ID_REGISTER_SAVE, g_app.instance, NULL);
-        g_app.registerStatus = Label(hwnd, "", 18, 165, 390, 35);
+        {
+            HWND logo = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_ICON, 20, 28, 72, 72, hwnd, NULL, g_app.instance, NULL);
+            if (!g_app.registerLogoIcon) {
+                g_app.registerLogoIcon = (HICON)LoadImageA(g_app.instance, MAKEINTRESOURCEA(IDR_SPICEBUSH_ICON), IMAGE_ICON, 64, 64, LR_DEFAULTCOLOR);
+            }
+            if (g_app.registerLogoIcon) {
+                SendMessageA(logo, STM_SETICON, (WPARAM)g_app.registerLogoIcon, 0);
+            }
+        }
+        Label(hwnd, "URL", 110, 20, 90, 20);
+        Edit(hwnd, ID_REGISTER_URL, g_app.siteUrl, 210, 18, 270, 22, 0);
+        Label(hwnd, "Username", 110, 55, 90, 20);
+        Edit(hwnd, ID_REGISTER_USER, "", 210, 53, 270, 22, 0);
+        Label(hwnd, "Password", 110, 90, 90, 20);
+        Edit(hwnd, ID_REGISTER_PASSWORD, "", 210, 88, 270, 22, ES_PASSWORD);
+        Label(hwnd, "OTP", 110, 125, 90, 20);
+        Edit(hwnd, ID_REGISTER_OTP, "", 210, 123, 120, 22, 0);
+        CreateWindowA("BUTTON", "Register", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 210, 161, 100, 28, hwnd, (HMENU)ID_REGISTER_SAVE, g_app.instance, NULL);
+        CreateWindowA("BUTTON", "Quit", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 320, 161, 80, 28, hwnd, (HMENU)ID_REGISTER_QUIT, g_app.instance, NULL);
+        g_app.registerStatus = Label(hwnd, "", 110, 200, 370, 35);
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_REGISTER_SAVE) BeginRegister(hwnd);
+        else if (LOWORD(wp) == ID_REGISTER_QUIT) DestroyWindow(g_app.mainWindow);
         return 0;
     case WM_REGISTER_DONE:
         EnableWindow(GetDlgItem(hwnd, ID_REGISTER_SAVE), TRUE);
         SetStatus(hwnd, wp ? "Registered. SpiceBush is ready to upload." : "Registration failed. Check URL, credentials, role, and CIDR policy.");
         return 0;
     case WM_CLOSE:
+        if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
+            DestroyWindow(g_app.mainWindow);
+            return 0;
+        }
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     }
@@ -994,10 +1045,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     if (processor) CloseHandle(processor);
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow();
     while (GetMessageA(&msg, NULL, 0, 0)) {
+        if ((g_app.registerWindow && IsWindowVisible(g_app.registerWindow) && IsDialogMessageA(g_app.registerWindow, &msg))
+            || (g_app.statsWindow && IsWindowVisible(g_app.statsWindow) && IsDialogMessageA(g_app.statsWindow, &msg))) {
+            continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
     DeleteCriticalSection(&g_app.lock);
+    if (g_app.registerLogoIcon) DestroyIcon(g_app.registerLogoIcon);
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
     if (g_app.stopEvent) CloseHandle(g_app.stopEvent);

@@ -371,11 +371,15 @@ Request:
 {
   "username": "user@example.test",
   "password": "account-password",
+  "otp_code": "123456",
   "device_id": "spicebush-computer-name",
   "token_label": "SpiceBush computer-name",
   "cidrs": "203.0.113.15/32"
 }
 ```
+
+If the account has OTP enabled, `otp_code` must be the user's current six digit
+code. If the account does not use OTP, send an empty string or omit the field.
 
 If `cidrs` is omitted, SwallowTail creates the token for the caller's detected
 IP address as `/32` for IPv4 or `/128` for IPv6.

@@ -1,0 +1,3 @@
+#define IDR_SPICEBUSH_ICON 101
+
+IDR_SPICEBUSH_ICON ICON "spicebush_butterfly.ico"

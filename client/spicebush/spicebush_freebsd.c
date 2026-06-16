@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -29,7 +30,7 @@ static void usage(const char *argv0)
     printf("SpiceBush FreeBSD CLI\n");
     printf("\n");
     printf("Usage:\n");
-    printf("  %s --register <url> <username> <password>\n", argv0);
+    printf("  %s --register <url> <username> [password] [otp]\n", argv0);
     printf("  %s --scan <path>\n", argv0);
     printf("  %s --scan-existing\n", argv0);
     printf("  %s --watch [seconds]\n", argv0);
@@ -37,6 +38,50 @@ static void usage(const char *argv0)
     printf("\n");
     printf("Config: ~/.spicebush/spicebush.ini\n");
     printf("TLS: FreeBSD base OpenSSL, no ports required.\n");
+}
+
+static int prompt_input(const char *prompt, char *buffer, size_t buffer_size, int hide_input)
+{
+    struct termios old_term;
+    struct termios new_term;
+    int restore_term = 0;
+    char *newline;
+
+    if (buffer_size == 0) {
+        return 0;
+    }
+    buffer[0] = '\0';
+    fputs(prompt, stdout);
+    fflush(stdout);
+
+    if (hide_input && isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &old_term) == 0) {
+        new_term = old_term;
+        new_term.c_lflag &= (tcflag_t)~ECHO;
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_term) == 0) {
+            restore_term = 1;
+        }
+    }
+
+    if (fgets(buffer, (int)buffer_size, stdin) == NULL) {
+        if (restore_term) {
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_term);
+            fputc('\n', stdout);
+        }
+        buffer[0] = '\0';
+        return 0;
+    }
+
+    if (restore_term) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_term);
+        fputc('\n', stdout);
+    }
+
+    newline = strpbrk(buffer, "\r\n");
+    if (newline != NULL) {
+        *newline = '\0';
+    }
+
+    return 1;
 }
 
 static void init_config(SpiceBushConfig *config)
@@ -76,11 +121,12 @@ static int require_registered(const SpiceBushConfig *config)
     return 1;
 }
 
-static int register_client(SpiceBushCli *cli, const char *url, const char *username, const char *password)
+static int register_client(SpiceBushCli *cli, const char *url, const char *username, const char *password, const char *otp_code)
 {
     char endpoint[SB_TEXT * 2];
     char escaped_user[SB_TEXT * 2];
     char escaped_password[SB_TEXT * 2];
+    char escaped_otp[80];
     char escaped_device[256];
     char json[SB_TEXT * 6];
     char response[8192];
@@ -89,13 +135,15 @@ static int register_client(SpiceBushCli *cli, const char *url, const char *usern
     sb_build_register_endpoint(url, endpoint, sizeof(endpoint));
     sb_json_escape(username, escaped_user, sizeof(escaped_user));
     sb_json_escape(password, escaped_password, sizeof(escaped_password));
+    sb_json_escape(otp_code, escaped_otp, sizeof(escaped_otp));
     sb_json_escape(cli->config.device_id, escaped_device, sizeof(escaped_device));
     snprintf(
         json,
         sizeof(json),
-        "{\"username\":\"%s\",\"password\":\"%s\",\"device_id\":\"%s\",\"token_label\":\"SpiceBush %s\"}",
+        "{\"username\":\"%s\",\"password\":\"%s\",\"otp_code\":\"%s\",\"device_id\":\"%s\",\"token_label\":\"SpiceBush %s\"}",
         escaped_user,
         escaped_password,
+        escaped_otp,
         escaped_device,
         escaped_device
     );
@@ -346,11 +394,42 @@ int main(int argc, char **argv)
     }
 
     if (strcmp(argv[1], "--register") == 0) {
-        if (argc != 5) {
+        char password_buffer[SB_TEXT];
+        char otp_buffer[80];
+        const char *password;
+        const char *otp_code;
+
+        if (argc < 4 || argc > 6) {
             usage(argv[0]);
             return 1;
         }
-        return register_client(&cli, argv[2], argv[3], argv[4]) ? 0 : 1;
+
+        password = argc >= 5 ? argv[4] : password_buffer;
+        otp_code = argc >= 6 ? argv[5] : otp_buffer;
+
+        if (argc < 5 && !prompt_input("Password: ", password_buffer, sizeof(password_buffer), 1)) {
+            fprintf(stderr, "Could not read password.\n");
+            return 1;
+        }
+        if (password[0] == '\0') {
+            fprintf(stderr, "Password is required.\n");
+            return 1;
+        }
+        if (argc < 6 && !prompt_input("OTP code, or press Enter if not enabled: ", otp_buffer, sizeof(otp_buffer), 0)) {
+            memset(password_buffer, 0, sizeof(password_buffer));
+            fprintf(stderr, "Could not read OTP code.\n");
+            return 1;
+        }
+
+        if (register_client(&cli, argv[2], argv[3], password, otp_code)) {
+            memset(password_buffer, 0, sizeof(password_buffer));
+            memset(otp_buffer, 0, sizeof(otp_buffer));
+            return 0;
+        }
+
+        memset(password_buffer, 0, sizeof(password_buffer));
+        memset(otp_buffer, 0, sizeof(otp_buffer));
+        return 1;
     }
 
     if (strcmp(argv[1], "--stats") == 0) {

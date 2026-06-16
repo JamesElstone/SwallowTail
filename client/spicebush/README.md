@@ -30,9 +30,33 @@ build.cmd                  Windows build
 Makefile.freebsd           FreeBSD CLI build
 ```
 
+## Windows Prerequisites
+
+The recommended Windows build uses Microsoft Visual C++ and the Windows SDK:
+
+- Install Visual Studio 2019 or 2022 with the **Desktop development with C++**
+  workload, or install the standalone **Build Tools for Visual Studio** with the
+  MSVC C++ tools and Windows SDK.
+- `build.cmd` looks for `vcvarsall.bat` in common Visual Studio 2019/2022
+  locations and loads the x86 build environment automatically.
+- The build needs `cl.exe`, `rc.exe`, Windows headers such as `windows.h`, and
+  import libraries for `shell32`, `user32`, `gdi32`, `advapi32`, and `wininet`.
+
+The optional GCC build uses MinGW:
+
+- Install a MinGW-w64 or classic MinGW toolchain that provides `gcc` and
+  `windres`.
+- Put `gcc.exe` and `windres.exe` on `PATH`, or set `CC` and `WINDRES` before
+  running `build-gcc.cmd`.
+- Use a 32-bit MinGW toolchain that still targets Windows XP if XP support is
+  required.
+
+No separate OpenSSL package is needed for the Windows client. HTTPS uses
+WinINet/SChannel from Windows.
+
 ## Windows Build
 
-Open a Visual Studio command prompt and run:
+Run:
 
 ```bat
 cd client\spicebush
@@ -40,6 +64,18 @@ build.cmd
 ```
 
 The executable is written to `client\spicebush\work\SpiceBush.exe`.
+The build script loads the Visual Studio x86 build environment automatically
+when `cl.exe` and `rc.exe` are not already on `PATH`.
+
+With MinGW GCC and `windres` on `PATH`, run:
+
+```bat
+cd client\spicebush
+build-gcc.cmd
+```
+
+That writes `client\spicebush\work\SpiceBush-gcc.exe`. Use a 32-bit MinGW
+toolchain that still targets Windows XP if XP compatibility is required.
 
 For older compilers, keep the subsystem as Windows and link with:
 
@@ -63,7 +99,9 @@ and `libcrypto`.
 
 On first launch, SpiceBush creates `%APPDATA%\SpiceBush`, creates
 `spicebush.ini`, and opens the `Register with SwallowTail` window. Enter the
-SwallowTail site URL, username, and password. The client calls:
+SwallowTail site URL, username, password, and OTP code when the account has OTP
+enabled. The OTP field may be left empty for accounts without OTP. The client
+calls:
 
 ```text
 POST /api/spicebush-register.php
@@ -77,7 +115,15 @@ the INI file and uses them for quick-checksum and raw-upload API calls.
 Register:
 
 ```sh
-./work/spicebush --register https://swallowtail.example.test user@example.test 'password'
+./work/spicebush --register https://swallowtail.example.test user@example.test 'password' 123456
+```
+
+If the password or OTP argument is omitted, SpiceBush prompts for it. Press
+Enter at the OTP prompt for accounts without OTP enabled. To avoid putting the
+password in shell history:
+
+```sh
+./work/spicebush --register https://swallowtail.example.test user@example.test
 ```
 
 Scan one path recursively:

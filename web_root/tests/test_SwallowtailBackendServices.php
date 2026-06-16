@@ -196,6 +196,7 @@ $swallowtailWriteRawFixture = static function (string $path, string $extension =
 };
 
 $swallowtailCreateSpiceBushUserSchema = static function (): void {
+    InterfaceDB::execute('DROP TABLE IF EXISTS user_totp');
     InterfaceDB::execute('DROP TABLE IF EXISTS users');
     InterfaceDB::execute("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +221,23 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         account_status TEXT NOT NULL DEFAULT 'active'
+    )");
+    InterfaceDB::execute("CREATE TABLE user_totp (
+        user_id INTEGER PRIMARY KEY,
+        otp_secret TEXT NULL,
+        pending_otp_secret TEXT NULL,
+        pending_otp_algorithm TEXT NULL,
+        pending_otp_digits INTEGER NULL,
+        pending_otp_period INTEGER NULL,
+        pending_otp_requested_at TEXT NULL,
+        otp_algorithm TEXT NOT NULL DEFAULT 'SHA1',
+        otp_digits INTEGER NOT NULL DEFAULT 6,
+        otp_period INTEGER NOT NULL DEFAULT 30,
+        otp_enabled INTEGER NOT NULL DEFAULT 0,
+        otp_confirmed_at TEXT NULL,
+        otp_last_used_timestep INTEGER NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 };
 
@@ -482,6 +500,179 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'creates an u
         $harness->assertSame('https://swallowtail.example.test/api', (string)($payload['api_url'] ?? ''));
         $harness->assertSame(['203.0.113.15/32'], (array)($payload['cidrs'] ?? []));
         $harness->assertTrue((new SwallowtailPhotoLibraryService())->authenticateUploadToken((string)$payload['token'], '203.0.113.15') !== null);
+    } finally {
+        if (is_file($securityPath)) {
+            unlink($securityPath);
+        }
+    }
+});
+
+$harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'requires OTP for upload token registration when enabled', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-otp-missing-' . bin2hex(random_bytes(6)) . '.keys';
+    $auth = new UserAuthenticationService($securityPath, [
+        'memory_cost' => 8192,
+        'time_cost' => 1,
+        'threads' => 1,
+    ]);
+
+    try {
+        $created = $auth->createUser('SpiceBush OTP Admin', 'spicebush-otp-missing@example.test', 'SpiceBush Pass 1!', true);
+        $userId = (int)($created['user_id'] ?? 0);
+        InterfaceDB::prepareExecute(
+            'UPDATE users SET role_id = :role_id WHERE id = :id',
+            ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
+        );
+        InterfaceDB::prepareExecute(
+            'INSERT INTO user_totp (
+                user_id,
+                otp_secret,
+                otp_algorithm,
+                otp_digits,
+                otp_period,
+                otp_enabled,
+                otp_confirmed_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                :user_id,
+                :otp_secret,
+                :otp_algorithm,
+                :otp_digits,
+                :otp_period,
+                1,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )',
+            [
+                'user_id' => $userId,
+                'otp_secret' => 'JBSWY3DPEHPK3PXP',
+                'otp_algorithm' => 'SHA1',
+                'otp_digits' => 6,
+                'otp_period' => 30,
+            ]
+        );
+        UserAuthenticationService::forgetUserByIdCache($userId);
+
+        $request = new RequestFramework(
+            [],
+            [],
+            ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'HTTP_HOST' => 'swallowtail.example.test'],
+            [],
+            ['Content-Type' => 'application/json', 'Host' => 'swallowtail.example.test'],
+            json_encode([
+                'username' => 'spicebush-otp-missing@example.test',
+                'password' => 'SpiceBush Pass 1!',
+                'otp_code' => '',
+                'device_id' => 'spicebush-test-rig',
+            ], JSON_THROW_ON_ERROR),
+            []
+        );
+        $service = new SwallowtailSpiceBushRegistrationApiService(
+            $auth,
+            new SwallowtailPhotoLibraryService(),
+            new CardAccessFramework(new RoleRepository(), $auth)
+        );
+        $payload = json_decode($service->handleRegister($request)->body(), true);
+
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(empty($payload['success']));
+        $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'OTP'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+    } finally {
+        if (is_file($securityPath)) {
+            unlink($securityPath);
+        }
+    }
+});
+
+$harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts valid OTP for upload token registration when enabled', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-otp-valid-' . bin2hex(random_bytes(6)) . '.keys';
+    $auth = new UserAuthenticationService($securityPath, [
+        'memory_cost' => 8192,
+        'time_cost' => 1,
+        'threads' => 1,
+    ]);
+
+    try {
+        $created = $auth->createUser('SpiceBush OTP Admin', 'spicebush-otp-valid@example.test', 'SpiceBush Pass 1!', true);
+        $userId = (int)($created['user_id'] ?? 0);
+        $otpSecret = 'JBSWY3DPEHPK3PXP';
+        $verificationService = new OtpVerificationService();
+        $otpCode = $verificationService->generateCodeForTimestep(
+            6,
+            'SHA1',
+            $otpSecret,
+            $verificationService->currentTimestep(time(), 30)
+        );
+
+        InterfaceDB::prepareExecute(
+            'UPDATE users SET role_id = :role_id WHERE id = :id',
+            ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
+        );
+        InterfaceDB::prepareExecute(
+            'INSERT INTO user_totp (
+                user_id,
+                otp_secret,
+                otp_algorithm,
+                otp_digits,
+                otp_period,
+                otp_enabled,
+                otp_confirmed_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                :user_id,
+                :otp_secret,
+                :otp_algorithm,
+                :otp_digits,
+                :otp_period,
+                1,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )',
+            [
+                'user_id' => $userId,
+                'otp_secret' => $otpSecret,
+                'otp_algorithm' => 'SHA1',
+                'otp_digits' => 6,
+                'otp_period' => 30,
+            ]
+        );
+        UserAuthenticationService::forgetUserByIdCache($userId);
+
+        $request = new RequestFramework(
+            [],
+            [],
+            ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'HTTP_HOST' => 'swallowtail.example.test'],
+            [],
+            ['Content-Type' => 'application/json', 'Host' => 'swallowtail.example.test'],
+            json_encode([
+                'username' => 'spicebush-otp-valid@example.test',
+                'password' => 'SpiceBush Pass 1!',
+                'otp_code' => $otpCode,
+                'device_id' => 'spicebush-test-rig',
+            ], JSON_THROW_ON_ERROR),
+            []
+        );
+        $service = new SwallowtailSpiceBushRegistrationApiService(
+            $auth,
+            new SwallowtailPhotoLibraryService(),
+            new CardAccessFramework(new RoleRepository(), $auth)
+        );
+        $payload = json_decode($service->handleRegister($request)->body(), true);
+
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(!empty($payload['success']));
+        $harness->assertTrue(str_starts_with((string)($payload['token'] ?? ''), 'stup_'));
+        $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
