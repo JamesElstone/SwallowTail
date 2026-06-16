@@ -742,6 +742,10 @@
                 }
             });
 
+            if (xhr.upload && typeof options.onUploadProgress === 'function') {
+                xhr.upload.addEventListener('progress', options.onUploadProgress);
+            }
+
             xhr.onload = () => {
                 let payload = null;
 
@@ -1512,13 +1516,14 @@
         const list = scope.querySelector('[data-upload-file-list]');
         const summary = scope.querySelector('[data-upload-selection-summary]');
         const maxFiles = Number(dropzone.dataset.uploadMaxFiles || '12');
+        const fileLabel = String(dropzone.dataset.uploadFileLabel || 'file').trim() || 'file';
         const maxReached = files.length > maxFiles;
 
         if (summary instanceof HTMLElement) {
             if (files.length === 0) {
                 summary.textContent = 'No files selected yet.';
             } else if (maxReached) {
-                summary.textContent = `Too many files selected.\nPlease keep it to ${String(maxFiles)} CSV files or fewer.`;
+                summary.textContent = `Too many files selected.\nPlease keep it to ${String(maxFiles)} ${fileLabel}${maxFiles === 1 ? '' : 's'} or fewer.`;
             } else {
                 summary.textContent = `${String(files.length)} file${files.length > 1 ? 's' : ''} selected:`;
             }
@@ -1690,6 +1695,7 @@
 
             form.addEventListener('submit', (event) => {
                 const maxFiles = Number(dropzone.dataset.uploadMaxFiles || '12');
+                const fileLabel = String(dropzone.dataset.uploadFileLabel || 'file').trim() || 'file';
 
                 if (accountSelect instanceof HTMLSelectElement && !accountSelect.value) {
                     accountSelect.classList.add('input-missing-required');
@@ -1697,7 +1703,153 @@
 
                 if (input.files && input.files.length > maxFiles) {
                     event.preventDefault();
-                    window.alert(`Please upload no more than ${String(maxFiles)} CSV files at once.`);
+                    window.alert(`Please upload no more than ${String(maxFiles)} ${fileLabel}${maxFiles === 1 ? '' : 's'} at once.`);
+                }
+            });
+        });
+    }
+
+    function rawUploadStatusNode(form) {
+        return form instanceof HTMLFormElement ? form.querySelector('[data-raw-upload-status]') : null;
+    }
+
+    function setRawUploadStatus(form, message, type = '') {
+        const node = rawUploadStatusNode(form);
+        if (!(node instanceof HTMLElement)) {
+            return;
+        }
+
+        node.hidden = String(message || '').trim() === '';
+        node.className = `form-row full raw-upload-progress${type ? ` ${type}` : ''}`;
+        node.textContent = String(message || '');
+    }
+
+    function rawUploadInput(form) {
+        return form instanceof HTMLFormElement ? form.querySelector('[data-upload-input]') : null;
+    }
+
+    function rawUploadDropzone(form) {
+        return form instanceof HTMLFormElement ? form.querySelector('[data-upload-dropzone]') : null;
+    }
+
+    function validateRawUploadForm(form) {
+        const input = rawUploadInput(form);
+        const dropzone = rawUploadDropzone(form);
+        const maxFiles = Number(dropzone instanceof HTMLElement ? dropzone.dataset.uploadMaxFiles || '3' : '3');
+        const files = input instanceof HTMLInputElement && input.files ? Array.from(input.files) : [];
+
+        if (files.length === 0) {
+            return 'Choose at least one CR2 file to upload.';
+        }
+
+        if (files.length > maxFiles) {
+            return `Upload no more than ${String(maxFiles)} CR2 files at once.`;
+        }
+
+        const invalidFile = files.find((file) => !String(file.name || '').toLowerCase().endsWith('.cr2'));
+        if (invalidFile) {
+            return `${invalidFile.name || 'Selected file'} is not a CR2 file.`;
+        }
+
+        return '';
+    }
+
+    function resetRawUploadForm(form) {
+        const input = rawUploadInput(form);
+        const dropzone = rawUploadDropzone(form);
+        const accountSelect = form instanceof HTMLFormElement ? form.querySelector('#upload_account_id') : null;
+
+        if (input instanceof HTMLInputElement) {
+            input.value = '';
+        }
+
+        updateUploadSelection(dropzone, input);
+        syncUploadSubmitState(form, input, accountSelect);
+    }
+
+    function applyAjaxPagePayload(payload) {
+        if (navigateToAjaxPayloadPage(payload)) {
+            return;
+        }
+
+        applyAjaxPayloadFragment('sidebar', () => replaceSidebar(payload.sidebar_html));
+        applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(payload.site_context_html));
+        applyAjaxPayloadFragment('developer options status', () => replaceDeveloperOptionsStatus(payload.developer_options_status_html));
+        applyAjaxPayloadFragment('cards', () => replaceCards(payload.cards));
+        applyAjaxPayloadFragment('flash', () => replaceFlash(payload.flash_html));
+        applyAjaxPayloadFragment('visible card', () => showPageCardTabForCard(payload.show_card));
+    }
+
+    function initialiseRawUploadForms(root = document) {
+        const forms = root.querySelectorAll ? root.querySelectorAll('[data-raw-upload-form="true"]') : [];
+
+        forms.forEach((form) => {
+            if (!(form instanceof HTMLFormElement) || form.dataset.rawUploadBound === '1') {
+                return;
+            }
+
+            form.dataset.rawUploadBound = '1';
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                const validationError = validateRawUploadForm(form);
+                if (validationError !== '') {
+                    setRawUploadStatus(form, validationError, 'error');
+                    return;
+                }
+
+                const formData = new FormData(form);
+                formData.set('_ajax', '1');
+                appendCurrentPageCardKeys(formData, form);
+                appendSiteContextSelectionsToFormData(formData, form);
+
+                const ajaxNonce = reserveAjaxNonce();
+                if (ajaxNonce) {
+                    formData.set('ajax_nonce', ajaxNonce);
+                }
+
+                const submitter = event.submitter instanceof HTMLButtonElement
+                    ? event.submitter
+                    : form.querySelector('[data-upload-submit]');
+                const restoreProcessingState = beginButtonProcessingState(submitter);
+
+                setRawUploadStatus(form, 'Uploading...', '');
+
+                try {
+                    const payload = await sendAjax(formRequestUrl(form), {
+                        method: 'POST',
+                        body: formData,
+                        transport: 'xhr',
+                        onUploadProgress: (progressEvent) => {
+                            if (!progressEvent.lengthComputable || progressEvent.total <= 0) {
+                                setRawUploadStatus(form, 'Uploading...', '');
+                                return;
+                            }
+
+                            const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
+                            setRawUploadStatus(form, `Uploading ${String(percent)}%...`, '');
+                        },
+                    });
+
+                    completeAjaxNonce(ajaxNonce, payload?.ajax_nonce);
+                    setRawUploadStatus(form, 'Upload complete.', 'success');
+                    resetRawUploadForm(form);
+                    applyAjaxPagePayload(payload);
+                } catch (error) {
+                    restoreAjaxNonce(ajaxNonce);
+                    const flashHtml = error && error.payload && typeof error.payload.flash_html === 'string'
+                        ? error.payload.flash_html
+                        : renderErrorFlashHtml(error ? error.payload : null);
+
+                    if (flashHtml !== '') {
+                        replaceFlash(flashHtml);
+                    }
+
+                    setRawUploadStatus(form, 'Upload failed.', 'error');
+                    handleAjaxSecurityFailure(error ? error.payload : null);
+                    console.error(error);
+                } finally {
+                    restoreProcessingState();
                 }
             });
         });
@@ -1892,6 +2044,7 @@
                     initialiseDirtyActionControls(replacement);
                     initDangerZoneConfirmationControls(replacement);
                     initialiseUploadDropzones(replacement);
+                    initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
                     initialiseCardAutoRefresh(replacement);
@@ -1912,6 +2065,7 @@
                     initialiseDirtyActionControls(replacement);
                     initDangerZoneConfirmationControls(replacement);
                     initialiseUploadDropzones(replacement);
+                    initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
                     initialiseCardAutoRefresh(replacement);
@@ -2653,6 +2807,7 @@
     initialiseDirtyActionControls(document);
     initDangerZoneConfirmationControls(document);
     initialiseUploadDropzones(document);
+    initialiseRawUploadForms(document);
     initialisePasswordRequirementPanels(document);
     initialiseTableCondensedControls(document);
     initialiseCardAutoRefresh(document);

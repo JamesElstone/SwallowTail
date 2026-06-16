@@ -101,6 +101,11 @@ final class RequestFramework
         return array_merge($this->post, $this->jsonInput);
     }
 
+    public function files(): array
+    {
+        return $this->files;
+    }
+
     public function server(string $key, mixed $default = null): mixed
     {
         return $this->server[$key] ?? $default;

@@ -28,6 +28,7 @@ final class _settings extends PageContextFramework
     {
         return [
             'application_settings',
+            'storage_available',
             'web_environment',
             'invitation_settings',
             'sms_settings',
