@@ -1,4 +1,4 @@
 #!/bin/sh
-export PYTHONPATH="__PROJECT_ROOT__/service/rawConversion"
+export PYTHONPATH="__PROJECT_ROOT__/service/subsystem"
 export PYTHONDONTWRITEBYTECODE=1
 exec "__PYTHON__" -m raw_conversion --config "__CONFIG__"

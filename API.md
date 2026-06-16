@@ -1,7 +1,7 @@
 # SwallowTail API
 
 This document describes the device-facing SwallowTail HTTP API. It is intended
-for upload bridges such as an ESP32 WiFi bridge that downloads a Canon CR2 file
+for upload bridges such as an ESP32 WiFi bridge that downloads a CR2 RAW image file
 from a camera and uploads it to SwallowTail.
 
 Only `web_root` should be served publicly by the web server. The API paths below
@@ -106,7 +106,7 @@ algorithm names are rejected.
 
 ## Upload CR2
 
-Uploads a Canon `.CR2` file, stores the original outside `web_root`, records the
+Uploads a `.CR2` RAW image file, stores the original outside `web_root`, records the
 photo, and queues derivative conversion jobs for:
 
 - `original_jpeg`
@@ -298,7 +298,7 @@ Unsupported file type:
 ```json
 {
   "success": false,
-  "errors": ["Only Canon .CR2 RAW files are supported."]
+  "errors": ["Only .CR2 RAW image files are supported."]
 }
 ```
 

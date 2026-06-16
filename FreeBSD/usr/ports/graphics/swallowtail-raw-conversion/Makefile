@@ -14,7 +14,7 @@ RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVO
 		redis-server:databases/redis
 
 USES=		php:cli python:3.11
-USE_RC_SUBR=	swallowtail_raw_conversion
+USE_RC_SUBR=	swallowtail_subsystem
 
 NO_ARCH=	yes
 NO_BUILD=	yes
@@ -26,14 +26,14 @@ GROUPS=		swallowtail
 SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
 
 SUB_FILES=	pkg-message \
-		swallowtail_raw_conversion_worker
+		swallowtail_subsystem_worker
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
 		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT}
 
 PLIST_FILES=	"@sample(root,swallowtail,0640) etc/swallowtail/raw-conversion.ini.sample" \
-		etc/newsyslog.conf.d/swallowtail_raw_conversion.conf \
-		libexec/swallowtail_raw_conversion_worker
+		etc/newsyslog.conf.d/swallowtail_subsystem.conf \
+		libexec/swallowtail_subsystem_worker
 
 do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
@@ -41,9 +41,9 @@ do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/libexec
 	${INSTALL_DATA} ${FILESDIR}/raw-conversion.ini.sample \
 		${STAGEDIR}${PREFIX}/etc/swallowtail/raw-conversion.ini.sample
-	${INSTALL_DATA} ${FILESDIR}/swallowtail_raw_conversion.newsyslog.conf \
-		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_raw_conversion.conf
-	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_raw_conversion_worker \
-		${STAGEDIR}${PREFIX}/libexec/swallowtail_raw_conversion_worker
+	${INSTALL_DATA} ${FILESDIR}/swallowtail_subsystem.newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_subsystem.conf
+	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_subsystem_worker \
+		${STAGEDIR}${PREFIX}/libexec/swallowtail_subsystem_worker
 
 .include <bsd.port.mk>

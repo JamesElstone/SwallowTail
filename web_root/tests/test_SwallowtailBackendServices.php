@@ -224,7 +224,7 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
 };
 
 $harness->check(SwallowtailStorageService::class, 'stores originals outside web_root using checksum paths', function () use ($harness): void {
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-storage';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-storage';
     $service = new SwallowtailStorageService($root);
     $sha256 = str_repeat('a', 64);
     $relative = $service->originalRelativePath($sha256, 'CR2');
@@ -245,7 +245,7 @@ $harness->check(SwallowtailStorageService::class, 'stores originals outside web_
 $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unassigned photos and queues conversion', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ingest';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ingest';
     (new SwallowtailStorageLocationService())->registerLocation('Primary test storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -303,7 +303,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-cr3-rejected';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-cr3-rejected';
     (new SwallowtailStorageLocationService())->registerLocation('Primary CR3 rejected storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -328,7 +328,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while c
 $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW uploads by checksum', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-duplicates';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-duplicates';
     (new SwallowtailStorageLocationService())->registerLocation('Primary duplicate storage', $root);
     $first = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     $second = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
@@ -365,7 +365,7 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Checksum token', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-checksum';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-checksum';
     (new SwallowtailStorageLocationService())->registerLocation('Primary checksum storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -534,7 +534,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects vali
 $harness->check(SwallowtailEventAccessService::class, 'keeps event access least privilege until granted', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-access';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-access';
     (new SwallowtailStorageLocationService())->registerLocation('Primary access storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -570,7 +570,7 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
 $harness->check(SwallowtailImageServeService::class, 'resolves only authorised private derivative images', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-image-serve';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-image-serve';
     (new SwallowtailStorageLocationService())->registerLocation('Primary image serve storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -637,7 +637,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api';
     (new SwallowtailStorageLocationService())->registerLocation('Primary API storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
 
@@ -689,7 +689,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects upload tokens ou
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['198.51.100.0/24']);
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-cidr';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-cidr';
     (new SwallowtailStorageLocationService())->registerLocation('Primary API CIDR storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
 
@@ -775,7 +775,7 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Status token', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-status';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-status';
     (new SwallowtailStorageLocationService())->registerLocation('Primary status storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -825,8 +825,8 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
 $harness->check(SwallowtailStorageLocationService::class, 'chooses writable mounted storage and moves originals between locations', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $primaryRoot = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-primary-full';
-    $secondaryRoot = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-secondary-active';
+    $primaryRoot = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-primary-full';
+    $secondaryRoot = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-secondary-active';
     $locationService = new SwallowtailStorageLocationService();
     $primaryId = $locationService->registerLocation('Primary full storage', $primaryRoot, ['is_full' => true, 'sort_order' => 1]);
     $secondaryId = $locationService->registerLocation('Secondary active storage', $secondaryRoot, ['sort_order' => 2]);
@@ -903,7 +903,7 @@ $harness->check('Swallowtail migration', 'defines the photo backend tables', fun
 $harness->check(SwallowtailConversionQueueService::class, 'deduplicates derivative jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-dedupe';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-dedupe';
     (new SwallowtailStorageLocationService())->registerLocation('Primary dedupe storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -935,7 +935,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'deduplicates derivati
 $harness->check(SwallowtailConversionQueueService::class, 'does not require Redis for durable derivative enqueue', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-redis-down';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-redis-down';
     (new SwallowtailStorageLocationService())->registerLocation('Primary redis-down storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {

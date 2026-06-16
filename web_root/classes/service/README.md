@@ -46,7 +46,7 @@ Coordinates RAW file ingest.
 
 - Accepts a local uploaded RAW file path.
 - Validates `.CR2` filenames.
-- Checks for a plausible Canon RAW signature.
+- Checks for a plausible CR2 RAW signature.
 - Computes the SHA-256 checksum.
 - Detects duplicate uploads by checksum before storing another copy.
 - Stores new originals through `SwallowtailStorageService`.

@@ -4,13 +4,13 @@ set -eu
 PROJECT_ROOT=${1:-/usr/local/swallowtail}
 CONFIG_DIR=${2:-/usr/local/etc/swallowtail}
 CONFIG_FILE="${CONFIG_DIR}/raw-conversion.ini"
-RC_FILE="/usr/local/etc/rc.d/swallowtail_raw_conversion"
-RUNNER_FILE="/usr/local/libexec/swallowtail_raw_conversion_worker"
-LOG_FILE="/var/log/swallowtail_raw_conversion.log"
-NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_raw_conversion.conf"
+RC_FILE="/usr/local/etc/rc.d/swallowtail_subsystem"
+RUNNER_FILE="/usr/local/libexec/swallowtail_subsystem_worker"
+LOG_FILE="/var/log/swallowtail_subsystem.log"
+NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_subsystem.conf"
 
-if [ ! -d "${PROJECT_ROOT}/service/rawConversion" ]; then
-  echo "Raw conversion service was not found under ${PROJECT_ROOT}" >&2
+if [ ! -d "${PROJECT_ROOT}/service/subsystem" ]; then
+  echo "Subsystem service was not found under ${PROJECT_ROOT}" >&2
   exit 1
 fi
 
@@ -22,7 +22,7 @@ fi
 
 mkdir -p "${CONFIG_DIR}"
 if [ ! -f "${CONFIG_FILE}" ]; then
-  cp "${PROJECT_ROOT}/service/rawConversion/config.example.ini" "${CONFIG_FILE}"
+  cp "${PROJECT_ROOT}/service/subsystem/config.example.ini" "${CONFIG_FILE}"
 fi
 chown root:swallowtail "${CONFIG_FILE}"
 chmod 0640 "${CONFIG_FILE}"
@@ -36,7 +36,7 @@ chmod 0640 "${LOG_FILE}"
 mkdir -p /usr/local/etc/newsyslog.conf.d
 
 sed "s#__PROJECT_ROOT__#${PROJECT_ROOT}#g" \
-  "${PROJECT_ROOT}/service/rawConversion/scripts/swallowtail_raw_conversion.in" \
+  "${PROJECT_ROOT}/service/subsystem/scripts/swallowtail_subsystem.in" \
   > "${RC_FILE}"
 chmod 0555 "${RC_FILE}"
 
@@ -44,15 +44,15 @@ sed \
   -e "s#__PROJECT_ROOT__#${PROJECT_ROOT}#g" \
   -e "s#__PYTHON__#/usr/local/bin/python3.11#g" \
   -e "s#__CONFIG__#${CONFIG_FILE}#g" \
-  "${PROJECT_ROOT}/service/rawConversion/scripts/raw_conversion_worker.in" \
+  "${PROJECT_ROOT}/service/subsystem/scripts/swallowtail_subsystem_worker.in" \
   > "${RUNNER_FILE}"
 chmod 0555 "${RUNNER_FILE}"
 
-cp "${PROJECT_ROOT}/service/rawConversion/scripts/swallowtail_raw_conversion.newsyslog.conf" "${NEWSYSLOG_FILE}"
+cp "${PROJECT_ROOT}/service/subsystem/scripts/swallowtail_subsystem.newsyslog.conf" "${NEWSYSLOG_FILE}"
 chmod 0644 "${NEWSYSLOG_FILE}"
 
-sysrc swallowtail_raw_conversion_enable=YES
+sysrc swallowtail_subsystem_enable=YES
 echo "Installed ${RC_FILE}"
 echo "Installed ${RUNNER_FILE}"
 echo "Installed ${NEWSYSLOG_FILE}"
-echo "Review ${CONFIG_FILE}, then run: service swallowtail_raw_conversion start"
+echo "Review ${CONFIG_FILE}, then run: service swallowtail_subsystem start"

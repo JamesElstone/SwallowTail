@@ -1,4 +1,4 @@
-# file_logs
+# debug/logs
 
 This folder sits outside `web_root` and can optionally be used to store local log files.
 

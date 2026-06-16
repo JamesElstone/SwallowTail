@@ -29,6 +29,6 @@ work_dir = /var/tmp/swallowtail-raw-conversion
 temp_retention_hours = 24
 
 [logging]
-file = /var/log/swallowtail_raw_conversion.log
+file = /var/log/swallowtail_subsystem.log
 level = INFO
 stderr_chars = 4000

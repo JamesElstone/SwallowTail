@@ -1,7 +1,7 @@
-# SwallowTail Raw Conversion Service
+# SwallowTail Subsystem Service
 
 This service consumes SwallowTail conversion jobs from MariaDB, wakes quickly via
-Redis, and renders Canon `.CR2` files with `rawtherapee-cli`.
+Redis, and renders `.CR2` RAW image files with `rawtherapee-cli`.
 
 PHP owns storage decisions. Each job includes the input path, optional PP3 path,
 final output path, derivative type, and storage metadata. The worker renders into
@@ -13,7 +13,7 @@ defined on the job.
 Run the repo-provided installer from the checked-out project:
 
 ```sh
-sh service/rawConversion/scripts/install_freebsd.sh /usr/local/swallowtail
+sh service/subsystem/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
 Review the generated configuration:
@@ -29,9 +29,9 @@ rotation config.
 
 ```sh
 python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --health
-service swallowtail_raw_conversion start
-service swallowtail_raw_conversion status
-service swallowtail_raw_conversion migrate
+service swallowtail_subsystem start
+service swallowtail_subsystem status
+service swallowtail_subsystem migrate
 ```
 
 `migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration

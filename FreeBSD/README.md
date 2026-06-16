@@ -216,15 +216,15 @@ Do not expose:
 secure
 db_schema
 tools
-file_logs
+debug/logs
 ```
 
-Allow the PHP user to write to `secure` and `file_logs`:
+Allow the PHP user to write to `secure` and `debug/logs`:
 
 ```sh
 chown -R james.elstone:www /usr/local/eelKit
-chmod 775 /usr/local/eelKit/secure /usr/local/eelKit/file_logs
-find /usr/local/eelKit/secure /usr/local/eelKit/file_logs -type f \
+chmod 775 /usr/local/eelKit/secure /usr/local/eelKit/debug/logs
+find /usr/local/eelKit/secure /usr/local/eelKit/debug/logs -type f \
   -exec chmod 664 {} +
 ```
 

@@ -2,13 +2,23 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c99
 LDFLAGS ?=
 LDLIBS ?= -lssl -lcrypto
+WORKDIR ?= work
 
-OBJS = spicebush_freebsd.o spicebush_shared.o spicebush_http_freebsd.o
+TARGET = $(WORKDIR)/spicebush
+OBJS = $(WORKDIR)/spicebush_freebsd.o $(WORKDIR)/spicebush_shared.o $(WORKDIR)/spicebush_http_freebsd.o
 
-spicebush: $(OBJS)
+all: $(TARGET)
+
+$(WORKDIR):
+	mkdir -p $(WORKDIR)
+
+$(WORKDIR)/%.o: %.c | $(WORKDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 clean:
-	rm -f $(OBJS) spicebush
+	rm -f $(OBJS) $(TARGET)
 
-.PHONY: clean
+.PHONY: all clean

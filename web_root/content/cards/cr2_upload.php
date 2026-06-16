@@ -26,7 +26,7 @@ final class _cr2_uploadCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return 'Drag up to three Canon CR2 originals here to store them privately and queue derivatives.';
+        return 'Drag up to three CR2 RAW image files here to store them privately and queue derivatives.';
     }
 
     public function render(array $context): string

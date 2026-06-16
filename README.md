@@ -1,6 +1,6 @@
 # SwallowTail
 
-SwallowTail is a self-hosted open source application for sharing Canon RAW photo files as controlled JPEG galleries.
+SwallowTail is a self-hosted open source application for sharing CR2 RAW image files as controlled JPEG galleries.
 
 The application is built from the eelKit PHP framework. eelKit provides the authenticated admin shell, users, roles, MFA, session protection, CSRF protection, audit history, database helpers, and page/card rendering model. SwallowTail adds the photo workflow on top: upload RAW files, convert them to JPEGs, group them into events, and let specific users view or download only the photos they have permission to access.
 
@@ -37,7 +37,7 @@ SwallowTail is intended to run on a FreeBSD virtual machine with storage added o
 
 The intended flow is:
 
-1. A Canon RAW file is uploaded by an authorised user.
+1. A CR2 RAW image file is uploaded by an authorised user.
 2. SwallowTail computes a checksum for duplicate detection.
 3. The original file is stored outside `web_root`.
 4. The photo starts as unassigned, so normal event viewers cannot see it.
@@ -67,7 +67,7 @@ The default should be least privilege: uploaded photos are unassigned, users see
 
 Planned core features:
 
-- Canon RAW upload support, including `.CR2` and `.CR3` files where supported by the conversion tooling.
+- CR2 RAW image file upload support.
 - Checksum-based duplicate detection.
 - Off-web-root storage for originals, JPEG derivatives, thumbnails, previews, and generated ZIPs.
 - RAW-to-JPEG conversion pipeline.
@@ -109,7 +109,7 @@ eelKit already provides the application security foundation:
 SwallowTail must add photo-specific security:
 
 - Store files using internal generated paths, not user-supplied filenames.
-- Canonicalise paths and allow access only inside configured storage roots.
+- Normalise paths and allow access only inside configured storage roots.
 - Never expose storage roots directly through Apache.
 - Check event/photo permissions before streaming any file.
 - Validate uploads by extension and file type where practical.
@@ -117,7 +117,7 @@ SwallowTail must add photo-specific security:
 - Audit who uploaded, assigned, viewed, and downloaded photos.
 - Avoid loading large RAW or ZIP downloads fully into PHP memory.
 
-Only `web_root` should be served publicly. Directories such as `secure`, `db_schema`, `tools`, `file_logs`, photo storage roots, conversion caches, and generated ZIP directories must remain private on the server.
+Only `web_root` should be served publicly. Directories such as `secure`, `db_schema`, `tools`, `debug/logs`, photo storage roots, conversion caches, and generated ZIP directories must remain private on the server.
 
 ## Current Repository State
 
@@ -144,7 +144,7 @@ Some implementation files still carry eelKit framework names because SwallowTail
 - `secure` - private configuration, generated keys, and bootstrap files.
 - `db_schema` - baseline schema and incremental migrations.
 - `tools` - command line helpers for setup, migrations, password reset, and maintenance.
-- `file_logs` - local log output.
+- `debug/logs` - local log output.
 
 ## License
 

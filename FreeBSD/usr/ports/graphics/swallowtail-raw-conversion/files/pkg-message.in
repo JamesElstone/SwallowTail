@@ -11,8 +11,8 @@ Review the configuration file:
 
 Then enable and start the service:
 
-  sysrc swallowtail_raw_conversion_enable=YES
-  service swallowtail_raw_conversion start
+  sysrc swallowtail_subsystem_enable=YES
+  service swallowtail_subsystem start
 EOM
 }
 ]

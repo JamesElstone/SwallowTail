@@ -1,7 +1,7 @@
 /secure/*
 !/secure/README.md
-/file_logs/*
-!/file_logs/README.md
+/debug/logs/*
+!/debug/logs/README.md
 /uploads/*
 !/uploads/README.md
 /sqldump
@@ -10,3 +10,7 @@
 /example_data
 /web_root/tryit
 /examples
+/client/spicebush/work
+/FreeBSD/usr/ports/databases/mariadb-connector-odbc/
+__pycache__/
+*.pyc

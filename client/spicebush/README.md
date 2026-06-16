@@ -1,6 +1,6 @@
 # SpiceBush
 
-SpiceBush finds Canon CR2 files and uploads them to SwallowTail. The Windows
+SpiceBush finds CR2 RAW image files and uploads them to SwallowTail. The Windows
 build is a tray application. The FreeBSD build is a textual command line
 program.
 
@@ -39,6 +39,8 @@ cd client\spicebush
 build.cmd
 ```
 
+The executable is written to `client\spicebush\work\SpiceBush.exe`.
+
 For older compilers, keep the subsystem as Windows and link with:
 
 ```text
@@ -54,7 +56,8 @@ cd client/spicebush
 make -f Makefile.freebsd
 ```
 
-This links against base `libssl` and `libcrypto`.
+This writes `client/spicebush/work/spicebush` and links against base `libssl`
+and `libcrypto`.
 
 ## Windows First Run
 
@@ -74,32 +77,32 @@ the INI file and uses them for quick-checksum and raw-upload API calls.
 Register:
 
 ```sh
-./spicebush --register https://swallowtail.example.test user@example.test 'password'
+./work/spicebush --register https://swallowtail.example.test user@example.test 'password'
 ```
 
 Scan one path recursively:
 
 ```sh
-./spicebush --scan /media/camera-card
+./work/spicebush --scan /media/camera-card
 ```
 
 Scan all local mounted filesystems:
 
 ```sh
-./spicebush --scan-existing
+./work/spicebush --scan-existing
 ```
 
 Watch for new local mount points and scan each new mount up to three folders
 deep:
 
 ```sh
-./spicebush --watch 5
+./work/spicebush --watch 5
 ```
 
 Show textual statistics for the current run:
 
 ```sh
-./spicebush --stats
+./work/spicebush --stats
 ```
 
 ## Requirement Notes

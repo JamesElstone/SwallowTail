@@ -244,7 +244,7 @@ $swallowtailUiUploadFile = static function (string $path, string $name = 'IMG_90
         'cr2_files' => [
             'tmp_name' => [$path],
             'name' => [$name],
-            'type' => ['image/x-canon-cr2'],
+            'type' => ['image/x-cr2'],
             'error' => [UPLOAD_ERR_OK],
             'size' => [is_file($path) ? filesize($path) : 0],
         ],
@@ -253,7 +253,7 @@ $swallowtailUiUploadFile = static function (string $path, string $name = 'IMG_90
 
 $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 web uploads and records web ownership', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture, $swallowtailUiUploadFile): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-upload';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-upload';
     (new SwallowtailStorageLocationService())->registerLocation('UI upload storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
     if (!is_string($source)) {
@@ -275,7 +275,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 we
 
 $harness->check(SwallowtailWebRawUploadService::class, 'rejects invalid CR2 web upload inputs', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-invalid';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-invalid';
     (new SwallowtailStorageLocationService())->registerLocation('UI invalid storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
     if (!is_string($source)) {
@@ -311,7 +311,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'rejects invalid CR2 web 
 
 $harness->check(SwallowtailWebRawUploadService::class, 'reports duplicate CR2 uploads without duplicate photo rows', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture, $swallowtailUiUploadFile): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-duplicate';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-duplicate';
     (new SwallowtailStorageLocationService())->registerLocation('UI duplicate storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
     if (!is_string($source)) {
@@ -334,7 +334,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'reports duplicate CR2 up
 
 $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and event-permitted gallery rows', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-gallery';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-gallery';
     $locationId = (new SwallowtailStorageLocationService())->registerLocation('UI gallery storage', $root);
     $library = new SwallowtailPhotoLibraryService();
     $event = $library->createEvent('Accessible Event');
@@ -394,7 +394,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
 
 $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized private derivative assets', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'file_logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-assets';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-assets';
     $locationId = (new SwallowtailStorageLocationService())->registerLocation('UI asset storage', $root);
     $storage = new SwallowtailStorageService($root);
     $relative = $storage->derivativeRelativePath(str_repeat('d', 64), 'thumbnail');

@@ -136,9 +136,9 @@ final class SwallowtailPhotoIngestService
 
         $extension = strtolower(pathinfo($originalFilename, PATHINFO_EXTENSION));
         if ($extension !== 'cr2') {
-            $errors[] = 'Only Canon .CR2 RAW files are supported.';
-        } elseif ($bytes > 0 && !$this->hasPlausibleCanonSignature($sourcePath, $extension)) {
-            $warnings[] = 'RAW file signature could not be positively identified as Canon RAW.';
+            $errors[] = 'Only .CR2 RAW image files are supported.';
+        } elseif ($bytes > 0 && !$this->hasPlausibleCr2Signature($sourcePath, $extension)) {
+            $warnings[] = 'RAW file signature could not be positively identified as CR2 RAW.';
         }
 
         return [
@@ -150,7 +150,7 @@ final class SwallowtailPhotoIngestService
         ];
     }
 
-    private function hasPlausibleCanonSignature(string $sourcePath, string $extension): bool
+    private function hasPlausibleCr2Signature(string $sourcePath, string $extension): bool
     {
         $handle = @fopen($sourcePath, 'rb');
         if (!is_resource($handle)) {

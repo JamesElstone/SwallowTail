@@ -98,7 +98,7 @@ def load_config(path: str) -> AppConfig:
             temp_retention_hours=max(1, parser.getint("worker", "temp_retention_hours", fallback=24)),
         ),
         logging=LoggingConfig(
-            file=parser.get("logging", "file", fallback="/var/log/swallowtail_raw_conversion.log"),
+            file=parser.get("logging", "file", fallback="/var/log/swallowtail_subsystem.log"),
             level=parser.get("logging", "level", fallback="INFO").strip().upper(),
         ),
     )
