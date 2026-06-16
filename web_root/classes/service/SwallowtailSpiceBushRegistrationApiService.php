@@ -123,6 +123,11 @@ final class SwallowtailSpiceBushRegistrationApiService
 
     private function apiUrl(RequestFramework $request): string
     {
+        $override = rtrim(trim((string)AppConfigurationStore::get('invitation.base_url_override', '')), '/');
+        if ($override !== '') {
+            return $override . '/api';
+        }
+
         $host = trim((string)$request->header('Host', (string)$request->server('HTTP_HOST', '')));
         if ($host === '') {
             $host = trim((string)$request->server('SERVER_NAME', ''));
