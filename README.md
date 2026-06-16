@@ -149,3 +149,5 @@ Some implementation files still carry eelKit framework names because SwallowTail
 ## License
 
 SwallowTail is licensed under the BSD 3-Clause License. See `LICENSE` for details.
+
+The laws of England and Wales apply to this project.
