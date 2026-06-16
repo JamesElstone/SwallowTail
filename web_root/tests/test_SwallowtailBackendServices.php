@@ -224,7 +224,12 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertTrue(is_file((new SwallowtailStorageService($root))->absolutePath((string)$result['storage_path'])));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_photos', 'storage_location_id', ['id' => (int)$result['photo_id']]));
     $harness->assertSame(0, InterfaceDB::countWhere('swallowtail_event_photos', 'photo_id', (int)$result['photo_id']));
-    $harness->assertSame(4, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(5, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+        'photo_id' => (int)$result['photo_id'],
+        'derivative_type' => 'embedded',
+        'priority' => 'high',
+    ]));
     $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'derivative_type' => 'preview',
@@ -409,15 +414,17 @@ $harness->check('Swallowtail migration', 'defines the photo backend tables', fun
     $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_05_31_001_swallowtail_photo_services.sql';
     $conversionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_15_004_raw_conversion_jobs.sql';
     $hardeningPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_001_raw_conversion_hardening.sql';
+    $embeddedPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_004_raw_conversion_embedded.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
+    $embeddedSql = file_get_contents($embeddedPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($embeddedSql)) {
         throw new RuntimeException('Swallowtail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $embeddedSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS swallowtail_events',
@@ -429,6 +436,7 @@ $harness->check('Swallowtail migration', 'defines the photo backend tables', fun
         'derivative_type enum',
         'output_storage_path',
         'output_width',
+        "'embedded'",
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));
     }
@@ -485,7 +493,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'does not require Redi
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(4, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(5, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
 
     @unlink($source);
 });

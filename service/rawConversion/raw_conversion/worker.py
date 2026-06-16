@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .config import AppConfig
 from .db import ConversionDatabase
+from .embedded import EmbeddedJpegExtractor
 from .jobs import ConversionJob
 from .rawtherapee import RawTherapeeRunner
 from .redis_queue import RedisQueue
@@ -20,6 +21,7 @@ class ConversionWorker:
         self.db = ConversionDatabase(config.database, config.worker)
         self.redis = RedisQueue(config.redis)
         self.runner = RawTherapeeRunner(config.rawtherapee)
+        self.embedded = EmbeddedJpegExtractor()
 
     def run_forever(self) -> None:
         removed = self.cleanup_stale_temp_dirs()
@@ -77,14 +79,14 @@ class ConversionWorker:
                 return
 
             job.validate()
-            result = self.runner.render(job, str(temp_dir))
+            result = self.embedded.extract(job, str(temp_dir)) if job.derivative_type == "embedded" else self.runner.render(job, str(temp_dir))
             render_duration = result.duration_seconds
             if result.exit_code != 0:
-                raise RuntimeError(f"rawtherapee-cli failed with exit code {result.exit_code}: {result.stderr}")
+                raise RuntimeError(f"conversion failed with exit code {result.exit_code}: {result.stderr}")
 
             output = Path(result.temp_output_path)
             if not output.is_file() or output.stat().st_size <= 0:
-                raise RuntimeError("rawtherapee-cli did not create a non-empty output file.")
+                raise RuntimeError("Conversion did not create a non-empty output file.")
 
             final = Path(job.output_path)
             final.parent.mkdir(parents=True, exist_ok=True)

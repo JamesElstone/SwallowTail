@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const DERIVATIVE_TYPES = ['original_jpeg', 'preview', 'thumbnail', 'jpeg'];
+    private const DERIVATIVE_TYPES = ['embedded', 'original_jpeg', 'preview', 'thumbnail', 'jpeg'];
     private const PRIORITIES = ['low', 'normal', 'high'];
 
     public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
@@ -30,6 +30,7 @@ final class SwallowtailConversionQueueService
         $jobIds = [];
 
         foreach ([
+            'embedded' => 'high',
             'original_jpeg' => 'normal',
             'preview' => 'high',
             'thumbnail' => 'normal',
@@ -211,11 +212,12 @@ final class SwallowtailConversionQueueService
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
                CASE derivative_type
-                 WHEN 'preview' THEN 1
-                 WHEN 'thumbnail' THEN 2
-                 WHEN 'jpeg' THEN 3
-                 WHEN 'original_jpeg' THEN 4
-                 ELSE 5
+                 WHEN 'embedded' THEN 1
+                 WHEN 'preview' THEN 2
+                 WHEN 'thumbnail' THEN 3
+                 WHEN 'jpeg' THEN 4
+                 WHEN 'original_jpeg' THEN 5
+                 ELSE 6
                END,
                CASE priority
                  WHEN 'high' THEN 1
@@ -238,7 +240,7 @@ final class SwallowtailConversionQueueService
             return;
         }
 
-        $queue = $derivativeType === 'preview' || $priority === 'high' ? $urgentQueue : $normalQueue;
+        $queue = $derivativeType === 'embedded' || $derivativeType === 'preview' || $priority === 'high' ? $urgentQueue : $normalQueue;
         if ($queue === '') {
             return;
         }

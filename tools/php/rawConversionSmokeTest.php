@@ -93,7 +93,7 @@ try {
 
     $photoId = (int)$result['photo_id'];
     $deadline = time() + $timeoutSeconds;
-    $expectedTypes = ['original_jpeg', 'preview', 'thumbnail', 'jpeg'];
+    $expectedTypes = ['embedded', 'original_jpeg', 'preview', 'thumbnail', 'jpeg'];
 
     do {
         $jobs = InterfaceDB::fetchAll(

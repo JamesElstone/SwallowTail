@@ -17,6 +17,7 @@ from raw_conversion.config import (
     RedisConfig,
     WorkerConfig,
 )
+from raw_conversion.embedded import EmbeddedJpegExtractor
 from raw_conversion.health import _check_directory_writable, _check_log_writable
 from raw_conversion.jobs import ConversionJob
 from raw_conversion.rawtherapee import RawTherapeeRunner
@@ -87,6 +88,30 @@ def test_root(prefix: str) -> Path:
     path = base / f"{prefix}{uuid.uuid4().hex}"
     path.mkdir(parents=True)
     return path
+
+
+def display_jpeg(width: int, height: int, payload: bytes) -> bytes:
+    return (
+        b"\xff\xd8"
+        + b"\xff\xc0\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+        + payload
+        + b"\xff\xd9"
+    )
+
+
+def lossless_jpeg_like(width: int, height: int, payload: bytes) -> bytes:
+    return (
+        b"\xff\xd8"
+        + b"\xff\xc3\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+        + payload
+        + b"\xff\xd9"
+    )
 
 
 class RawTherapeeRunnerTest(unittest.TestCase):
@@ -162,6 +187,32 @@ class RawTherapeeRunnerTest(unittest.TestCase):
 
         worker.process_job(job(self.root, output_path=str(blocked_parent / "out.jpg")))
         self.assertTrue(worker.db.failed)
+
+    def test_embedded_extractor_writes_largest_jpeg_stream(self) -> None:
+        source = self.root / "embedded.CR2"
+        small = display_jpeg(160, 120, b"small")
+        large = display_jpeg(4000, 6000, b"large" * 20)
+        raw_like = lossless_jpeg_like(4056, 3048, b"raw" * 1000)
+        source.write_bytes(b"CR2DATA" + small + b"between" + raw_like + b"after" + large)
+        result = EmbeddedJpegExtractor().extract(
+            job(self.root, derivative_type="embedded", input_path=str(source)),
+            str(self.root / "work"),
+        )
+
+        self.assertEqual(0, result.exit_code)
+        self.assertEqual(large, Path(result.temp_output_path).read_bytes())
+        self.assertLess(result.duration_seconds, 1)
+
+    def test_embedded_extractor_reports_missing_jpeg(self) -> None:
+        source = self.root / "no-preview.CR2"
+        source.write_bytes(b"CR2DATA without a jpeg")
+        result = EmbeddedJpegExtractor().extract(
+            job(self.root, derivative_type="embedded", input_path=str(source)),
+            str(self.root / "work"),
+        )
+
+        self.assertEqual(1, result.exit_code)
+        self.assertIn("No displayable embedded JPEG", result.stderr)
 
 
 class WorkerBehaviourTest(unittest.TestCase):

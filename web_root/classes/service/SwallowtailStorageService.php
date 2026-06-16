@@ -133,7 +133,7 @@ final class SwallowtailStorageService
             throw new InvalidArgumentException('Derivative checksum must be a SHA-256 hex string.');
         }
 
-        if (!in_array($type, ['original_jpeg', 'thumbnail', 'preview', 'jpeg'], true)) {
+        if (!in_array($type, ['embedded', 'original_jpeg', 'thumbnail', 'preview', 'jpeg'], true)) {
             throw new InvalidArgumentException('Unsupported derivative type.');
         }
 
@@ -142,6 +142,7 @@ final class SwallowtailStorageService
         }
 
         $suffix = match ($type) {
+            'embedded' => '_embedded',
             'original_jpeg' => '_original',
             'preview' => '_preview',
             'thumbnail' => '_thumbnail',

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-DERIVATIVE_TYPES = {"original_jpeg", "preview", "thumbnail", "jpeg"}
+DERIVATIVE_TYPES = {"embedded", "original_jpeg", "preview", "thumbnail", "jpeg"}
 
 
 @dataclass(frozen=True)

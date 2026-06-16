@@ -81,11 +81,12 @@ class ConversionDatabase:
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
                CASE derivative_type
-                 WHEN 'preview' THEN 1
-                 WHEN 'thumbnail' THEN 2
-                 WHEN 'jpeg' THEN 3
-                 WHEN 'original_jpeg' THEN 4
-                 ELSE 5
+                 WHEN 'embedded' THEN 1
+                 WHEN 'preview' THEN 2
+                 WHEN 'thumbnail' THEN 3
+                 WHEN 'jpeg' THEN 4
+                 WHEN 'original_jpeg' THEN 5
+                 ELSE 6
                END,
                CASE priority
                  WHEN 'high' THEN 1
