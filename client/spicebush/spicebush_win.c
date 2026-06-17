@@ -67,8 +67,10 @@ typedef struct AppState {
     HWND balloonWindow;
     HWND registerStatus;
     HWND statsLabels[STATS_LABEL_COUNT];
+    HWND statsPingButton;
     HICON registerLogoIcon;
     HFONT uiFont;
+    HFONT boldUiFont;
     HANDLE instanceMutex;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
@@ -87,6 +89,9 @@ typedef struct AppState {
     U64 totalUploadMillis;
     DWORD nextQueueId;
     DWORD queueDoneSinceCompact;
+    int statsPingState;
+    DWORD statsPingStateExpiresAt;
+    int registerQuitMode;
     char appDir[MAX_PATH];
     char iniPath[MAX_PATH];
     char queuePath[MAX_PATH];
@@ -110,7 +115,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
 static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK BalloonWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-static void ShowRegisterWindow(void);
+static void ShowRegisterWindow(int quitMode);
 static DWORD WINAPI ProcessorThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
@@ -157,6 +162,36 @@ static HFONT AppFont(void)
         "Tahoma");
 
     return g_app.uiFont ? g_app.uiFont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+}
+
+static HFONT AppBoldFont(void)
+{
+    HDC hdc;
+    int height;
+
+    if (g_app.boldUiFont) return g_app.boldUiFont;
+
+    hdc = GetDC(NULL);
+    height = hdc ? -MulDiv(8, GetDeviceCaps(hdc, LOGPIXELSY), 72) : -11;
+    if (hdc) ReleaseDC(NULL, hdc);
+
+    g_app.boldUiFont = CreateFontA(
+        height,
+        0,
+        0,
+        0,
+        FW_BOLD,
+        FALSE,
+        FALSE,
+        FALSE,
+        ANSI_CHARSET,
+        OUT_TT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY,
+        DEFAULT_PITCH | FF_SWISS,
+        "Tahoma");
+
+    return g_app.boldUiFont ? g_app.boldUiFont : AppFont();
 }
 
 static HWND SetAppFont(HWND hwnd)
@@ -228,8 +263,21 @@ static void TrimTrailingSlashes(char *text)
 static void SetStatus(HWND hwnd, const char *text)
 {
     HWND status = GetDlgItem(hwnd, ID_REGISTER_STATUS);
+    SYSTEMTIME now;
+    char stamped[640];
     if (!status) status = g_app.registerStatus;
-    if (status) SetWindowTextA(status, text);
+    if (status) {
+        GetLocalTime(&now);
+        SbSnprintf(stamped, sizeof(stamped), "[%02u/%02u/%02u %02u:%02u:%02u] %s",
+            (unsigned)now.wDay,
+            (unsigned)now.wMonth,
+            (unsigned)(now.wYear % 100),
+            (unsigned)now.wHour,
+            (unsigned)now.wMinute,
+            (unsigned)now.wSecond,
+            text ? text : "");
+        SetWindowTextA(status, stamped);
+    }
 }
 
 static int NormaliseDeviceId(char *deviceId, DWORD deviceIdSize)
@@ -1364,7 +1412,7 @@ static void StartPingCheck(void)
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') return;
     thread = CreateThread(NULL, 0, PingThread, NULL, 0, NULL);
     if (thread) CloseHandle(thread);
-    else ShowRegisterWindow();
+    else ShowRegisterWindow(0);
 }
 
 static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
@@ -1731,13 +1779,47 @@ static void UpdateTrayTooltip(HWND hwnd)
 static void ShowFallbackBalloon(HWND owner, const char *title, const char *message, UINT timeoutMillis)
 {
     RECT workArea;
-    int width = 280;
-    int height = 86;
+    HDC hdc;
+    SIZE titleSize;
+    SIZE messageSize;
+    int margin = 10;
+    int titleGap = 6;
+    int minWidth = 120;
+    int maxWidth;
+    int width;
+    int height;
     int x;
     int y;
 
     SafeCopy(g_app.balloonTitle, sizeof(g_app.balloonTitle), title);
     SafeCopy(g_app.balloonMessage, sizeof(g_app.balloonMessage), message);
+
+    if (!SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+    maxWidth = (workArea.right - workArea.left) / 2;
+    if (maxWidth < minWidth) maxWidth = minWidth;
+
+    ZeroMemory(&titleSize, sizeof(titleSize));
+    ZeroMemory(&messageSize, sizeof(messageSize));
+    hdc = GetDC(NULL);
+    if (hdc) {
+        HFONT oldFont = (HFONT)SelectObject(hdc, AppBoldFont());
+        GetTextExtentPoint32A(hdc, g_app.balloonTitle, lstrlenA(g_app.balloonTitle), &titleSize);
+        SelectObject(hdc, AppFont());
+        GetTextExtentPoint32A(hdc, g_app.balloonMessage, lstrlenA(g_app.balloonMessage), &messageSize);
+        if (oldFont) SelectObject(hdc, oldFont);
+        ReleaseDC(NULL, hdc);
+    }
+
+    width = max(titleSize.cx, messageSize.cx) + (margin * 2) + 2;
+    if (width < minWidth) width = minWidth;
+    if (width > maxWidth) width = maxWidth;
+    height = margin + titleSize.cy + titleGap + messageSize.cy + margin + 2;
+    if (height < 48) height = 48;
 
     if (!g_app.balloonWindow) {
         g_app.balloonWindow = CreateWindowExA(
@@ -1760,13 +1842,6 @@ static void ShowFallbackBalloon(HWND owner, const char *title, const char *messa
         return;
     }
 
-    if (!SystemParametersInfoA(SPI_GETWORKAREA, 0, &workArea, 0)) {
-        workArea.left = 0;
-        workArea.top = 0;
-        workArea.right = GetSystemMetrics(SM_CXSCREEN);
-        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
-    }
-
     x = workArea.right - width - 12;
     y = workArea.bottom - height - 12;
     if (x < workArea.left) x = workArea.left;
@@ -1775,7 +1850,7 @@ static void ShowFallbackBalloon(HWND owner, const char *title, const char *messa
     SetWindowPos(g_app.balloonWindow, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_app.balloonWindow, NULL, TRUE);
     SetTimer(g_app.balloonWindow, 1, timeoutMillis > 0 ? timeoutMillis : 10000, NULL);
-    LogMessage("Fallback balloon show: title=%s message=%s timeout=%u", title, message, (unsigned)timeoutMillis);
+    LogMessage("Fallback balloon show: title=%s message=%s timeout=%u width=%d height=%d", title, message, (unsigned)timeoutMillis, width, height);
 }
 
 static void ShowTrayBalloon(HWND hwnd, const char *title, const char *message, UINT timeoutMillis)
@@ -1806,10 +1881,11 @@ static void ShowTrayMenu(HWND hwnd)
     HMENU menu = CreatePopupMenu();
     POINT pt;
     SetForegroundWindow(hwnd);
-    AppendMenuA(menu, MF_STRING, ID_TRAY_REGISTER, "Register...");
+    AppendMenuA(menu, MF_STRING, ID_TRAY_REGISTER, "Change SwallowTail Server...");
     AppendMenuA(menu, MF_STRING, ID_TRAY_STATS, "Statistics");
     AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuA(menu, MF_STRING, ID_TRAY_EXIT, "Exit");
+    SetMenuDefaultItem(menu, ID_TRAY_STATS, FALSE);
     GetCursorPos(&pt);
     TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
     DestroyMenu(menu);
@@ -1838,6 +1914,67 @@ static HWND Button(HWND parent, int id, const char *text, int x, int y, int w, i
     return SetAppFont(CreateWindowA("BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL));
 }
 
+static void SetStatsPingState(int state)
+{
+    g_app.statsPingState = state;
+    g_app.statsPingStateExpiresAt = state == 0 ? 0 : GetTickCount() + 10000;
+    if (g_app.statsWindow) {
+        if (state == 0) KillTimer(g_app.statsWindow, 2);
+        else SetTimer(g_app.statsWindow, 2, 10000, NULL);
+    }
+    if (g_app.statsPingButton) {
+        InvalidateRect(g_app.statsPingButton, NULL, TRUE);
+    }
+}
+
+static int StatsPingStateExpired(void)
+{
+    return g_app.statsPingState != 0
+        && g_app.statsPingStateExpiresAt != 0
+        && (LONG)(GetTickCount() - g_app.statsPingStateExpiresAt) >= 0;
+}
+
+static void DrawPingButton(const DRAWITEMSTRUCT *item)
+{
+    HBRUSH brush;
+    COLORREF textColor = RGB(0, 0, 0);
+    RECT fillRect;
+    RECT textRect;
+    UINT edge = EDGE_RAISED;
+
+    if (!item || item->CtlID != ID_STATS_PING) return;
+
+    if (g_app.statsPingState > 0) {
+        brush = CreateSolidBrush(RGB(82, 174, 88));
+    } else if (g_app.statsPingState < 0) {
+        brush = CreateSolidBrush(RGB(202, 72, 72));
+        textColor = RGB(255, 255, 255);
+    } else {
+        brush = CreateSolidBrush(GetSysColor(COLOR_BTNFACE));
+    }
+
+    if (item->itemState & ODS_SELECTED) edge = EDGE_SUNKEN;
+    fillRect = item->rcItem;
+    DrawEdge(item->hDC, &fillRect, edge, BF_RECT | BF_ADJUST);
+    FillRect(item->hDC, &fillRect, brush ? brush : (HBRUSH)(COLOR_BTNFACE + 1));
+    if (brush) DeleteObject(brush);
+
+    textRect = fillRect;
+    if (item->itemState & ODS_SELECTED) {
+        OffsetRect(&textRect, 1, 1);
+    }
+    SelectObject(item->hDC, AppFont());
+    SetBkMode(item->hDC, TRANSPARENT);
+    SetTextColor(item->hDC, textColor);
+    DrawTextA(item->hDC, "Test Server Connectivity", -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    if (item->itemState & ODS_FOCUS) {
+        RECT focusRect = item->rcItem;
+        InflateRect(&focusRect, -4, -4);
+        DrawFocusRect(item->hDC, &focusRect);
+    }
+}
+
 static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     WNDPROC original = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
@@ -1862,10 +1999,14 @@ static LRESULT CALLBACK RegisterEditWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
     return CallWindowProcA(original, hwnd, msg, wp, lp);
 }
 
-static void ShowRegisterWindow(void)
+static void ShowRegisterWindow(int quitMode)
 {
+    g_app.registerQuitMode = quitMode ? 1 : 0;
     if (!g_app.registerWindow) {
         g_app.registerWindow = CreateWindowExA(WS_EX_CONTROLPARENT, "SpiceBushRegister", "Register with SwallowTail", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 540, 330, NULL, NULL, g_app.instance, NULL);
+    }
+    if (g_app.registerWindow) {
+        SetWindowTextA(GetDlgItem(g_app.registerWindow, ID_REGISTER_QUIT), g_app.registerQuitMode ? "Quit" : "Cancel");
     }
     ShowWindow(g_app.registerWindow, SW_SHOWNORMAL);
     SetForegroundWindow(g_app.registerWindow);
@@ -1874,7 +2015,14 @@ static void ShowRegisterWindow(void)
 static void ShowStatsWindow(void)
 {
     if (!g_app.statsWindow) {
-        g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 460, 470, NULL, NULL, g_app.instance, NULL);
+        DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+        RECT rect;
+        rect.left = 0;
+        rect.top = 0;
+        rect.right = 18 + 180 + 18;
+        rect.bottom = 466;
+        AdjustWindowRect(&rect, style, FALSE);
+        g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
     }
     ShowWindow(g_app.statsWindow, SW_SHOWNORMAL);
     SetForegroundWindow(g_app.statsWindow);
@@ -2123,11 +2271,15 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         Edit(hwnd, ID_REGISTER_OTP, "", 210, 123, 120, 22, 0);
         Button(hwnd, ID_REGISTER_SAVE, "Register", 210, 161, 100, 28, BS_DEFPUSHBUTTON);
         Button(hwnd, ID_REGISTER_QUIT, "Quit", 320, 161, 80, 28, 0);
-        g_app.registerStatus = StatusLabel(hwnd, "Enter registration details, then click Register.", 18, 202, 500, 72);
+        g_app.registerStatus = StatusLabel(hwnd, "", 18, 202, 500, 72);
+        SetStatus(hwnd, "Enter registration details, then click Register.");
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_REGISTER_SAVE && IsWindowEnabled(GetDlgItem(hwnd, ID_REGISTER_SAVE))) BeginRegister(hwnd);
-        else if (LOWORD(wp) == ID_REGISTER_QUIT) DestroyWindow(g_app.mainWindow);
+        else if (LOWORD(wp) == ID_REGISTER_QUIT) {
+            if (g_app.registerQuitMode) DestroyWindow(g_app.mainWindow);
+            else ShowWindow(hwnd, SW_HIDE);
+        }
         return 0;
     case WM_REGISTER_DONE:
         EnableWindow(GetDlgItem(hwnd, ID_REGISTER_SAVE), TRUE);
@@ -2143,7 +2295,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         }
         return 0;
     case WM_CLOSE:
-        if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
+        if (g_app.registerQuitMode && (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0')) {
             DestroyWindow(g_app.mainWindow);
             return 0;
         }
@@ -2159,27 +2311,52 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     (void)lp;
     switch (msg) {
     case WM_CREATE:
-        for (i = 0; i < STATS_LABEL_COUNT; i++) {
-            g_app.statsLabels[i] = Label(hwnd, "", 18, 18 + i * 22, 410, 20);
+        {
+            int margin = 18;
+            int scanWidth = 160;
+            int pingWidth = 180;
+            int buttonY = 388;
+            int pingY = buttonY + 36;
+            int labelWidth = pingWidth;
+            for (i = 0; i < STATS_LABEL_COUNT; i++) {
+                g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
+            }
+            Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", margin, buttonY, scanWidth, 28, 0);
+            g_app.statsPingButton = Button(hwnd, ID_STATS_PING, "Test Server Connectivity", margin, pingY, pingWidth, 28, BS_OWNERDRAW);
         }
-        Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", 18, 388, 160, 28, 0);
-        Button(hwnd, ID_STATS_PING, "Ping", 188, 388, 70, 28, 0);
         SetTimer(hwnd, 1, 1000, NULL);
+        if (StatsPingStateExpired()) {
+            SetStatsPingState(0);
+        } else if (g_app.statsPingState != 0 && g_app.statsPingStateExpiresAt != 0) {
+            DWORD remaining = g_app.statsPingStateExpiresAt - GetTickCount();
+            SetTimer(hwnd, 2, remaining > 0 ? remaining : 1, NULL);
+        }
         RefreshStats();
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_STATS_SCAN) ScanExistingDrives(1);
         else if (LOWORD(wp) == ID_STATS_PING) {
             if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
-                ShowRegisterWindow();
+                SetStatsPingState(-1);
+                ShowRegisterWindow(0);
                 SetStatus(g_app.registerWindow, "Register with SwallowTail before pinging the API.");
             } else {
                 StartPingCheck();
             }
         }
         return 0;
+    case WM_DRAWITEM:
+        if (wp == ID_STATS_PING) {
+            DrawPingButton((const DRAWITEMSTRUCT *)lp);
+            return TRUE;
+        }
+        break;
     case WM_TIMER:
-        RefreshStats();
+        if (wp == 2) {
+            SetStatsPingState(0);
+        } else {
+            RefreshStats();
+        }
         return 0;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
@@ -2198,29 +2375,36 @@ static LRESULT CALLBACK BalloonWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             RECT rc;
             RECT titleRc;
             RECT messageRc;
+            RECT measureRc;
+            int margin = 10;
+            int titleGap = 6;
             HBRUSH brush = CreateSolidBrush(RGB(255, 255, 225));
 
             GetClientRect(hwnd, &rc);
             FillRect(hdc, &rc, brush ? brush : (HBRUSH)(COLOR_INFOBK + 1));
             if (brush) DeleteObject(brush);
 
-            SelectObject(hdc, AppFont());
+            SelectObject(hdc, AppBoldFont());
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, RGB(0, 0, 0));
 
             titleRc = rc;
-            titleRc.left += 12;
-            titleRc.top += 10;
-            titleRc.right -= 12;
-            titleRc.bottom = titleRc.top + 20;
+            titleRc.left += margin;
+            titleRc.top += margin;
+            titleRc.right -= margin;
+            titleRc.bottom -= margin;
             DrawTextA(hdc, g_app.balloonTitle, -1, &titleRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
+            measureRc = titleRc;
+            DrawTextA(hdc, g_app.balloonTitle, -1, &measureRc, DT_LEFT | DT_SINGLELINE | DT_CALCRECT);
+
+            SelectObject(hdc, AppFont());
             messageRc = rc;
-            messageRc.left += 12;
-            messageRc.top += 34;
-            messageRc.right -= 12;
-            messageRc.bottom -= 10;
-            DrawTextA(hdc, g_app.balloonMessage, -1, &messageRc, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
+            messageRc.left += margin;
+            messageRc.top = measureRc.bottom + titleGap;
+            messageRc.right -= margin;
+            messageRc.bottom -= margin;
+            DrawTextA(hdc, g_app.balloonMessage, -1, &messageRc, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
 
             EndPaint(hwnd, &ps);
         }
@@ -2254,7 +2438,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_TRAY_REGISTER: ShowRegisterWindow(); break;
+        case ID_TRAY_REGISTER: ShowRegisterWindow(0); break;
         case ID_TRAY_STATS: ShowStatsWindow(); break;
         case ID_TRAY_EXIT: DestroyWindow(hwnd); break;
         }
@@ -2267,9 +2451,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_PING_DONE:
         if (wp) {
+            SetStatsPingState(1);
             ShowTrayBalloon(hwnd, APP_NAME, "SwallowTail - Connected OK!", 10000);
         } else {
-            ShowRegisterWindow();
+            SetStatsPingState(-1);
+            ShowRegisterWindow(0);
             if (lp) {
                 SetStatus(g_app.registerWindow, (const char *)lp);
                 HeapFree(GetProcessHeap(), 0, (LPVOID)lp);
@@ -2340,7 +2526,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     LoadQueue();
     processor = CreateThread(NULL, 0, ProcessorThread, NULL, 0, NULL);
     if (processor) CloseHandle(processor);
-    if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow();
+    if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow(1);
     else StartPingCheck();
     while (GetMessageA(&msg, NULL, 0, 0)) {
         if ((g_app.registerWindow && IsWindowVisible(g_app.registerWindow) && IsDialogMessageA(g_app.registerWindow, &msg))
@@ -2353,6 +2539,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     DeleteCriticalSection(&g_app.lock);
     if (g_app.balloonWindow) DestroyWindow(g_app.balloonWindow);
     if (g_app.registerLogoIcon) DestroyIcon(g_app.registerLogoIcon);
+    if (g_app.boldUiFont) DeleteObject(g_app.boldUiFont);
     if (g_app.uiFont) DeleteObject(g_app.uiFont);
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
