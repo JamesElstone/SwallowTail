@@ -269,7 +269,6 @@ Successful response:
     "preview": {"ready": false},
     "thumbnail": {
       "ready": true,
-      "storage_path": "derivatives/thumbnail/01/23/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_thumbnail.jpg",
       "bytes": 12345,
       "generated_at": "2026-06-16 12:00:00"
     },

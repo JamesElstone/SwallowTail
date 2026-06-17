@@ -1787,6 +1787,7 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
     $harness->assertSame($photoId, (int)($payload['photo_id'] ?? 0));
     $harness->assertSame('queued', (string)(($payload['jobs']['preview'] ?? [])['status'] ?? ''));
     $harness->assertTrue(!empty(($payload['derivatives']['thumbnail'] ?? [])['ready']));
+    $harness->assertTrue(!array_key_exists('storage_path', (array)($payload['derivatives']['thumbnail'] ?? [])));
     $harness->assertTrue(empty(($payload['derivatives']['preview'] ?? [])['ready']));
 
     @unlink($source);

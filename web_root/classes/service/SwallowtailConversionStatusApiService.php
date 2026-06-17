@@ -135,7 +135,7 @@ final class SwallowtailConversionStatusApiService
         }
 
         $rows = InterfaceDB::fetchAll(
-            "SELECT derivative_type, storage_path, bytes, generated_at
+            "SELECT derivative_type, bytes, generated_at
              FROM swallowtail_photo_derivatives
              WHERE photo_id = :photo_id",
             ['photo_id' => $photoId]
@@ -149,7 +149,6 @@ final class SwallowtailConversionStatusApiService
 
             $derivatives[$type] = [
                 'ready' => true,
-                'storage_path' => (string)($row['storage_path'] ?? ''),
                 'bytes' => (int)($row['bytes'] ?? 0),
                 'generated_at' => (string)($row['generated_at'] ?? ''),
             ];
