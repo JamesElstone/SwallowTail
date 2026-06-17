@@ -26,7 +26,7 @@ final class _storage_availableCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return 'Writable Swallowtail storage locations and current free-space status.';
+        return 'Writable SwallowTail storage locations and current free-space status.';
     }
 
     public function render(array $context): string

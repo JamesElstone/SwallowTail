@@ -18,7 +18,7 @@ final class SwallowtailStorageLocationService
     public function registerLocation(string $label, string $rootPath, array $options = []): int
     {
         if (!InterfaceDB::tableExists('swallowtail_storage_locations')) {
-            throw new RuntimeException('Swallowtail storage location table is not available. Run the database migrations.');
+            throw new RuntimeException('SwallowTail storage location table is not available. Run the database migrations.');
         }
 
         $label = trim($label) !== '' ? trim($label) : 'Storage location';
@@ -74,7 +74,7 @@ final class SwallowtailStorageLocationService
     public function movePhotoOriginalToLocation(int $photoId, int $targetLocationId): array
     {
         if (!InterfaceDB::tableExists('swallowtail_storage_locations')) {
-            throw new RuntimeException('Swallowtail storage location table is not available. Run the database migrations.');
+            throw new RuntimeException('SwallowTail storage location table is not available. Run the database migrations.');
         }
 
         $photo = $this->photoLibraryService->photoById($photoId);

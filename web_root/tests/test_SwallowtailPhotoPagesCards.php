@@ -11,7 +11,7 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARAT
 
 $harness = new GeneratedServiceClassTestHarness();
 
-$harness->check(PageFactoryFramework::class, 'resolves Swallowtail photo UI pages', function () use ($harness): void {
+$harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
     foreach (['upload', 'gallery', 'picture_viewer'] as $pageKey) {
@@ -20,7 +20,7 @@ $harness->check(PageFactoryFramework::class, 'resolves Swallowtail photo UI page
     }
 });
 
-$harness->check(CardFactoryFramework::class, 'resolves Swallowtail photo UI cards', function () use ($harness): void {
+$harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
     foreach (['cr2_upload', 'storage_available', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {

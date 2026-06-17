@@ -420,7 +420,7 @@ final class SwallowtailPhotoLibraryService
             !InterfaceDB::tableExists('swallowtail_api_upload_tokens')
             || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')
         ) {
-            return 'Swallowtail photo database tables are not available. Run the database migrations.';
+            return 'SwallowTail photo database tables are not available. Run the database migrations.';
         }
 
         $token = trim($token);
@@ -692,7 +692,7 @@ final class SwallowtailPhotoLibraryService
     private function assertSchemaAvailable(): void
     {
         if (!$this->schemaAvailable()) {
-            throw new RuntimeException('Swallowtail photo database tables are not available. Run the database migrations.');
+            throw new RuntimeException('SwallowTail photo database tables are not available. Run the database migrations.');
         }
     }
 

@@ -1,17 +1,17 @@
-# Swallowtail Service Classes
+# SwallowTail Service Classes
 
-Swallowtail
+SwallowTail
 Copyright (c) 2026 James Elstone
 Licensed under the BSD 3-Clause License.
 See `LICENSE` for details.
 
-This folder contains both eelKit framework services and Swallowtail application services.
+This folder contains both eelKit framework services and SwallowTail application services.
 
 Files with the eelKit framework header are part of eelKit and should not be altered for
-Swallowtail feature work. Files with the Swallowtail header belong to this application
+SwallowTail feature work. Files with the SwallowTail header belong to this application
 and provide the photo workflow that sits on top of eelKit.
 
-## Swallowtail Services
+## SwallowTail Services
 
 ### `SwallowtailStorageService`
 
@@ -59,7 +59,7 @@ New uploads are unassigned by default, so event viewers cannot see them until an
 
 Owns database persistence for the photo library.
 
-- Checks whether the Swallowtail schema is available.
+- Checks whether the SwallowTail schema is available.
 - Looks up photos by ID or checksum.
 - Records RAW uploads and duplicate detections.
 - Creates events.
@@ -140,7 +140,7 @@ Stored photos reference their location using `swallowtail_photos.storage_locatio
 
 ## Related Database Tables
 
-The Swallowtail services expect the migration `2026_05_31_001_swallowtail_photo_services.sql` to have run. It creates:
+The SwallowTail services expect the migration `2026_05_31_001_swallowtail_photo_services.sql` to have run. It creates:
 
 - `swallowtail_events`
 - `swallowtail_storage_locations`

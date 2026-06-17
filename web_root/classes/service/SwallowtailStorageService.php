@@ -99,7 +99,7 @@ final class SwallowtailStorageService
             }
         }
 
-        throw new RuntimeException('No writable Swallowtail storage location has enough free space.');
+        throw new RuntimeException('No writable SwallowTail storage location has enough free space.');
     }
 
     public function originalRelativePath(string $sha256, string $extension): string
@@ -176,7 +176,7 @@ final class SwallowtailStorageService
         $directory = dirname($absolutePath);
 
         if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
-            throw new RuntimeException('Unable to create Swallowtail storage directory.');
+            throw new RuntimeException('Unable to create SwallowTail storage directory.');
         }
     }
 
@@ -206,7 +206,7 @@ final class SwallowtailStorageService
             : @copy($sourcePath, $destinationPath);
 
         if (!$stored) {
-            throw new RuntimeException('Unable to store RAW file in Swallowtail storage.');
+            throw new RuntimeException('Unable to store RAW file in SwallowTail storage.');
         }
 
         @chmod($destinationPath, 0660);
@@ -256,7 +256,7 @@ final class SwallowtailStorageService
         $normalisedPath = $this->normaliseAbsoluteDirectory(dirname($absolutePath)) . basename($absolutePath);
 
         if (!str_starts_with($normalisedPath, $this->storageRoot)) {
-            throw new RuntimeException('Resolved path is outside the Swallowtail storage root.');
+            throw new RuntimeException('Resolved path is outside the SwallowTail storage root.');
         }
     }
 
@@ -332,7 +332,7 @@ final class SwallowtailStorageService
         $webRoot = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, APP_ROOT), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
 
         if (str_starts_with($root, $webRoot)) {
-            throw new RuntimeException('Swallowtail storage root must be outside web_root.');
+            throw new RuntimeException('SwallowTail storage root must be outside web_root.');
         }
     }
 

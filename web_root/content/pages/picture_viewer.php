@@ -21,7 +21,7 @@ final class _picture_viewer extends PageContextFramework
 
     public function subtitle(): string
     {
-        return 'Inspect an accessible Swallowtail photo.';
+        return 'Inspect an accessible SwallowTail photo.';
     }
 
     public function cards(): array

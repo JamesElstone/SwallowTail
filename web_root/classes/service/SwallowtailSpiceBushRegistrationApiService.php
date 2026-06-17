@@ -24,7 +24,7 @@ final class SwallowtailSpiceBushRegistrationApiService
         }
 
         if (!$this->photoLibraryService->schemaAvailable()) {
-            return $this->error(['Swallowtail photo database tables are not available. Run the database migrations.'], 503);
+            return $this->error(['SwallowTail photo database tables are not available. Run the database migrations.'], 503);
         }
 
         $username = trim((string)$request->post('username', (string)$request->post('email_address', '')));

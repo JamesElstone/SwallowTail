@@ -27,7 +27,7 @@ final class SwallowtailRawUploadApiService
         if (!$this->photoLibraryService->schemaAvailable()) {
             return ResponseFramework::json([
                 'success' => false,
-                'errors' => ['Swallowtail photo database tables are not available. Run the database migrations.'],
+                'errors' => ['SwallowTail photo database tables are not available. Run the database migrations.'],
             ], 503);
         }
 

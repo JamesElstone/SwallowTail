@@ -206,7 +206,7 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
         mobile_number TEXT NULL,
         password_hash TEXT NOT NULL,
         must_change_password INTEGER NOT NULL DEFAULT 0,
-        otp_required INTEGER NOT NULL DEFAULT 0,
+        otp_required INTEGER NOT NULL DEFAULT 1,
         is_active INTEGER NOT NULL DEFAULT 1,
         role_id INTEGER NULL,
         current_session_token_hash TEXT NULL,
@@ -469,6 +469,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'creates an u
     try {
         $created = $auth->createUser('SpiceBush Admin', 'spicebush-admin@example.test', 'SpiceBush Pass 1!', true);
         $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
         InterfaceDB::prepareExecute(
             'UPDATE users SET role_id = :role_id WHERE id = :id',
             ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
@@ -522,6 +523,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'requires OTP
     try {
         $created = $auth->createUser('SpiceBush OTP Admin', 'spicebush-otp-missing@example.test', 'SpiceBush Pass 1!', true);
         $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
         InterfaceDB::prepareExecute(
             'UPDATE users SET role_id = :role_id WHERE id = :id',
             ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
@@ -604,6 +606,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts vali
     try {
         $created = $auth->createUser('SpiceBush OTP Admin', 'spicebush-otp-valid@example.test', 'SpiceBush Pass 1!', true);
         $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
         $otpSecret = 'JBSWY3DPEHPK3PXP';
         $verificationService = new OtpVerificationService();
         $otpCode = $verificationService->generateCodeForTimestep(
@@ -693,7 +696,8 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects vali
     ]);
 
     try {
-        $auth->createUser('SpiceBush Viewer', 'spicebush-viewer@example.test', 'SpiceBush Pass 1!', true);
+        $created = $auth->createUser('SpiceBush Viewer', 'spicebush-viewer@example.test', 'SpiceBush Pass 1!', true);
+        UserAuthenticationService::forgetUserByIdCache((int)($created['user_id'] ?? 0));
         $request = new RequestFramework(
             [],
             [],
@@ -858,7 +862,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-preview-profile';
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-preview-profile-' . bin2hex(random_bytes(6));
     (new SwallowtailStorageLocationService())->registerLocation('Primary preview profile storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
@@ -1150,7 +1154,7 @@ $harness->check(SwallowtailStorageLocationService::class, 'chooses writable moun
     @unlink($source);
 });
 
-$harness->check('Swallowtail migration', 'defines the photo backend tables', function () use ($harness): void {
+$harness->check('SwallowTail migration', 'defines the photo backend tables', function () use ($harness): void {
     $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_05_31_001_swallowtail_photo_services.sql';
     $conversionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_15_004_raw_conversion_jobs.sql';
     $hardeningPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_001_raw_conversion_hardening.sql';
@@ -1167,7 +1171,7 @@ $harness->check('Swallowtail migration', 'defines the photo backend tables', fun
     $quickHashSql = file_get_contents($quickHashPath);
 
     if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql)) {
-        throw new RuntimeException('Swallowtail migration could not be read.');
+        throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
     $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql;

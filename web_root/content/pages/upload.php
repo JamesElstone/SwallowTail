@@ -21,7 +21,7 @@ final class _upload extends PageContextFramework
 
     public function subtitle(): string
     {
-        return 'Add CR2 RAW image files to Swallowtail storage.';
+        return 'Add CR2 RAW image files to SwallowTail storage.';
     }
 
     public function cards(): array
