@@ -21,7 +21,7 @@ class EmbeddedJpegExtractor:
         started = time.monotonic()
         temp_path = Path(temp_dir)
         temp_path.mkdir(parents=True, exist_ok=True)
-        output = temp_path / f"job-{job.id}-{job.derivative_type}.jpg"
+        output = temp_path / f"job-{job.id}-{job.image_type}.jpg"
 
         try:
             jpeg = self._largest_embedded_jpeg(Path(job.input_path))

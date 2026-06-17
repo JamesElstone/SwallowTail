@@ -31,7 +31,7 @@ Production hosting target:
 - MariaDB 10.11.14
 - UnixODBC database access
 
-SwallowTail is intended to run on a FreeBSD virtual machine with storage added over time. Uploaded originals, converted JPEGs, thumbnails, previews, generated ZIP files, and cache files should be stored outside `web_root` and served only through application routes that check the current user's permissions.
+SwallowTail is intended to run on a FreeBSD virtual machine with storage added over time. Uploaded RAW sources, generated JPEGs, PP3 profiles, generated ZIP files, and cache files should be stored outside `web_root` and served only through application routes that check the current user's permissions.
 
 ## Photo Workflow
 
@@ -39,9 +39,9 @@ The intended flow is:
 
 1. A CR2 RAW image file is uploaded by an authorised user.
 2. SwallowTail computes a checksum for duplicate detection.
-3. The original file is stored outside `web_root`.
+3. The source file is stored outside `web_root`.
 4. The photo starts as unassigned, so normal event viewers cannot see it.
-5. A conversion process creates JPEG derivatives such as preview, thumbnail, and downloadable JPEG files.
+5. A conversion process creates image files such as embedded, original, thumbnail, and filtered JPEGs.
 6. An admin or editor assigns the photo to one or more events.
 7. Event permissions decide which users can view and download the photo.
 8. Downloads are streamed by the application after checking access.
@@ -69,7 +69,7 @@ Planned core features:
 
 - CR2 RAW image file upload support.
 - Checksum-based duplicate detection.
-- Off-web-root storage for originals, JPEG derivatives, thumbnails, previews, and generated ZIPs.
+- Off-web-root storage for RAW sources, JPEG image outputs, PP3 profiles, thumbnails, and generated ZIPs.
 - RAW-to-JPEG conversion pipeline.
 - Event creation and event photo assignment.
 - User-to-event permissions.

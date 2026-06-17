@@ -29,15 +29,15 @@ class RawTherapeeRunner:
         binary = shutil.which(self.config.binary) or self.config.binary
         temp_path = Path(temp_dir)
         temp_path.mkdir(parents=True, exist_ok=True)
-        temp_output = str(Path(temp_dir) / f"job-{job.id}-{job.derivative_type}.jpg")
+        temp_output = str(Path(temp_dir) / f"job-{job.id}-{job.image_type}.jpg")
         command = [binary]
         if binary.endswith(".py"):
             command = [sys.executable, binary]
 
         command.extend(["-Y", "-o", temp_output, "-j85"])
 
-        if job.pp3_path:
-            command.extend(["-p", job.pp3_path])
+        if job.profile_path:
+            command.extend(["-p", job.profile_path])
 
         if job.output_width and job.output_height:
             command.extend(["-p", self._write_resize_profile(job, temp_path)])

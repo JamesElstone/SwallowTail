@@ -18,27 +18,23 @@ and provide the photo workflow that sits on top of eelKit.
 Owns filesystem safety for private photo storage.
 
 - Keeps storage outside `web_root`.
-- Normalises and validates storage roots and relative paths.
-- Generates checksum-based paths for originals and derivatives.
-- Reads configured storage locations from `swallowtail_storage_locations`.
-- Chooses a writable storage location that is active, not read-only, not marked full, and has enough free space above its reserve.
-- Copies or moves RAW files into managed storage.
-- Moves stored files between mounted storage locations with SHA-256 verification before and after the copy.
+- Discovers already-mounted filesystems on each storage-location request.
+- Excludes the root partition unless `swallowtail.storage.store_on_root_partition` is enabled.
+- Appends `swallowtail-data` below each eligible base location.
+- Builds deterministic checksum paths for `source`, `original`, `embedded`, `thumbnail`, `filtered`, and `profile`.
+- Chooses a writable location that is not excluded and remains above the configured free-space threshold.
+- Copies or moves RAW source files into managed storage.
 
-This service should be the only place that turns an internal storage path into an absolute filesystem path.
+This service should be the only place that turns a storage base location, checksum, and image type into an absolute filesystem path.
 
 ### `SwallowtailStorageLocationService`
 
-Provides the backend surface that a future UI can use to manage mounted disks.
+Provides the backend surface that the storage UI uses to adjust discovered storage locations.
 
-- Registers storage locations.
-- Lists storage locations with current writable status.
-- Marks a location as full or read-only.
-- Moves a photo original from one storage location to another.
-- Updates the photo's `storage_location_id` after a verified move.
-- Writes an audit record for storage moves.
+- Lists dynamically discovered mounted locations with current writable status.
+- Records whether a discovered base location is excluded in `storage_location_properties`.
 
-The UI should configure storage locations in the database rather than writing path settings directly into code.
+The service does not mount filesystems or create synthetic mount roots. System administrators own mounts; SwallowTail discovers and filters them.
 
 ### `SwallowtailPhotoIngestService`
 
@@ -51,7 +47,7 @@ Coordinates RAW file ingest.
 - Detects duplicate uploads by checksum before storing another copy.
 - Stores new originals through `SwallowtailStorageService`.
 - Records the photo through `SwallowtailPhotoLibraryService`.
-- Queues derivative generation through `SwallowtailConversionQueueService`.
+- Queues image generation through `SwallowtailConversionQueueService`.
 
 New uploads are unassigned by default, so event viewers cannot see them until an editor assigns them to an event.
 
@@ -100,13 +96,13 @@ The default posture is least privilege: no event permission means no access.
 
 ### `SwallowtailConversionQueueService`
 
-Provides a small database-backed queue facade for derivative generation.
+Provides a small database-backed queue facade for image generation.
 
-- Enqueues RAW derivative jobs.
+- Enqueues RAW image jobs for embedded, original, thumbnail, and filtered outputs.
 - Avoids creating duplicate queued or processing jobs for the same photo.
 - Lists queued jobs ordered by priority and age.
 
-Actual RAW-to-JPEG conversion workers are out of scope for these PHP services. If a worker is added later, it should live under `python/worker/...`.
+The RAW-to-JPEG worker lives under `service/subsystem/raw_conversion`.
 
 ## Upload Flow
 
@@ -116,42 +112,43 @@ Actual RAW-to-JPEG conversion workers are out of scope for these PHP services. I
 4. If the checksum already exists, the duplicate is audited and no second original is stored.
 5. If the checksum is new, `SwallowtailStorageService` chooses a writable storage location and stores the original.
 6. `SwallowtailPhotoLibraryService` records the photo as uploaded and unassigned.
-7. `SwallowtailConversionQueueService` queues derivative generation.
+7. `SwallowtailConversionQueueService` queues image generation.
 8. Editors can later assign the photo to one or more events.
 9. `SwallowtailEventAccessService` controls viewing and download decisions.
 
 ## Storage Locations
 
-Storage is designed for multiple mounted disks.
+Storage is designed for multiple already-mounted disks.
 
-The `swallowtail_storage_locations` table records each mount/root with:
+The backend discovers mounted filesystems from system mount/df data each time storage candidates are requested. It does not auto mount or manipulate filesystems.
 
-- `root_path`
-- `location_label`
-- `reserve_bytes`
-- `sort_order`
-- `is_active`
-- `is_read_only`
-- `is_full`
+The root partition is excluded by default. The storage settings card controls:
 
-When storing a new original, the backend chooses the first configured location that can write the required number of bytes. Locations marked full or read-only are skipped. If no database locations exist, the service falls back to the configured default storage root.
+- `swallowtail.storage.store_on_root_partition`
+- `swallowtail.storage.round_robin_locations`
+- `swallowtail.storage.full_threshold_percent`
 
-Stored photos reference their location using `swallowtail_photos.storage_location_id`. This lets the backend move files from one mounted disk to another and update the database without changing the internal relative path used for the original.
+Each eligible base location stores files under `swallowtail-data`. Stored photos reference their chosen base mount using `photos.storage_base_location`, for example `/storage/1`. Full paths are derived from that base, the photo checksum, and the image type:
+
+```text
+{storage_base_location}/swallowtail-data/{checksum[0:2]}/{checksum[2:4]}/{checksum}_{image_type}.{ext}
+```
+
+`source` uses `.cr2`, `profile` uses `.pp3`, and generated images use `.jpg`. `storage_location_properties` stores per-base metadata such as whether a location is excluded from future writes.
 
 ## Related Database Tables
 
 The SwallowTail services expect the migration `2026_05_31_001_swallowtail_photo_services.sql` to have run. It creates:
 
-- `swallowtail_events`
-- `swallowtail_storage_locations`
-- `swallowtail_api_upload_tokens`
-- `swallowtail_api_upload_token_cidrs`
-- `swallowtail_photos`
-- `swallowtail_event_photos`
-- `swallowtail_event_permissions`
-- `swallowtail_photo_derivatives`
-- `swallowtail_photo_conversion_jobs`
-- `swallowtail_photo_audit`
+- `events`
+- `storage_location_properties`
+- `api_upload_tokens`
+- `api_upload_token_cidrs`
+- `photos`
+- `event_photos`
+- `event_permissions`
+- `photo_conversion_jobs`
+- `photo_audit`
 
 ## Tests
 

@@ -285,6 +285,16 @@ final class AppConfigurationStore
                 'cookie_secure' => 'auto',
                 'cookie_samesite' => 'Strict',
             ],
+            'swallowtail' => [
+                'storage' => [
+                    'store_on_root_partition' => false,
+                    'round_robin_locations' => false,
+                    'full_threshold_percent' => 5,
+                ],
+                'raw_conversion' => [
+                    'thumbnail_max_pixels' => 512,
+                ],
+            ],
             'site_context' => [
                 'service' => '',
             ],

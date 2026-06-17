@@ -62,7 +62,7 @@ final class _picture_viewerCard extends CardBaseFramework
     {
         $photoId = (int)($photo['id'] ?? 0);
         $filename = (string)($photo['original_filename'] ?? 'Photo');
-        $type = !empty($photo['preview_ready']) ? 'preview' : (!empty($photo['jpeg_ready']) ? 'jpeg' : (!empty($photo['thumbnail_ready']) ? 'thumbnail' : ''));
+        $type = !empty($photo['filtered_ready']) ? 'filtered' : (!empty($photo['original_ready']) ? 'original' : (!empty($photo['thumbnail_ready']) ? 'thumbnail' : ''));
 
         if ($type === '') {
             return '<div class="picture-viewer-placeholder">Preview pending</div>';
@@ -77,7 +77,7 @@ final class _picture_viewerCard extends CardBaseFramework
     {
         $conversionState = $this->labelFromState((string)($photo['conversion_state'] ?? 'pending'));
         $uploadState = $this->labelFromState((string)($photo['upload_state'] ?? 'uploaded'));
-        $preview = !empty($photo['preview_ready']) ? 'Preview ready' : 'Preview pending';
+        $preview = !empty($photo['filtered_ready']) ? 'Filtered ready' : (!empty($photo['original_ready']) ? 'Original JPG ready' : 'Preview pending');
         $thumbnail = !empty($photo['thumbnail_ready']) ? 'Thumbnail ready' : 'Thumbnail pending';
 
         return '<div class="picture-status-row">

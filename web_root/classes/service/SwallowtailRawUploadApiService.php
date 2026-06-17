@@ -154,8 +154,6 @@ final class SwallowtailRawUploadApiService
             return $result;
         }
 
-        unset($result['conversion_jobs']['embedded']);
-
         $result['conversion_job_id'] = null;
         foreach ($result['conversion_jobs'] as $job) {
             $jobId = (int)($job['job_id'] ?? 0);

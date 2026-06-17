@@ -36,7 +36,7 @@ if ($currentUserId <= 0) {
 }
 
 $photoId = max(0, (int)$request->query('photo_id', 0));
-$derivativeType = trim((string)$request->query('type', 'preview'));
+$derivativeType = trim((string)$request->query('type', 'filtered'));
 $image = (new SwallowtailImageServeService())->derivativeImage($photoId, $derivativeType, $currentUserId);
 
 if ($image === null) {

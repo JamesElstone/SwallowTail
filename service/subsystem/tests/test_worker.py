@@ -30,12 +30,10 @@ def job(root: Path, **overrides) -> ConversionJob:
     values = {
         "id": 1,
         "photo_id": 2,
-        "derivative_type": "preview",
+        "image_type": "filtered",
         "input_path": str(input_path),
-        "pp3_path": None,
+        "profile_path": None,
         "output_path": str(root / "final.jpg"),
-        "output_storage_path": "derivatives/preview/aa/bb/test_preview.jpg",
-        "output_storage_location_id": 3,
         "profile_version": 1,
         "attempts": 0,
         "output_width": None,
@@ -137,7 +135,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         result = RawTherapeeRunner(
             RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
         ).render(
-            job(self.root, derivative_type="thumbnail", pp3_path=str(pp3), output_width=512, output_height=512),
+            job(self.root, image_type="thumbnail", profile_path=str(pp3), output_width=512, output_height=512),
             str(self.root / "work"),
         )
 
@@ -147,13 +145,13 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIn("Width=512", Path(profile_args[1]).read_text(encoding="utf-8"))
         self.assertIn("Height=512", Path(profile_args[1]).read_text(encoding="utf-8"))
 
-    def test_preview_dimensions_add_resize_profile_after_user_profile(self) -> None:
-        pp3 = self.root / "preview-v2.pp3"
+    def test_filtered_dimensions_add_resize_profile_after_user_profile(self) -> None:
+        pp3 = self.root / "filtered-v2.pp3"
         pp3.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
         result = RawTherapeeRunner(
             RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
         ).render(
-            job(self.root, pp3_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
+            job(self.root, profile_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
             str(self.root / "work"),
         )
 
@@ -179,7 +177,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Input CR2 file was not found"):
             missing_input.validate()
 
-        missing_pp3 = job(self.root, pp3_path=str(self.root / "missing.pp3"))
+        missing_pp3 = job(self.root, profile_path=str(self.root / "missing.pp3"))
         with self.assertRaisesRegex(RuntimeError, "PP3 profile was not found"):
             missing_pp3.validate()
 
@@ -188,7 +186,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.failed = False
 
-            def is_stale_preview(self, _job) -> bool:
+            def is_stale_filtered(self, _job) -> bool:
                 return False
 
             def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
@@ -213,7 +211,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         raw_like = lossless_jpeg_like(4056, 3048, b"raw" * 1000)
         source.write_bytes(b"CR2DATA" + small + b"between" + raw_like + b"after" + large)
         result = EmbeddedJpegExtractor().extract(
-            job(self.root, derivative_type="embedded", input_path=str(source)),
+            job(self.root, image_type="embedded", input_path=str(source)),
             str(self.root / "work"),
         )
 
@@ -222,10 +220,10 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertLess(result.duration_seconds, 1)
 
     def test_embedded_extractor_reports_missing_jpeg(self) -> None:
-        source = self.root / "no-preview.CR2"
+        source = self.root / "no-embedded.CR2"
         source.write_bytes(b"CR2DATA without a jpeg")
         result = EmbeddedJpegExtractor().extract(
-            job(self.root, derivative_type="embedded", input_path=str(source)),
+            job(self.root, image_type="embedded", input_path=str(source)),
             str(self.root / "work"),
         )
 
@@ -277,12 +275,12 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertTrue(fresh.exists())
         self.assertTrue(other.exists())
 
-    def test_stale_preview_is_cancelled_before_render(self) -> None:
+    def test_stale_filtered_is_cancelled_before_render(self) -> None:
         class FakeDb:
             def __init__(self) -> None:
                 self.cancelled = False
 
-            def is_stale_preview(self, _job) -> bool:
+            def is_stale_filtered(self, _job) -> bool:
                 return True
 
             def cancel_job(self, _job, _message) -> None:
@@ -308,3 +306,5 @@ class WorkerBehaviourTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

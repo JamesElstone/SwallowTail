@@ -23,28 +23,87 @@ $harness->run(SwallowtailStorageLocationService::class);
 $harness->run(SwallowtailImageServeService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
 
-$swallowtailCreateSqliteSchema = static function (): void {
+$swallowtailEnableRootStorageForTests = static function (): void {
+    static $originalConfig = null;
+    static $restoreRegistered = false;
+
+    $configPath = AppConfigurationStore::configPath();
+    if ($originalConfig === null) {
+        $originalConfig = file_get_contents($configPath);
+        if (!is_string($originalConfig)) {
+            throw new RuntimeException('Unable to read fixture config.');
+        }
+    }
+
+    if (!$restoreRegistered) {
+        $restoreRegistered = true;
+        register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
+            try {
+                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+                AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+                $storage = new SwallowtailStorageService();
+                $checksums = [
+                    hash('sha256', "II*\0\x10\x00\x00\x00CR\2\0" . str_repeat('A', 128)),
+                    str_repeat('d', 64),
+                ];
+                foreach ($storage->storageLocations() as $location) {
+                    $baseLocation = (string)($location['storage_base_location'] ?? '');
+                    if ($baseLocation === '') {
+                        continue;
+                    }
+
+                    foreach ($checksums as $checksum) {
+                        foreach (SwallowtailStorageService::IMAGE_TYPES as $imageType) {
+                            try {
+                                @unlink($storage->imagePath($baseLocation, $checksum, $imageType));
+                            } catch (Throwable) {
+                            }
+                        }
+
+                        try {
+                            $folder = dirname($storage->imagePath($baseLocation, $checksum, 'source'));
+                            @rmdir($folder);
+                            @rmdir(dirname($folder));
+                        } catch (Throwable) {
+                        }
+                    }
+                }
+            } catch (Throwable) {
+            }
+
+            AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+            AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
+            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 5);
+        });
+    }
+
+    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+    AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
+    AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+};
+
+$swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootStorageForTests): void {
+    $swallowtailEnableRootStorageForTests();
     InterfaceDB::execute('PRAGMA foreign_keys = OFF');
 
     foreach ([
-        'swallowtail_photo_audit',
-        'swallowtail_photo_conversion_jobs',
-        'swallowtail_photo_derivatives',
-        'swallowtail_event_permissions',
-        'swallowtail_event_photos',
-        'swallowtail_photos',
-        'swallowtail_storage_locations',
-        'swallowtail_api_upload_token_cidrs',
-        'swallowtail_api_upload_tokens',
+        'photo_audit',
+        'photo_conversion_jobs',
+        'event_permissions',
+        'event_photos',
+        'photos',
+        'storage_location_properties',
+        'api_upload_token_cidrs',
+        'api_upload_tokens',
         'signup_token_rate_limits',
-        'swallowtail_events',
+        'events',
     ] as $table) {
         InterfaceDB::execute('DROP TABLE IF EXISTS ' . $table);
     }
 
     InterfaceDB::execute('PRAGMA foreign_keys = ON');
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_events (
+    InterfaceDB::execute("CREATE TABLE events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_name TEXT NOT NULL,
         event_slug TEXT NOT NULL UNIQUE,
@@ -54,7 +113,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_api_upload_tokens (
+    InterfaceDB::execute("CREATE TABLE api_upload_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         token_hash TEXT NOT NULL UNIQUE,
         token_label TEXT NOT NULL,
@@ -67,7 +126,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_api_upload_token_cidrs (
+    InterfaceDB::execute("CREATE TABLE api_upload_token_cidrs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         token_id INTEGER NOT NULL,
         cidr TEXT NOT NULL,
@@ -88,28 +147,22 @@ $swallowtailCreateSqliteSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_storage_locations (
+    InterfaceDB::execute("CREATE TABLE storage_location_properties (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        location_label TEXT NOT NULL,
-        root_path TEXT NOT NULL UNIQUE,
-        reserve_bytes INTEGER NOT NULL DEFAULT 0,
-        sort_order INTEGER NOT NULL DEFAULT 100,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        is_read_only INTEGER NOT NULL DEFAULT 0,
-        is_full INTEGER NOT NULL DEFAULT 0,
+        storage_base_location TEXT NOT NULL UNIQUE,
+        is_excluded INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_photos (
+    InterfaceDB::execute("CREATE TABLE photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         original_filename TEXT NOT NULL,
         original_extension TEXT NOT NULL,
         original_bytes INTEGER NOT NULL,
         original_sha256 TEXT NOT NULL UNIQUE,
         original_quick_hash TEXT NULL,
-        original_storage_path TEXT NOT NULL,
-        storage_location_id INTEGER NULL,
+        storage_base_location TEXT NOT NULL,
         upload_state TEXT NOT NULL DEFAULT 'uploaded',
         conversion_state TEXT NOT NULL DEFAULT 'pending',
         uploaded_by_user_id INTEGER NULL,
@@ -119,7 +172,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_event_photos (
+    InterfaceDB::execute("CREATE TABLE event_photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id INTEGER NOT NULL,
         photo_id INTEGER NOT NULL,
@@ -129,7 +182,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         UNIQUE (event_id, photo_id)
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_event_permissions (
+    InterfaceDB::execute("CREATE TABLE event_permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id INTEGER NOT NULL,
         user_id INTEGER NOT NULL,
@@ -145,28 +198,14 @@ $swallowtailCreateSqliteSchema = static function (): void {
         UNIQUE (event_id, user_id)
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_photo_derivatives (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        photo_id INTEGER NOT NULL,
-        derivative_type TEXT NOT NULL,
-        storage_path TEXT NOT NULL,
-        storage_location_id INTEGER NULL,
-        bytes INTEGER NOT NULL,
-        sha256 TEXT NULL,
-        generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (photo_id, derivative_type)
-    )");
-
-    InterfaceDB::execute("CREATE TABLE swallowtail_photo_conversion_jobs (
+    InterfaceDB::execute("CREATE TABLE photo_conversion_jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
         job_type TEXT NOT NULL,
-        derivative_type TEXT NULL,
+        image_type TEXT NULL,
         input_path TEXT NULL,
-        pp3_path TEXT NULL,
+        profile_path TEXT NULL,
         output_path TEXT NULL,
-        output_storage_path TEXT NULL,
-        output_storage_location_id INTEGER NULL,
         output_width INTEGER NULL,
         output_height INTEGER NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
@@ -186,7 +225,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
-    InterfaceDB::execute("CREATE TABLE swallowtail_photo_audit (
+    InterfaceDB::execute("CREATE TABLE photo_audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
         event_id INTEGER NULL,
@@ -207,6 +246,48 @@ $swallowtailWriteRawFixture = static function (string $path, string $extension =
         : "\0\0\0\x18ftypcrx " . str_repeat('B', 128);
 
     file_put_contents($path, $bytes, LOCK_EX);
+};
+
+$swallowtailCleanupStorageFiles = static function (string $storageBaseLocation, string $checksum): void {
+    $storage = new SwallowtailStorageService();
+    foreach (SwallowtailStorageService::IMAGE_TYPES as $imageType) {
+        try {
+            @unlink($storage->imagePath($storageBaseLocation, $checksum, $imageType));
+        } catch (Throwable) {
+        }
+    }
+
+    try {
+        $folder = dirname($storage->imagePath($storageBaseLocation, $checksum, 'source'));
+        @rmdir($folder);
+        @rmdir(dirname($folder));
+    } catch (Throwable) {
+    }
+};
+
+$swallowtailWithRootStorage = static function (callable $callback) use ($harness): mixed {
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
+        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+
+        $storage = new SwallowtailStorageService();
+        $locations = $storage->storageLocations();
+        if ($locations === []) {
+            $harness->skip('No mounted storage location was discovered.');
+        }
+
+        return $callback($storage, (string)$locations[0]['storage_base_location']);
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+    }
 };
 
 $swallowtailCreateSpiceBushUserSchema = static function (): void {
@@ -286,23 +367,19 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
     )");
 };
 
-$harness->check(SwallowtailStorageService::class, 'stores originals outside web_root using checksum paths', function () use ($harness): void {
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-storage';
-    $service = new SwallowtailStorageService($root);
+$harness->check(SwallowtailStorageService::class, 'builds deterministic image paths under discovered storage', function () use ($harness, $swallowtailWithRootStorage): void {
+    $swallowtailWithRootStorage(static function (SwallowtailStorageService $service, string $baseLocation) use ($harness): void {
     $sha256 = str_repeat('a', 64);
-    $relative = $service->originalRelativePath($sha256, 'CR2');
+        $sourcePath = $service->imagePath($baseLocation, $sha256, 'source');
+        $profilePath = $service->imagePath($baseLocation, $sha256, 'profile');
+        $filteredPath = $service->imagePath($baseLocation, $sha256, 'filtered');
 
-    $harness->assertTrue(str_contains($relative, 'originals'));
-    $harness->assertTrue(str_ends_with($relative, $sha256 . '.cr2'));
-    $harness->assertTrue(!str_starts_with($service->storageRoot(), APP_ROOT));
-
-    try {
-        new SwallowtailStorageService(APP_ROOT . 'uploads');
-    } catch (RuntimeException) {
-        return;
-    }
-
-    throw new RuntimeException('Storage service allowed a web_root storage path.');
+        $harness->assertTrue(str_contains($sourcePath, DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR . 'aa' . DIRECTORY_SEPARATOR . 'aa' . DIRECTORY_SEPARATOR));
+        $harness->assertTrue(str_ends_with($sourcePath, $sha256 . '_source.cr2'));
+        $harness->assertTrue(str_ends_with($profilePath, $sha256 . '_profile.pp3'));
+        $harness->assertTrue(str_ends_with($filteredPath, $sha256 . '_filtered.jpg'));
+        $harness->assertTrue(!str_starts_with($sourcePath, APP_ROOT));
+    });
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to PHP upload limits', function () use ($harness, $swallowtailWriteRawFixture): void {
@@ -352,8 +429,6 @@ $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to 
 $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unassigned photos and queues conversion', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ingest';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary test storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -362,7 +437,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $swallowtailWriteRawFixture($source, 'cr2');
 
     $ingest = new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         new SwallowtailPhotoLibraryService(),
         new SwallowtailConversionQueueService()
     );
@@ -372,37 +447,37 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertTrue(!empty($result['success']));
     $harness->assertSame('uploaded', $result['status']);
     $harness->assertTrue((int)$result['photo_id'] > 0);
-    $harness->assertTrue(is_file((new SwallowtailStorageService($root))->absolutePath((string)$result['storage_path'])));
-    $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_photos', 'storage_location_id', ['id' => (int)$result['photo_id']]));
-    $harness->assertSame(0, InterfaceDB::countWhere('swallowtail_event_photos', 'photo_id', (int)$result['photo_id']));
-    $harness->assertSame(5, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+    $storage = new SwallowtailStorageService();
+    $harness->assertTrue(is_file($storage->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'source')));
+    $harness->assertTrue((string)$result['storage_base_location'] !== '');
+    $harness->assertSame(0, InterfaceDB::countWhere('event_photos', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
-        'derivative_type' => 'embedded',
+        'image_type' => 'embedded',
         'priority' => 'high',
     ]));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
-        'derivative_type' => 'preview',
-        'priority' => 'high',
+        'image_type' => 'thumbnail',
     ]));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
-        'derivative_type' => 'original_jpeg',
+        'image_type' => 'original',
     ]));
-    $harness->assertCount(5, (array)($result['conversion_jobs'] ?? []));
-    $harness->assertTrue((int)(($result['conversion_jobs']['preview'] ?? [])['job_id'] ?? 0) > 0);
+    $harness->assertCount(3, (array)($result['conversion_jobs'] ?? []));
+    $harness->assertTrue((int)(($result['conversion_jobs']['embedded'] ?? [])['job_id'] ?? 0) > 0);
     $thumbnail = InterfaceDB::fetchOne(
         "SELECT output_width, output_height
-         FROM swallowtail_photo_conversion_jobs
+         FROM photo_conversion_jobs
          WHERE photo_id = :photo_id
-           AND derivative_type = 'thumbnail'
+           AND image_type = 'thumbnail'
          LIMIT 1",
         ['photo_id' => (int)$result['photo_id']]
     );
     $harness->assertSame(512, (int)($thumbnail['output_width'] ?? 0));
     $harness->assertSame(512, (int)($thumbnail['output_height'] ?? 0));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_audit', 'action_type', 'raw_uploaded'));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', 'action_type', 'raw_uploaded'));
 
     @unlink($source);
 });
@@ -411,7 +486,6 @@ $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while c
     $swallowtailCreateSqliteSchema();
 
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-cr3-rejected';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary CR3 rejected storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -419,7 +493,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while c
 
     $swallowtailWriteRawFixture($source, 'cr3');
     $ingest = new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         new SwallowtailPhotoLibraryService(),
         new SwallowtailConversionQueueService()
     );
@@ -427,7 +501,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while c
 
     $harness->assertTrue(empty($result['success']));
     $harness->assertTrue(str_contains(implode(' ', (array)($result['errors'] ?? [])), '.CR2'));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);
 });
@@ -436,7 +510,6 @@ $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW upl
     $swallowtailCreateSqliteSchema();
 
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-duplicates';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary duplicate storage', $root);
     $first = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     $second = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
 
@@ -448,7 +521,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW upl
     copy($first, $second);
 
     $ingest = new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         new SwallowtailPhotoLibraryService(),
         new SwallowtailConversionQueueService()
     );
@@ -460,8 +533,8 @@ $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW upl
     $harness->assertTrue(!empty($duplicate['success']));
     $harness->assertSame('duplicate', $duplicate['status']);
     $harness->assertSame((int)$created['photo_id'], (int)$duplicate['photo_id']);
-    $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_photos'));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_audit', 'action_type', 'raw_duplicate_detected'));
+    $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', 'action_type', 'raw_duplicate_detected'));
 
     @unlink($first);
     @unlink($second);
@@ -473,7 +546,6 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Checksum token', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-checksum';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary checksum storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -481,7 +553,7 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
 
     $swallowtailWriteRawFixture($source, 'cr2');
     $result = (new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         $library,
         new SwallowtailConversionQueueService()
     ))->ingestLocalRawFile($source, 'IMG_0009.CR2');
@@ -538,7 +610,7 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
     $harness->assertTrue(is_array($badAlgorithmPayload));
     $harness->assertTrue(empty($badAlgorithmPayload['success']));
     $harness->assertTrue(str_contains(implode(' ', (array)($badAlgorithmPayload['errors'] ?? [])), 'Unsupported quick checksum algorithm'));
-    $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+    $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
 
     @unlink($source);
 });
@@ -814,7 +886,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects regi
         $harness->assertTrue(is_array($payload));
         $harness->assertTrue(empty($payload['success']));
         $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'External Base Web URL'));
-        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -885,7 +957,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'uses forward
         $harness->assertTrue(!empty($payload['success']));
         $harness->assertSame('https://swallowtail.example.test:8443/api', (string)($payload['api_url'] ?? ''));
         $harness->assertTrue(str_starts_with((string)($payload['token'] ?? ''), 'stup_'));
-        $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(1, InterfaceDB::tableRowCount('api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -945,7 +1017,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'records fail
         $harness->assertTrue(is_array($payload));
         $harness->assertTrue(empty($payload['success']));
         $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'Please wait'));
-        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
 
         $emailLimit = InterfaceDB::fetchOne(
             "SELECT consecutive_failed_password_attempts, user_id, next_allowed_login_at
@@ -1042,7 +1114,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'requires OTP
         $harness->assertTrue(is_array($payload));
         $harness->assertTrue(empty($payload['success']));
         $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'OTP'));
-        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -1142,7 +1214,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts vali
         $harness->assertTrue(is_array($payload));
         $harness->assertTrue(!empty($payload['success']));
         $harness->assertTrue(str_starts_with((string)($payload['token'] ?? ''), 'stup_'));
-        $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(1, InterfaceDB::tableRowCount('api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -1189,7 +1261,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects vali
 
         $harness->assertTrue(is_array($payload));
         $harness->assertTrue(empty($payload['success']));
-        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -1201,7 +1273,6 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
     $swallowtailCreateSqliteSchema();
 
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-access';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary access storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1209,7 +1280,7 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
     $swallowtailWriteRawFixture($source, 'cr2');
 
     $library = new SwallowtailPhotoLibraryService();
-    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService());
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0003.CR2');
     $event = $library->createEvent('Private Wedding');
     $access = new SwallowtailEventAccessService();
@@ -1233,65 +1304,37 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
     @unlink($source);
 });
 
-$harness->check(SwallowtailImageServeService::class, 'resolves only authorised private derivative images', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailImageServeService::class, 'resolves only authorised private image files', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-image-serve';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary image serve storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
     $swallowtailWriteRawFixture($source, 'cr2');
 
-    $storage = new SwallowtailStorageService($root);
+    $storage = new SwallowtailStorageService();
     $library = new SwallowtailPhotoLibraryService();
     $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0008.CR2');
     $photoId = (int)$result['photo_id'];
     $photo = $library->photoById($photoId);
     $sha256 = (string)($photo['original_sha256'] ?? '');
-    $previewStoragePath = $storage->derivativeRelativePath($sha256, 'preview');
-    $storage->ensureDirectoryForRelativePath($previewStoragePath);
-    $previewPath = $storage->absolutePath($previewStoragePath);
-    file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
-
-    InterfaceDB::prepareExecute(
-        "INSERT INTO swallowtail_photo_derivatives (
-            photo_id,
-            derivative_type,
-            storage_path,
-            storage_location_id,
-            bytes,
-            sha256
-        ) VALUES (
-            :photo_id,
-            'preview',
-            :storage_path,
-            :storage_location_id,
-            :bytes,
-            :sha256
-        )",
-        [
-            'photo_id' => $photoId,
-            'storage_path' => $previewStoragePath,
-            'storage_location_id' => $photo['storage_location_id'] ?? null,
-            'bytes' => filesize($previewPath),
-            'sha256' => hash_file('sha256', $previewPath),
-        ]
-    );
+    $thumbnailPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), $sha256, 'thumbnail');
+    $storage->ensureDirectoryForPath($thumbnailPath);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
     $event = $library->createEvent('Private Gallery');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
     $service = new SwallowtailImageServeService();
 
-    $harness->assertSame(null, $service->derivativeImage($photoId, 'preview', 202));
+    $harness->assertSame(null, $service->derivativeImage($photoId, 'thumbnail', 202));
 
     $library->grantEventPermission((int)$event['id'], 202, ['can_view' => true]);
-    $image = $service->derivativeImage($photoId, 'preview', 202);
+    $image = $service->derivativeImage($photoId, 'thumbnail', 202);
 
     $harness->assertTrue(is_array($image));
-    $harness->assertSame($previewPath, (string)$image['absolute_path']);
+    $harness->assertSame($thumbnailPath, (string)$image['absolute_path']);
     $harness->assertSame('image/jpeg', (string)$image['content_type']);
     $harness->assertTrue(str_contains((string)$image['etag'], '"'));
 
@@ -1314,7 +1357,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
             'saturation' => -12.25,
         ],
     ], 600, 500);
-    $content = $service->pp3Content($settings, 1600);
+    $content = $service->pp3Content($settings);
 
     $harness->assertSame(0, (int)$settings['crop']['x']);
     $harness->assertSame(490, (int)$settings['crop']['y']);
@@ -1324,16 +1367,12 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
     $harness->assertSame(100.0, (float)$settings['exposure']['contrast']);
     $harness->assertTrue(str_contains($content, "[Exposure]\nAuto=false\nBlack=-100\nBrightness=25.5\nContrast=100\nSaturation=-12.25"));
     $harness->assertTrue(str_contains($content, "[Crop]\nEnabled=true\nX=0\nY=490\nW=600\nH=10"));
-    $harness->assertTrue(str_contains($content, "[Resize]\nEnabled=true"));
-    $harness->assertTrue(str_contains($content, "AppliesTo=Cropped area\nMethod=Lanczos"));
-    $harness->assertTrue(str_contains($content, "Width=1600\nHeight=1600"));
+    $harness->assertTrue(!str_contains($content, "[Resize]"));
 });
 
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-preview-profile-' . bin2hex(random_bytes(6));
-    (new SwallowtailStorageLocationService())->registerLocation('Primary preview profile storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1341,7 +1380,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $swallowtailWriteRawFixture($source, 'cr2');
 
     $library = new SwallowtailPhotoLibraryService();
-    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService());
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0009.CR2');
     $photoId = (int)$result['photo_id'];
     $event = $library->createEvent('Preview Edit Event');
@@ -1360,38 +1399,38 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
 
     $harness->assertTrue(empty($denied['success']));
     $harness->assertTrue(!empty($queued['success']));
-    $harness->assertSame(2, (int)($queued['profile_version'] ?? 0));
+    $harness->assertSame(1, (int)($queued['profile_version'] ?? 0));
     $harness->assertTrue((int)($queued['job_id'] ?? 0) > 0);
-    $harness->assertTrue(str_contains((string)($queued['preview_url'] ?? ''), 'v=2'));
-    $harness->assertTrue(str_contains((string)($queued['status_url'] ?? ''), 'profile_version=2'));
+    $harness->assertTrue(str_contains((string)($queued['preview_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(str_contains((string)($queued['status_url'] ?? ''), 'profile_version=1'));
 
     $job = InterfaceDB::fetchOne(
-        "SELECT pp3_path, profile_version, requested_by_user_id, priority, output_width, output_height
-         FROM swallowtail_photo_conversion_jobs
+        "SELECT profile_path, profile_version, requested_by_user_id, priority, output_width, output_height
+         FROM photo_conversion_jobs
          WHERE id = :id",
         ['id' => (int)$queued['job_id']]
     );
 
     $harness->assertTrue(is_array($job));
-    $profilePath = (string)($job['pp3_path'] ?? '');
-    $harness->assertSame(2, (int)($job['profile_version'] ?? 0));
+    $profilePath = (string)($job['profile_path'] ?? '');
+    $harness->assertSame(1, (int)($job['profile_version'] ?? 0));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
     $harness->assertSame('high', (string)($job['priority'] ?? ''));
-    $harness->assertSame(1600, (int)($job['output_width'] ?? 0));
-    $harness->assertSame(1600, (int)($job['output_height'] ?? 0));
+    $harness->assertSame(0, (int)($job['output_width'] ?? 0));
+    $harness->assertSame(0, (int)($job['output_height'] ?? 0));
     $harness->assertTrue($profilePath !== '');
     $harness->assertTrue(is_file($profilePath));
     $harness->assertTrue(!str_starts_with($profilePath, APP_ROOT));
-    $harness->assertTrue(str_contains($profilePath, DIRECTORY_SEPARATOR . 'profiles' . DIRECTORY_SEPARATOR));
+    $harness->assertTrue(str_ends_with($profilePath, '_profile.pp3'));
     $harness->assertTrue(str_contains((string)file_get_contents($profilePath), "[Crop]\nEnabled=true\nX=10\nY=20\nW=100\nH=120"));
 
     InterfaceDB::prepareExecute(
-        "UPDATE swallowtail_photo_conversion_jobs
+        "UPDATE photo_conversion_jobs
          SET status = 'succeeded'
          WHERE id = :id",
         ['id' => (int)$queued['job_id']]
     );
-    $status = $service->previewStatus($photoId, (int)$queued['job_id'], 2, 303);
+    $status = $service->previewStatus($photoId, (int)$queued['job_id'], 1, 303);
     $harness->assertTrue(!empty($status['success']));
     $harness->assertSame('succeeded', (string)($status['status'] ?? ''));
     $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$queued['job_id']));
@@ -1405,7 +1444,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
 
     if (!is_string($source)) {
@@ -1425,7 +1463,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     );
 
     $service = new SwallowtailRawUploadApiService(
-        new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService()),
+        new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService()),
         $library
     );
 
@@ -1443,10 +1481,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
-    $harness->assertCount(4, (array)($payload['conversion_jobs'] ?? []));
+    $harness->assertCount(3, (array)($payload['conversion_jobs'] ?? []));
     $harness->assertTrue((int)(($payload['conversion_jobs']['thumbnail'] ?? [])['job_id'] ?? 0) > 0);
-    $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_photos'));
-    $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+    $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
+    $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
 
     @unlink($source);
 });
@@ -1457,7 +1495,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-content-length';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API content length storage', $root);
 
     $request = new RequestFramework(
         [],
@@ -1475,7 +1512,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads
 
     $service = new SwallowtailRawUploadApiService(
         new SwallowtailPhotoIngestService(
-            new SwallowtailStorageService($root),
+            new SwallowtailStorageService(),
             $library,
             new SwallowtailConversionQueueService(),
             64,
@@ -1491,7 +1528,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
     $harness->assertSame('RAW upload exceeded the configured size limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
 });
 
 $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming when RAW limit is exceeded', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -1500,7 +1537,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-stream-limit';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API stream limit storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-stream-test-');
 
     if (!is_string($source)) {
@@ -1524,7 +1560,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
 
     $service = new SwallowtailRawUploadApiService(
         new SwallowtailPhotoIngestService(
-            new SwallowtailStorageService($root),
+            new SwallowtailStorageService(),
             $library,
             new SwallowtailConversionQueueService(),
             64,
@@ -1545,7 +1581,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
     $harness->assertTrue(empty($payload['success']));
     $harness->assertSame('RAW upload exceeded the configured size limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
     $harness->assertSame($before, $after);
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);
 });
@@ -1556,7 +1592,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-raw-body';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API raw body storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-body-test-');
 
     if (!is_string($source)) {
@@ -1580,7 +1615,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
 
     $service = new SwallowtailRawUploadApiService(
         new SwallowtailPhotoIngestService(
-            new SwallowtailStorageService($root),
+            new SwallowtailStorageService(),
             $library,
             new SwallowtailConversionQueueService(),
             4096,
@@ -1595,8 +1630,8 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
-    $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_photos'));
-    $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+    $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
+    $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
 
     @unlink($source);
 });
@@ -1607,7 +1642,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects multipart RAW up
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-multipart-limit';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API multipart limit storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-multipart-test-');
 
     if (!is_string($source)) {
@@ -1627,7 +1661,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects multipart RAW up
 
     $service = new SwallowtailRawUploadApiService(
         new SwallowtailPhotoIngestService(
-            new SwallowtailStorageService($root),
+            new SwallowtailStorageService(),
             $library,
             new SwallowtailConversionQueueService(),
             64,
@@ -1649,7 +1683,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects multipart RAW up
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
     $harness->assertSame('RAW file exceeded the configured upload limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);
 });
@@ -1660,7 +1694,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects upload tokens ou
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['198.51.100.0/24']);
     $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-cidr';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary API CIDR storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
 
     if (!is_string($source)) {
@@ -1679,7 +1712,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects upload tokens ou
     );
 
     $service = new SwallowtailRawUploadApiService(
-        new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService()),
+        new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService()),
         $library
     );
     $response = $service->handleUpload($request, [
@@ -1694,7 +1727,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects upload tokens ou
 
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);
 });
@@ -1708,7 +1741,7 @@ $harness->check(SwallowtailPhotoLibraryService::class, 'manages upload token CID
     $stored = $library->uploadTokenById($tokenId);
 
     $harness->assertTrue(str_starts_with((string)$created['token'], 'stup_'));
-    $harness->assertSame(2, InterfaceDB::tableRowCount('swallowtail_api_upload_token_cidrs'));
+    $harness->assertSame(2, InterfaceDB::tableRowCount('api_upload_token_cidrs'));
     $harness->assertTrue($stored !== null);
     $harness->assertTrue(!array_key_exists('token', $stored));
     $harness->assertTrue($library->authenticateUploadToken((string)$created['token'], '203.0.113.42') !== null);
@@ -1736,40 +1769,29 @@ $harness->check(SwallowtailPhotoLibraryService::class, 'manages upload token CID
     $harness->assertTrue($library->authenticateUploadToken((string)$created['token'], '198.51.100.42') !== null);
 
     $library->deleteUploadToken($tokenId);
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_token_cidrs'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_token_cidrs'));
 });
 
-$harness->check(SwallowtailConversionStatusApiService::class, 'returns conversion jobs and derivative readiness', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailConversionStatusApiService::class, 'returns conversion jobs and filesystem image readiness', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Status token', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-status';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary status storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
-    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService($root), $library, new SwallowtailConversionQueueService());
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0008.CR2');
     $photoId = (int)$result['photo_id'];
-    InterfaceDB::prepareExecute(
-        "INSERT INTO swallowtail_photo_derivatives (
-            photo_id,
-            derivative_type,
-            storage_path,
-            bytes
-        ) VALUES (
-            :photo_id,
-            'thumbnail',
-            'derivatives/thumbnail/test.jpg',
-            100
-        )",
-        ['photo_id' => $photoId]
-    );
+    $photo = $library->photoById($photoId);
+    $storage = new SwallowtailStorageService();
+    $thumbnailPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), (string)($photo['original_sha256'] ?? ''), 'thumbnail');
+    $storage->ensureDirectoryForPath($thumbnailPath);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
     $request = new RequestFramework(
         ['photo_id' => (string)$photoId],
@@ -1785,47 +1807,72 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame($photoId, (int)($payload['photo_id'] ?? 0));
-    $harness->assertSame('queued', (string)(($payload['jobs']['preview'] ?? [])['status'] ?? ''));
-    $harness->assertTrue(!empty(($payload['derivatives']['thumbnail'] ?? [])['ready']));
-    $harness->assertTrue(!array_key_exists('storage_path', (array)($payload['derivatives']['thumbnail'] ?? [])));
-    $harness->assertTrue(empty(($payload['derivatives']['preview'] ?? [])['ready']));
+    $harness->assertSame('queued', (string)(($payload['jobs']['original'] ?? [])['status'] ?? ''));
+    $harness->assertTrue(!empty(($payload['images']['thumbnail'] ?? [])['ready']));
+    $harness->assertTrue(!array_key_exists('storage_path', (array)($payload['images']['thumbnail'] ?? [])));
+    $harness->assertTrue(empty(($payload['images']['filtered'] ?? [])['ready']));
 
     @unlink($source);
 });
 
-$harness->check(SwallowtailStorageLocationService::class, 'chooses writable mounted storage and moves originals between locations', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailStorageLocationService::class, 'filters discovered storage by root, threshold, and exclusion settings', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWithRootStorage): void {
     $swallowtailCreateSqliteSchema();
 
-    $primaryRoot = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-primary-full';
-    $secondaryRoot = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-secondary-active';
-    $locationService = new SwallowtailStorageLocationService();
-    $primaryId = $locationService->registerLocation('Primary full storage', $primaryRoot, ['is_full' => true, 'sort_order' => 1]);
-    $secondaryId = $locationService->registerLocation('Secondary active storage', $secondaryRoot, ['sort_order' => 2]);
-
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
-    if (!is_string($source)) {
-        throw new RuntimeException('Unable to create RAW fixture.');
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
     }
-    $swallowtailWriteRawFixture($source, 'cr2');
 
-    $library = new SwallowtailPhotoLibraryService();
-    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService($primaryRoot), $library, new SwallowtailConversionQueueService());
-    $result = $ingest->ingestLocalRawFile($source, 'IMG_0005.CR2');
+    try {
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        $withoutRoot = (new SwallowtailStorageService())->storageLocations();
+        foreach ($withoutRoot as $location) {
+            $harness->assertTrue(empty($location['is_root_partition']));
+        }
 
-    $harness->assertTrue(!empty($result['success']));
-    $photo = $library->photoById((int)$result['photo_id']);
-    $harness->assertSame($secondaryId, (int)($photo['storage_location_id'] ?? 0));
+        $swallowtailWithRootStorage(static function (SwallowtailStorageService $storage, string $baseLocation) use ($harness): void {
+            $locations = $storage->storageLocations();
+            $harness->assertTrue($locations !== []);
+            $harness->assertTrue(str_ends_with((string)$locations[0]['data_root'], DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR));
+            $harness->assertTrue(!empty($locations[0]['can_write']));
 
-    $locationService->markLocationFull($primaryId, false);
-    $move = $locationService->movePhotoOriginalToLocation((int)$result['photo_id'], $primaryId);
-    $photoAfterMove = $library->photoById((int)$result['photo_id']);
+            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 100);
+            $thresholdLocations = $storage->storageLocations();
+            $harness->assertTrue(empty($thresholdLocations[0]['can_write']));
 
-    $harness->assertTrue(!empty($move['success']));
-    $harness->assertTrue(!empty($move['moved']));
-    $harness->assertSame($primaryId, (int)($photoAfterMove['storage_location_id'] ?? 0));
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_audit', 'action_type', 'photo_moved_storage_location'));
+            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+            (new SwallowtailStorageLocationService($storage))->setExcluded($baseLocation, true);
+            $excludedLocations = $storage->storageLocations();
+            $harness->assertTrue(!empty($excludedLocations[0]['is_excluded']));
+            $harness->assertTrue(empty($excludedLocations[0]['can_write']));
+        });
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+    }
+});
 
-    @unlink($source);
+$harness->check(SwallowtailStorageService::class, 'selects writable locations by checksum modulo when enabled', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWithRootStorage): void {
+    $swallowtailCreateSqliteSchema();
+
+    $swallowtailWithRootStorage(static function (SwallowtailStorageService $storage) use ($harness): void {
+        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', true);
+        $locations = array_values(array_filter(
+            $storage->storageLocations(),
+            static fn(array $location): bool => !empty($location['can_write'])
+        ));
+
+        if (count($locations) < 2) {
+            $harness->skip('Checksum modulo selection needs at least two writable mounted locations.');
+        }
+
+        $checksum = str_repeat('a', 63) . '8';
+        $chosen = $storage->writableLocationForChecksum($checksum);
+        $expected = $locations[hexdec('8') % count($locations)];
+        $harness->assertSame((string)$expected['storage_base_location'], (string)$chosen['storage_base_location']);
+    });
 });
 
 $harness->check('SwallowTail migration', 'defines the photo backend tables', function () use ($harness): void {
@@ -1851,31 +1898,39 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql;
 
     foreach ([
-        'CREATE TABLE IF NOT EXISTS swallowtail_events',
-        'CREATE TABLE IF NOT EXISTS swallowtail_storage_locations',
-        'CREATE TABLE IF NOT EXISTS swallowtail_photos',
-        'CREATE TABLE IF NOT EXISTS swallowtail_event_permissions',
-        'CREATE TABLE IF NOT EXISTS swallowtail_api_upload_tokens',
-        'CREATE TABLE IF NOT EXISTS swallowtail_api_upload_token_cidrs',
-        'CREATE TABLE IF NOT EXISTS swallowtail_photo_conversion_jobs',
-        'derivative_type enum',
-        'output_storage_path',
+        'CREATE TABLE IF NOT EXISTS events',
+        'CREATE TABLE IF NOT EXISTS storage_location_properties',
+        'CREATE TABLE IF NOT EXISTS photos',
+        'CREATE TABLE IF NOT EXISTS event_permissions',
+        'CREATE TABLE IF NOT EXISTS api_upload_tokens',
+        'CREATE TABLE IF NOT EXISTS api_upload_token_cidrs',
+        'CREATE TABLE IF NOT EXISTS photo_conversion_jobs',
+        'storage_base_location',
+        'image_type enum',
+        'profile_path',
         'output_width',
         'duration_seconds',
         "'embedded'",
+        "'filtered'",
         'original_quick_hash',
-        'idx_swallowtail_photos_quick_hash',
+        'idx_photos_quick_hash',
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));
     }
+
+    foreach ([
+        'CREATE TABLE IF NOT EXISTS swallowtail_storage_locations',
+        'CREATE TABLE IF NOT EXISTS swallowtail_photo_derivatives',
+        'output_storage_path',
+    ] as $needle) {
+        $harness->assertTrue(!str_contains($sql, $needle));
+    }
 });
 
-$harness->check(SwallowtailConversionQueueService::class, 'deduplicates derivative jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-dedupe';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary dedupe storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1883,31 +1938,30 @@ $harness->check(SwallowtailConversionQueueService::class, 'deduplicates derivati
     $swallowtailWriteRawFixture($source, 'cr2');
 
     $ingest = new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         new SwallowtailPhotoLibraryService(),
         new SwallowtailConversionQueueService()
     );
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0006.CR2');
     $queue = new SwallowtailConversionQueueService();
     $photoId = (int)$result['photo_id'];
-    $first = $queue->enqueuePreviewRefresh($photoId, $root . DIRECTORY_SEPARATOR . 'profile-v2.pp3', 2, 12);
-    $second = $queue->enqueuePreviewRefresh($photoId, $root . DIRECTORY_SEPARATOR . 'profile-v2.pp3', 2, 12);
+    $profile = (new SwallowtailStorageService())->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'profile');
+    $first = $queue->enqueueFilteredRefresh($photoId, $profile, 2, 12);
+    $second = $queue->enqueueFilteredRefresh($photoId, $profile, 2, 12);
 
     $harness->assertSame($first, $second);
-    $harness->assertSame(1, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', [
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => $photoId,
-        'derivative_type' => 'preview',
+        'image_type' => 'filtered',
         'profile_version' => 2,
     ]));
 
     @unlink($source);
 });
 
-$harness->check(SwallowtailConversionQueueService::class, 'does not require Redis for durable derivative enqueue', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailConversionQueueService::class, 'does not require Redis for durable image enqueue', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-redis-down';
-    (new SwallowtailStorageLocationService())->registerLocation('Primary redis-down storage', $root);
     $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1915,14 +1969,16 @@ $harness->check(SwallowtailConversionQueueService::class, 'does not require Redi
     $swallowtailWriteRawFixture($source, 'cr2');
 
     $ingest = new SwallowtailPhotoIngestService(
-        new SwallowtailStorageService($root),
+        new SwallowtailStorageService(),
         new SwallowtailPhotoLibraryService(),
         new SwallowtailConversionQueueService()
     );
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(5, InterfaceDB::countWhere('swallowtail_photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
 
     @unlink($source);
 });
+
+

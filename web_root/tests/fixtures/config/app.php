@@ -42,4 +42,13 @@ return array (
       1 => 'X-Real-IP',
     ),
   ),
+  'swallowtail' => 
+  array (
+    'storage' => 
+    array (
+      'store_on_root_partition' => false,
+      'round_robin_locations' => false,
+      'full_threshold_percent' => 5,
+    ),
+  ),
 );

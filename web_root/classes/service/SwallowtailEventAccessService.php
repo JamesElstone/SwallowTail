@@ -22,8 +22,8 @@ final class SwallowtailEventAccessService
 
         return (bool)InterfaceDB::fetchColumn(
             "SELECT 1
-             FROM swallowtail_event_photos event_photo
-             INNER JOIN swallowtail_event_permissions permission
+             FROM event_photos event_photo
+             INNER JOIN event_permissions permission
                 ON permission.event_id = event_photo.event_id
              WHERE event_photo.photo_id = :photo_id
                AND permission.user_id = :user_id
@@ -49,13 +49,13 @@ final class SwallowtailEventAccessService
 
     public function userCanDownloadAllAccessible(int $userId): bool
     {
-        if ($userId <= 0 || !InterfaceDB::tableExists('swallowtail_event_permissions')) {
+        if ($userId <= 0 || !InterfaceDB::tableExists('event_permissions')) {
             return false;
         }
 
         return (bool)InterfaceDB::fetchColumn(
             "SELECT 1
-             FROM swallowtail_event_permissions
+             FROM event_permissions
              WHERE user_id = :user_id
                AND can_download_all_accessible = 1
                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
@@ -87,7 +87,7 @@ final class SwallowtailEventAccessService
 
         $value = InterfaceDB::fetchColumn(
             "SELECT " . $column . "
-             FROM swallowtail_event_permissions
+             FROM event_permissions
              WHERE user_id = :user_id
                AND event_id = :event_id
                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
@@ -104,7 +104,7 @@ final class SwallowtailEventAccessService
 
     private function tablesAvailable(): bool
     {
-        return InterfaceDB::tableExists('swallowtail_event_permissions')
-            && InterfaceDB::tableExists('swallowtail_event_photos');
+        return InterfaceDB::tableExists('event_permissions')
+            && InterfaceDB::tableExists('event_photos');
     }
 }

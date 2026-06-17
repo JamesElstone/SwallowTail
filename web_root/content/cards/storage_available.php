@@ -37,11 +37,13 @@ final class _storage_availableCard extends CardBaseFramework
             return '<div class="panel-soft warn">Storage status is unavailable: ' . HelperFramework::escape($exception->getMessage()) . '</div>';
         }
 
+        $html = $this->settingsForm($context);
+
         if ($locations === []) {
-            return '<p class="helper">No storage locations are configured.</p>';
+            return $html . '<p class="helper">No mounted storage locations are available.</p>';
         }
 
-        $html = '<div class="storage-location-grid">';
+        $html .= '<div class="storage-location-grid">';
         foreach ($locations as $location) {
             $html .= $this->locationCard((array)$location);
         }
@@ -52,13 +54,15 @@ final class _storage_availableCard extends CardBaseFramework
     private function locationCard(array $location): string
     {
         $canWrite = !empty($location['can_write']);
-        $isReadOnly = !empty($location['is_read_only']);
+        $isExcluded = !empty($location['is_excluded']);
         $isFull = !empty($location['is_full']);
         $label = (string)($location['label'] ?? 'Storage location');
         $availableBytes = $location['available_bytes'] ?? null;
-        $reserveBytes = (int)($location['reserve_bytes'] ?? 0);
+        $totalBytes = $location['total_bytes'] ?? null;
+        $freePercent = $location['free_percent'] ?? null;
+        $threshold = (float)($location['full_threshold_percent'] ?? 5);
         $statusClass = $canWrite ? 'success' : 'warning';
-        $statusLabel = $canWrite ? 'Writable' : ($isReadOnly ? 'Read only' : ($isFull ? 'Marked full' : 'Unavailable'));
+        $statusLabel = $canWrite ? 'Writable' : ($isExcluded ? 'Excluded' : ($isFull ? 'Below threshold' : 'Unavailable'));
 
         return '<article class="storage-location-card">
             <div class="storage-location-head">
@@ -71,12 +75,47 @@ final class _storage_availableCard extends CardBaseFramework
                     <dd>' . HelperFramework::escape($this->formatBytes($availableBytes)) . '</dd>
                 </div>
                 <div>
-                    <dt>Reserve</dt>
-                    <dd>' . HelperFramework::escape($this->formatBytes($reserveBytes)) . '</dd>
+                    <dt>Capacity</dt>
+                    <dd>' . HelperFramework::escape($this->formatBytes($totalBytes)) . '</dd>
+                </div>
+                <div>
+                    <dt>Free</dt>
+                    <dd>' . HelperFramework::escape($freePercent === null ? 'Unknown' : number_format((float)$freePercent, 1) . '%') . '</dd>
+                </div>
+                <div>
+                    <dt>Threshold</dt>
+                    <dd>' . HelperFramework::escape(number_format($threshold, 1) . '%') . '</dd>
                 </div>
             </dl>
             <p class="storage-location-path">' . HelperFramework::escape((string)($location['root_path'] ?? '')) . '</p>
         </article>';
+    }
+
+    private function settingsForm(array $context): string
+    {
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        $storeOnRoot = (bool)AppConfigurationStore::get('swallowtail.storage.store_on_root_partition', false);
+        $roundRobin = (bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false);
+        $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
+
+        return '<form method="post" action="?page=settings" data-ajax="true" class="form-grid">
+            <input type="hidden" name="card_action" value="StorageSettings">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+            <label class="checkbox-row">
+                <input type="hidden" name="store_on_root_partition" value="0">
+                <input type="checkbox" name="store_on_root_partition" value="1"' . ($storeOnRoot ? ' checked' : '') . ' onchange="this.form.requestSubmit()">
+                <span>Store on root partition</span>
+            </label>
+            <label class="checkbox-row">
+                <input type="hidden" name="round_robin_locations" value="0">
+                <input type="checkbox" name="round_robin_locations" value="1"' . ($roundRobin ? ' checked' : '') . ' onchange="this.form.requestSubmit()">
+                <span>Round-Robin Storage between locations</span>
+            </label>
+            <label>
+                <span>Full threshold</span>
+                <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" onchange="this.form.requestSubmit()">
+            </label>
+        </form>';
     }
 
     private function formatBytes(mixed $bytes): string

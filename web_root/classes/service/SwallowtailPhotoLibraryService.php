@@ -19,34 +19,33 @@ final class SwallowtailPhotoLibraryService
             }
         }
 
-        return InterfaceDB::columnExists('swallowtail_photos', 'original_quick_hash');
+        return InterfaceDB::columnExists('photos', 'original_quick_hash');
     }
 
     public function requiredTables(): array
     {
         return [
-            'swallowtail_events',
-            'swallowtail_storage_locations',
-            'swallowtail_photos',
-            'swallowtail_event_photos',
-            'swallowtail_event_permissions',
-            'swallowtail_api_upload_tokens',
-            'swallowtail_api_upload_token_cidrs',
-            'swallowtail_photo_audit',
-            'swallowtail_photo_derivatives',
-            'swallowtail_photo_conversion_jobs',
+            'events',
+            'photos',
+            'event_photos',
+            'event_permissions',
+            'api_upload_tokens',
+            'api_upload_token_cidrs',
+            'photo_audit',
+            'photo_conversion_jobs',
+            'storage_location_properties',
         ];
     }
 
     public function photoByChecksum(string $sha256): ?array
     {
         $sha256 = strtolower(trim($sha256));
-        if ($sha256 === '' || !InterfaceDB::tableExists('swallowtail_photos')) {
+        if ($sha256 === '' || !InterfaceDB::tableExists('photos')) {
             return null;
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_photos WHERE original_sha256 = :sha256 LIMIT 1',
+            'SELECT * FROM photos WHERE original_sha256 = :sha256 LIMIT 1',
             ['sha256' => $sha256]
         );
 
@@ -56,7 +55,7 @@ final class SwallowtailPhotoLibraryService
     public function photoByQuickHash(string $quickHash, ?int $bytes = null): ?array
     {
         $quickHash = $this->normaliseQuickHash($quickHash);
-        if (!InterfaceDB::tableExists('swallowtail_photos') || !InterfaceDB::columnExists('swallowtail_photos', 'original_quick_hash')) {
+        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::columnExists('photos', 'original_quick_hash')) {
             return null;
         }
 
@@ -73,7 +72,7 @@ final class SwallowtailPhotoLibraryService
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_photos WHERE ' . $where . ' ORDER BY id ASC LIMIT 1',
+            'SELECT * FROM photos WHERE ' . $where . ' ORDER BY id ASC LIMIT 1',
             $params
         );
 
@@ -92,12 +91,12 @@ final class SwallowtailPhotoLibraryService
 
     public function photoById(int $photoId): ?array
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photos')) {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photos')) {
             return null;
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_photos WHERE id = :id LIMIT 1',
+            'SELECT * FROM photos WHERE id = :id LIMIT 1',
             ['id' => $photoId]
         );
 
@@ -115,7 +114,7 @@ final class SwallowtailPhotoLibraryService
         if ($existing !== null) {
             if ($quickHash !== null && trim((string)($existing['original_quick_hash'] ?? '')) === '') {
                 InterfaceDB::prepareExecute(
-                    "UPDATE swallowtail_photos
+                    "UPDATE photos
                      SET original_quick_hash = :quick_hash
                      WHERE id = :id
                        AND (original_quick_hash IS NULL OR original_quick_hash = '')",
@@ -148,14 +147,13 @@ final class SwallowtailPhotoLibraryService
         }
 
         InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_photos (
+            "INSERT INTO photos (
                 original_filename,
                 original_extension,
                 original_bytes,
                 original_sha256,
                 original_quick_hash,
-                original_storage_path,
-                storage_location_id,
+                storage_base_location,
                 upload_state,
                 conversion_state,
                 uploaded_by_user_id,
@@ -167,8 +165,7 @@ final class SwallowtailPhotoLibraryService
                 :original_bytes,
                 :original_sha256,
                 :original_quick_hash,
-                :original_storage_path,
-                :storage_location_id,
+                :storage_base_location,
                 'uploaded',
                 'pending',
                 :uploaded_by_user_id,
@@ -181,8 +178,7 @@ final class SwallowtailPhotoLibraryService
                 'original_bytes' => max(0, (int)($upload['bytes'] ?? 0)),
                 'original_sha256' => $sha256,
                 'original_quick_hash' => $quickHash,
-                'original_storage_path' => trim((string)($upload['storage_path'] ?? '')),
-                'storage_location_id' => $this->nullablePositiveInt($upload['storage_location_id'] ?? null),
+                'storage_base_location' => trim((string)($upload['storage_base_location'] ?? '')),
                 'uploaded_by_user_id' => $this->nullablePositiveInt($upload['uploaded_by_user_id'] ?? null),
                 'uploaded_via' => $this->normaliseUploadSource((string)($upload['uploaded_via'] ?? 'api')),
                 'upload_token_id' => $this->nullablePositiveInt($upload['upload_token_id'] ?? null),
@@ -226,7 +222,7 @@ final class SwallowtailPhotoLibraryService
         $slug = $slug !== '' ? $this->normaliseSlug($slug) : $this->normaliseSlug($name);
 
         InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_events (
+            "INSERT INTO events (
                 event_name,
                 event_slug,
                 created_by_user_id
@@ -254,7 +250,7 @@ final class SwallowtailPhotoLibraryService
         $this->assertSchemaAvailable();
 
         InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_event_photos (
+            "INSERT INTO event_photos (
                 event_id,
                 photo_id,
                 assigned_by_user_id
@@ -278,7 +274,7 @@ final class SwallowtailPhotoLibraryService
         $this->assertSchemaAvailable();
 
         InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_event_permissions (
+            "INSERT INTO event_permissions (
                 event_id,
                 user_id,
                 can_view,
@@ -325,7 +321,7 @@ final class SwallowtailPhotoLibraryService
 
         $tokenId = InterfaceDB::transaction(function () use ($tokenHash, $label, $createdByUserId, $expiresAt, $normalisedCidrs): int {
             InterfaceDB::prepareExecute(
-                "INSERT INTO swallowtail_api_upload_tokens (
+                "INSERT INTO api_upload_tokens (
                     token_hash,
                     token_label,
                     created_by_user_id,
@@ -361,8 +357,8 @@ final class SwallowtailPhotoLibraryService
     public function authenticateUploadToken(string $token, ?string $remoteAddress = null): ?array
     {
         if (
-            !InterfaceDB::tableExists('swallowtail_api_upload_tokens')
-            || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')
+            !InterfaceDB::tableExists('api_upload_tokens')
+            || !InterfaceDB::tableExists('api_upload_token_cidrs')
         ) {
             return null;
         }
@@ -374,7 +370,7 @@ final class SwallowtailPhotoLibraryService
 
         $row = InterfaceDB::fetchOne(
             "SELECT *
-             FROM swallowtail_api_upload_tokens
+             FROM api_upload_tokens
              WHERE token_hash = :token_hash
                AND can_upload_raw = 1
                AND is_active = 1
@@ -417,8 +413,8 @@ final class SwallowtailPhotoLibraryService
     public function explainUploadTokenAuthenticationFailure(string $token, ?string $remoteAddress = null): string
     {
         if (
-            !InterfaceDB::tableExists('swallowtail_api_upload_tokens')
-            || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')
+            !InterfaceDB::tableExists('api_upload_tokens')
+            || !InterfaceDB::tableExists('api_upload_token_cidrs')
         ) {
             return 'SwallowTail photo database tables are not available. Run the database migrations.';
         }
@@ -429,7 +425,7 @@ final class SwallowtailPhotoLibraryService
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
+            'SELECT * FROM api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
             ['token_hash' => hash('sha256', $token)]
         );
 
@@ -547,19 +543,19 @@ final class SwallowtailPhotoLibraryService
 
     public function markUploadTokenUsed(int $tokenId): void
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
             return;
         }
 
         InterfaceDB::prepareExecute(
-            'UPDATE swallowtail_api_upload_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = :id',
+            'UPDATE api_upload_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = :id',
             ['id' => $tokenId]
         );
     }
 
     private function uploadTokenForAudit(string $token): ?array
     {
-        if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if (!InterfaceDB::tableExists('api_upload_tokens')) {
             return null;
         }
 
@@ -569,7 +565,7 @@ final class SwallowtailPhotoLibraryService
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
+            'SELECT * FROM api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
             ['token_hash' => hash('sha256', $token)]
         );
 
@@ -613,7 +609,7 @@ final class SwallowtailPhotoLibraryService
 
     public function listUploadTokens(): array
     {
-        if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if (!InterfaceDB::tableExists('api_upload_tokens')) {
             return [];
         }
 
@@ -630,7 +626,7 @@ final class SwallowtailPhotoLibraryService
 
         $rows = InterfaceDB::fetchAll(
             "SELECT token.*" . $userColumnsSql . "
-             FROM swallowtail_api_upload_tokens token
+             FROM api_upload_tokens token
              " . $userJoinSql . "
              ORDER BY token.is_active DESC, token.created_at DESC, token.id DESC"
         );
@@ -653,12 +649,12 @@ final class SwallowtailPhotoLibraryService
 
     public function uploadTokenById(int $tokenId): ?array
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
             return null;
         }
 
         $row = InterfaceDB::fetchOne(
-            'SELECT * FROM swallowtail_api_upload_tokens WHERE id = :id LIMIT 1',
+            'SELECT * FROM api_upload_tokens WHERE id = :id LIMIT 1',
             ['id' => $tokenId]
         );
 
@@ -692,7 +688,7 @@ final class SwallowtailPhotoLibraryService
 
         InterfaceDB::transaction(function () use ($tokenId, $label, $isActive, $canUploadRaw, $expiresAt, $cidrs): void {
             InterfaceDB::prepareExecute(
-                "UPDATE swallowtail_api_upload_tokens
+                "UPDATE api_upload_tokens
                  SET token_label = :token_label,
                      can_upload_raw = :can_upload_raw,
                      is_active = :is_active,
@@ -720,19 +716,19 @@ final class SwallowtailPhotoLibraryService
 
     public function deleteUploadToken(int $tokenId): void
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
             return;
         }
 
-        if (InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')) {
+        if (InterfaceDB::tableExists('api_upload_token_cidrs')) {
             InterfaceDB::prepareExecute(
-                'DELETE FROM swallowtail_api_upload_token_cidrs WHERE token_id = :token_id',
+                'DELETE FROM api_upload_token_cidrs WHERE token_id = :token_id',
                 ['token_id' => $tokenId]
             );
         }
 
         InterfaceDB::prepareExecute(
-            'DELETE FROM swallowtail_api_upload_tokens WHERE id = :id',
+            'DELETE FROM api_upload_tokens WHERE id = :id',
             ['id' => $tokenId]
         );
     }
@@ -798,12 +794,12 @@ final class SwallowtailPhotoLibraryService
         array $details = [],
         array $requestMetadata = []
     ): void {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photo_audit')) {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_audit')) {
             return;
         }
 
         InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_photo_audit (
+            "INSERT INTO photo_audit (
                 photo_id,
                 event_id,
                 actor_user_id,
@@ -935,13 +931,13 @@ final class SwallowtailPhotoLibraryService
 
     private function cidrsForUploadToken(int $tokenId): array
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_token_cidrs')) {
+        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_token_cidrs')) {
             return [];
         }
 
         $rows = InterfaceDB::fetchAll(
             "SELECT cidr
-             FROM swallowtail_api_upload_token_cidrs
+             FROM api_upload_token_cidrs
              WHERE token_id = :token_id
              ORDER BY cidr",
             ['token_id' => $tokenId]
@@ -961,13 +957,13 @@ final class SwallowtailPhotoLibraryService
     private function replaceUploadTokenCidrs(int $tokenId, array $cidrs): void
     {
         InterfaceDB::prepareExecute(
-            'DELETE FROM swallowtail_api_upload_token_cidrs WHERE token_id = :token_id',
+            'DELETE FROM api_upload_token_cidrs WHERE token_id = :token_id',
             ['token_id' => $tokenId]
         );
 
         foreach ($cidrs as $cidr) {
             InterfaceDB::prepareExecute(
-                "INSERT INTO swallowtail_api_upload_token_cidrs (
+                "INSERT INTO api_upload_token_cidrs (
                     token_id,
                     cidr
                 ) VALUES (

@@ -54,7 +54,7 @@ class ConversionDatabase:
     def requeue_expired_jobs(self) -> int:
         cursor = self._execute(
             """
-            UPDATE swallowtail_photo_conversion_jobs
+            UPDATE photo_conversion_jobs
                SET status = 'queued',
                    locked_at = NULL,
                    locked_by = NULL,
@@ -76,16 +76,15 @@ class ConversionDatabase:
         row = self._fetchone(
             """
             SELECT id
-              FROM swallowtail_photo_conversion_jobs
+              FROM photo_conversion_jobs
              WHERE status = 'queued'
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
-               CASE derivative_type
+               CASE image_type
                  WHEN 'embedded' THEN 1
-                 WHEN 'preview' THEN 2
-                 WHEN 'thumbnail' THEN 3
-                 WHEN 'jpeg' THEN 4
-                 WHEN 'original_jpeg' THEN 5
+                 WHEN 'original' THEN 2
+                 WHEN 'filtered' THEN 3
+                 WHEN 'thumbnail' THEN 4
                  ELSE 6
                END,
                CASE priority
@@ -103,7 +102,7 @@ class ConversionDatabase:
     def claim_job(self, job_id: int) -> ConversionJob | None:
         cursor = self._execute(
             """
-            UPDATE swallowtail_photo_conversion_jobs
+            UPDATE photo_conversion_jobs
                SET status = 'processing',
                    locked_at = CURRENT_TIMESTAMP,
                    locked_by = %s,
@@ -119,19 +118,19 @@ class ConversionDatabase:
             self.connection.rollback()
             return None
 
-        row = self._fetchone("SELECT * FROM swallowtail_photo_conversion_jobs WHERE id = %s LIMIT 1", (job_id,))
+        row = self._fetchone("SELECT * FROM photo_conversion_jobs WHERE id = %s LIMIT 1", (job_id,))
         self.connection.commit()
         return ConversionJob.from_row(row) if row else None
 
-    def is_stale_preview(self, job: ConversionJob) -> bool:
-        if job.derivative_type != "preview":
+    def is_stale_filtered(self, job: ConversionJob) -> bool:
+        if job.image_type != "filtered":
             return False
         row = self._fetchone(
             """
             SELECT 1 AS stale
-              FROM swallowtail_photo_conversion_jobs
+              FROM photo_conversion_jobs
              WHERE photo_id = %s
-               AND derivative_type = 'preview'
+               AND image_type = 'filtered'
                AND profile_version > %s
                AND status IN ('queued', 'processing', 'succeeded')
              LIMIT 1
@@ -146,44 +145,17 @@ class ConversionDatabase:
         size = os.path.getsize(output_path)
         details = {
             "job_id": job.id,
-            "derivative_type": job.derivative_type,
+            "image_type": job.image_type,
             "command": command,
             "stderr": stderr,
             "duration_seconds": round(duration, 3),
             "bytes": size,
+            "sha256": sha256,
         }
 
         self._execute(
             """
-            INSERT INTO swallowtail_photo_derivatives (
-                photo_id,
-                derivative_type,
-                storage_path,
-                storage_location_id,
-                bytes,
-                sha256
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s
-            )
-            ON DUPLICATE KEY UPDATE
-                storage_path = VALUES(storage_path),
-                storage_location_id = VALUES(storage_location_id),
-                bytes = VALUES(bytes),
-                sha256 = VALUES(sha256),
-                generated_at = CURRENT_TIMESTAMP
-            """,
-            (
-                job.photo_id,
-                job.derivative_type,
-                job.output_storage_path,
-                job.output_storage_location_id,
-                size,
-                sha256,
-            ),
-        )
-        self._execute(
-            """
-            UPDATE swallowtail_photo_conversion_jobs
+            UPDATE photo_conversion_jobs
                SET status = 'succeeded',
                    completed_at = CURRENT_TIMESTAMP,
                    duration_seconds = %s,
@@ -194,10 +166,10 @@ class ConversionDatabase:
             """,
             (round(duration, 3), job.id),
         )
-        self._execute("UPDATE swallowtail_photos SET conversion_state = 'ready' WHERE id = %s", (job.photo_id,))
+        self._execute("UPDATE photos SET conversion_state = 'ready' WHERE id = %s", (job.photo_id,))
         self._insert_audit(
             job.photo_id,
-            "photo_preview_refreshed" if job.derivative_type == "preview" else "photo_derivative_generated",
+            "photo_filtered_refreshed" if job.image_type == "filtered" else "photo_image_generated",
             details,
         )
         self.connection.commit()
@@ -208,7 +180,7 @@ class ConversionDatabase:
         if status == "queued":
             self._execute(
                 """
-                UPDATE swallowtail_photo_conversion_jobs
+                UPDATE photo_conversion_jobs
                    SET status = 'queued',
                        locked_at = NULL,
                        locked_by = NULL,
@@ -222,7 +194,7 @@ class ConversionDatabase:
         else:
             self._execute(
                 """
-                UPDATE swallowtail_photo_conversion_jobs
+                UPDATE photo_conversion_jobs
                    SET status = 'failed',
                        completed_at = CURRENT_TIMESTAMP,
                        locked_at = NULL,
@@ -233,14 +205,14 @@ class ConversionDatabase:
                 """,
                 (duration_seconds, message[-4000:], job.id),
             )
-            self._execute("UPDATE swallowtail_photos SET conversion_state = 'failed' WHERE id = %s", (job.photo_id,))
+            self._execute("UPDATE photos SET conversion_state = 'failed' WHERE id = %s", (job.photo_id,))
             self._insert_audit(job.photo_id, "photo_conversion_failed", {"job_id": job.id, "error": message[-4000:]})
         self.connection.commit()
 
     def cancel_job(self, job: ConversionJob, message: str) -> None:
         self._execute(
             """
-            UPDATE swallowtail_photo_conversion_jobs
+            UPDATE photo_conversion_jobs
                SET status = 'cancelled',
                    completed_at = CURRENT_TIMESTAMP,
                    locked_at = NULL,
@@ -255,7 +227,7 @@ class ConversionDatabase:
     def _insert_audit(self, photo_id: int, action_type: str, details: dict[str, Any]) -> None:
         self._execute(
             """
-            INSERT INTO swallowtail_photo_audit (
+            INSERT INTO photo_audit (
                 photo_id,
                 action_type,
                 details_json

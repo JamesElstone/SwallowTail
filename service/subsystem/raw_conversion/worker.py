@@ -75,7 +75,7 @@ class ConversionWorker:
         self.process_job(job)
 
     def process_job(self, job: ConversionJob) -> None:
-        self.log.info("Processing job=%s photo=%s derivative=%s", job.id, job.photo_id, job.derivative_type)
+        self.log.info("Processing job=%s photo=%s image_type=%s", job.id, job.photo_id, job.image_type)
         temp_dir = Path(self.config.worker.work_dir) / f"job-{job.id}"
         render_duration: float | None = None
         if temp_dir.exists():
@@ -83,12 +83,12 @@ class ConversionWorker:
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            if self.db.is_stale_preview(job):
+            if self.db.is_stale_filtered(job):
                 self.db.cancel_job(job, "Stale profile version")
                 return
 
             job.validate()
-            result = self.embedded.extract(job, str(temp_dir)) if job.derivative_type == "embedded" else self.runner.render(job, str(temp_dir))
+            result = self.embedded.extract(job, str(temp_dir)) if job.image_type == "embedded" else self.runner.render(job, str(temp_dir))
             render_duration = result.duration_seconds
             if result.exit_code != 0:
                 raise RuntimeError(f"conversion failed with exit code {result.exit_code}: {result.stderr}")

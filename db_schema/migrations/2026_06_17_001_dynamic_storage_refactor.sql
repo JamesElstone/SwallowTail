@@ -1,4 +1,30 @@
 /*
+ * Swallowtail dynamic storage destructive refactor.
+ * Existing photo-area rows are intentionally discarded by this migration.
+ */
+
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS swallowtail_photo_derivatives;
+DROP TABLE IF EXISTS swallowtail_storage_locations;
+DROP TABLE IF EXISTS swallowtail_photo_audit;
+DROP TABLE IF EXISTS swallowtail_photo_conversion_jobs;
+DROP TABLE IF EXISTS swallowtail_event_permissions;
+DROP TABLE IF EXISTS swallowtail_event_photos;
+DROP TABLE IF EXISTS swallowtail_photos;
+DROP TABLE IF EXISTS swallowtail_api_upload_token_cidrs;
+DROP TABLE IF EXISTS swallowtail_api_upload_tokens;
+DROP TABLE IF EXISTS swallowtail_events;
+DROP TABLE IF EXISTS photo_audit;
+DROP TABLE IF EXISTS photo_conversion_jobs;
+DROP TABLE IF EXISTS event_permissions;
+DROP TABLE IF EXISTS event_photos;
+DROP TABLE IF EXISTS photos;
+DROP TABLE IF EXISTS api_upload_token_cidrs;
+DROP TABLE IF EXISTS api_upload_tokens;
+DROP TABLE IF EXISTS storage_location_properties;
+DROP TABLE IF EXISTS events;
+SET FOREIGN_KEY_CHECKS = 1;
+/*
  * Swallowtail
  * Copyright (c) 2026 James Elstone
  * Licensed under the BSD 3-Clause License.

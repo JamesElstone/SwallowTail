@@ -130,13 +130,12 @@ algorithm names are rejected.
 
 ## Upload CR2
 
-Uploads a `.CR2` RAW image file, stores the original outside `web_root`, records the
-photo, and queues derivative conversion jobs for:
+Uploads a `.CR2` RAW image file, stores the source file outside `web_root`, records the
+photo, and queues conversion jobs for:
 
-- `original_jpeg`
-- `preview`
+- `embedded`
+- `original`
 - `thumbnail`
-- `jpeg`
 
 Endpoint:
 
@@ -207,13 +206,12 @@ New uploads return HTTP `201`.
   "photo_id": 123,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "quick_hash": "8f7e1c2d3a4b5960",
-  "storage_path": "originals/01/23/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.cr2",
+  "storage_base_location": "/storage/1",
   "conversion_job_id": 456,
   "conversion_jobs": {
-    "original_jpeg": {"job_id": 456, "status": "queued"},
-    "preview": {"job_id": 457, "status": "queued"},
-    "thumbnail": {"job_id": 458, "status": "queued"},
-    "jpeg": {"job_id": 459, "status": "queued"}
+    "embedded": {"job_id": 456, "status": "queued"},
+    "original": {"job_id": 457, "status": "queued"},
+    "thumbnail": {"job_id": 458, "status": "queued"}
   },
   "warnings": []
 }
@@ -235,7 +233,7 @@ Duplicate uploads return HTTP `200`. No second original is stored.
 
 ## Conversion Status
 
-Returns conversion job state and derivative readiness for a photo.
+Returns conversion job state and filesystem-derived image readiness for a photo.
 
 Endpoint:
 
@@ -259,20 +257,22 @@ Successful response:
   "photo_id": 123,
   "conversion_state": "pending",
   "jobs": {
-    "original_jpeg": {"job_id": 456, "status": "queued"},
-    "preview": {"job_id": 457, "status": "processing"},
+    "embedded": {"job_id": 456, "status": "queued"},
+    "original": {"job_id": 457, "status": "processing"},
     "thumbnail": {"job_id": 458, "status": "succeeded"},
-    "jpeg": {"job_id": 459, "status": "queued"}
+    "filtered": {"job_id": null, "status": "not_queued"}
   },
-  "derivatives": {
-    "original_jpeg": {"ready": false},
-    "preview": {"ready": false},
+  "images": {
+    "embedded": {"ready": false},
+    "original": {"ready": false},
     "thumbnail": {
       "ready": true,
       "bytes": 12345,
-      "generated_at": "2026-06-16 12:00:00"
+      "modified_at": 1781611200,
+      "sha256": "..."
     },
-    "jpeg": {"ready": false}
+    "filtered": {"ready": false},
+    "profile": {"ready": false}
   }
 }
 ```

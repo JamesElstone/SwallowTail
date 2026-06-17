@@ -9,18 +9,21 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoUiService
 {
-    private const DERIVATIVE_TYPES = ['thumbnail', 'preview', 'jpeg'];
+    private const IMAGE_TYPES = ['thumbnail', 'original', 'embedded', 'filtered'];
+
+    public function __construct(
+        private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+    ) {
+    }
 
     public function schemaAvailable(): bool
     {
         foreach ([
-            'swallowtail_photos',
-            'swallowtail_photo_derivatives',
-            'swallowtail_storage_locations',
-            'swallowtail_event_photos',
-            'swallowtail_event_permissions',
-            'swallowtail_events',
-            'swallowtail_photo_audit',
+            'photos',
+            'event_photos',
+            'event_permissions',
+            'events',
+            'photo_audit',
         ] as $table) {
             if (!InterfaceDB::tableExists($table)) {
                 return false;
@@ -41,12 +44,10 @@ final class SwallowtailPhotoUiService
         $offset = ($page - 1) * $perPage;
         $params = [];
         $where = $this->accessWhereSql($userId, $params, 'photo');
-        $limitSql = (string)$perPage;
-        $offsetSql = (string)$offset;
 
         $total = (int)InterfaceDB::fetchColumn(
             "SELECT COUNT(*)
-             FROM swallowtail_photos photo
+             FROM photos photo
              WHERE " . $where,
             $params
         );
@@ -54,29 +55,17 @@ final class SwallowtailPhotoUiService
         $rows = InterfaceDB::fetchAll(
             "SELECT
                 photo.*,
-                thumbnail.id AS thumbnail_derivative_id,
-                preview.id AS preview_derivative_id,
-                jpeg.id AS jpeg_derivative_id,
                 (
                     SELECT GROUP_CONCAT(event.event_name)
-                    FROM swallowtail_event_photos event_photo
-                    INNER JOIN swallowtail_events event
+                    FROM event_photos event_photo
+                    INNER JOIN events event
                         ON event.id = event_photo.event_id
                     WHERE event_photo.photo_id = photo.id
                 ) AS event_names
-             FROM swallowtail_photos photo
-             LEFT JOIN swallowtail_photo_derivatives thumbnail
-                ON thumbnail.photo_id = photo.id
-               AND thumbnail.derivative_type = 'thumbnail'
-             LEFT JOIN swallowtail_photo_derivatives preview
-                ON preview.photo_id = photo.id
-               AND preview.derivative_type = 'preview'
-             LEFT JOIN swallowtail_photo_derivatives jpeg
-                ON jpeg.photo_id = photo.id
-               AND jpeg.derivative_type = 'jpeg'
+             FROM photos photo
              WHERE " . $where . "
              ORDER BY photo.created_at DESC, photo.id DESC
-             LIMIT " . $limitSql . " OFFSET " . $offsetSql,
+             LIMIT " . (string)$perPage . " OFFSET " . (string)$offset,
             $params
         );
 
@@ -101,32 +90,20 @@ final class SwallowtailPhotoUiService
             InterfaceDB::fetchAll(
                 "SELECT
                     photo.*,
-                    thumbnail.id AS thumbnail_derivative_id,
-                    preview.id AS preview_derivative_id,
-                    jpeg.id AS jpeg_derivative_id,
                     (
                         SELECT COUNT(*)
-                        FROM swallowtail_photo_audit audit
+                        FROM photo_audit audit
                         WHERE audit.photo_id = photo.id
                           AND audit.action_type = 'raw_duplicate_detected'
                     ) AS duplicate_upload_count,
                     (
                         SELECT GROUP_CONCAT(event.event_name)
-                        FROM swallowtail_event_photos event_photo
-                        INNER JOIN swallowtail_events event
+                        FROM event_photos event_photo
+                        INNER JOIN events event
                             ON event.id = event_photo.event_id
                         WHERE event_photo.photo_id = photo.id
                     ) AS event_names
-                 FROM swallowtail_photos photo
-                 LEFT JOIN swallowtail_photo_derivatives thumbnail
-                    ON thumbnail.photo_id = photo.id
-                   AND thumbnail.derivative_type = 'thumbnail'
-                 LEFT JOIN swallowtail_photo_derivatives preview
-                    ON preview.photo_id = photo.id
-                   AND preview.derivative_type = 'preview'
-                 LEFT JOIN swallowtail_photo_derivatives jpeg
-                    ON jpeg.photo_id = photo.id
-                   AND jpeg.derivative_type = 'jpeg'
+                 FROM photos photo
                  WHERE " . $where . "
                  ORDER BY photo.created_at DESC, photo.id DESC
                  LIMIT " . (string)$limit,
@@ -147,30 +124,16 @@ final class SwallowtailPhotoUiService
         $photo = InterfaceDB::fetchOne(
             "SELECT
                 photo.*,
-                location.location_label,
-                location.root_path AS storage_root_path,
-                thumbnail.id AS thumbnail_derivative_id,
-                preview.id AS preview_derivative_id,
-                jpeg.id AS jpeg_derivative_id,
+                photo.storage_base_location AS storage_root_path,
+                photo.storage_base_location AS location_label,
                 (
                     SELECT GROUP_CONCAT(event.event_name)
-                    FROM swallowtail_event_photos event_photo
-                    INNER JOIN swallowtail_events event
+                    FROM event_photos event_photo
+                    INNER JOIN events event
                         ON event.id = event_photo.event_id
                     WHERE event_photo.photo_id = photo.id
                 ) AS event_names
-             FROM swallowtail_photos photo
-             LEFT JOIN swallowtail_storage_locations location
-                ON location.id = photo.storage_location_id
-             LEFT JOIN swallowtail_photo_derivatives thumbnail
-                ON thumbnail.photo_id = photo.id
-               AND thumbnail.derivative_type = 'thumbnail'
-             LEFT JOIN swallowtail_photo_derivatives preview
-                ON preview.photo_id = photo.id
-               AND preview.derivative_type = 'preview'
-             LEFT JOIN swallowtail_photo_derivatives jpeg
-                ON jpeg.photo_id = photo.id
-               AND jpeg.derivative_type = 'jpeg'
+             FROM photos photo
              WHERE " . $where . "
              LIMIT 1",
             $params
@@ -181,7 +144,7 @@ final class SwallowtailPhotoUiService
         }
 
         $photo = $this->normalisePhotoRow($photo);
-        $photo['derivatives'] = $this->photoDerivatives($photoId);
+        $photo['derivatives'] = $this->photoImages($photo);
 
         return $photo;
     }
@@ -193,58 +156,28 @@ final class SwallowtailPhotoUiService
         }
 
         $type = strtolower(trim($type));
-        if (!in_array($type, self::DERIVATIVE_TYPES, true)) {
+        if (!in_array($type, self::IMAGE_TYPES, true)) {
             return null;
         }
 
-        $params = [
-            'photo_id' => $photoId,
-            'derivative_type' => $type,
-        ];
+        $params = ['photo_id' => $photoId];
         $where = 'photo.id = :photo_id AND ' . $this->accessWhereSql($userId, $params, 'photo');
-
-        $row = InterfaceDB::fetchOne(
-            "SELECT
-                photo.original_filename,
-                derivative.storage_path,
-                derivative.bytes,
-                derivative.sha256,
-                COALESCE(derivative_location.root_path, photo_location.root_path) AS root_path
-             FROM swallowtail_photos photo
-             INNER JOIN swallowtail_photo_derivatives derivative
-                ON derivative.photo_id = photo.id
-               AND derivative.derivative_type = :derivative_type
-             LEFT JOIN swallowtail_storage_locations derivative_location
-                ON derivative_location.id = derivative.storage_location_id
-             LEFT JOIN swallowtail_storage_locations photo_location
-                ON photo_location.id = photo.storage_location_id
-             WHERE " . $where . "
-             LIMIT 1",
-            $params
-        );
-
-        if (!is_array($row)) {
+        $photo = InterfaceDB::fetchOne('SELECT * FROM photos photo WHERE ' . $where . ' LIMIT 1', $params);
+        if (!is_array($photo)) {
             return null;
         }
 
-        $rootPath = trim((string)($row['root_path'] ?? ''));
-        $storagePath = trim((string)($row['storage_path'] ?? ''));
-        if ($storagePath === '') {
-            return null;
-        }
-
-        $storage = new SwallowtailStorageService($rootPath);
-        $absolutePath = $storage->absolutePath($storagePath);
-        if (!is_file($absolutePath) || !is_readable($absolutePath)) {
+        $info = $this->storageService->imageInfo($photo, $type);
+        if ($info === null) {
             return null;
         }
 
         return [
-            'path' => $absolutePath,
+            'path' => (string)$info['absolute_path'],
             'content_type' => 'image/jpeg',
-            'filename' => $this->assetFilename((string)($row['original_filename'] ?? 'photo'), $type),
-            'bytes' => (int)filesize($absolutePath),
-            'sha256' => (string)($row['sha256'] ?? ''),
+            'filename' => $this->assetFilename((string)($photo['original_filename'] ?? 'photo'), $type),
+            'bytes' => (int)$info['bytes'],
+            'sha256' => (string)$info['sha256'],
         ];
     }
 
@@ -258,32 +191,27 @@ final class SwallowtailPhotoUiService
         $where = 'photo.id = :photo_id AND ' . $this->accessWhereSql($userId, $params, 'photo');
 
         return (bool)InterfaceDB::fetchColumn(
-            'SELECT 1 FROM swallowtail_photos photo WHERE ' . $where . ' LIMIT 1',
+            'SELECT 1 FROM photos photo WHERE ' . $where . ' LIMIT 1',
             $params
         );
     }
 
-    private function photoDerivatives(int $photoId): array
+    private function photoImages(array $photo): array
     {
-        $rows = InterfaceDB::fetchAll(
-            "SELECT derivative_type, bytes, generated_at, storage_path
-             FROM swallowtail_photo_derivatives
-             WHERE photo_id = :photo_id
-             ORDER BY derivative_type",
-            ['photo_id' => $photoId]
-        );
-
-        $derivatives = [];
-        foreach ($rows as $row) {
-            $type = (string)($row['derivative_type'] ?? '');
-            if ($type === '') {
-                continue;
+        $images = [];
+        foreach (self::IMAGE_TYPES as $type) {
+            $info = $this->storageService->imageInfo($photo, $type);
+            if ($info !== null) {
+                $images[$type] = [
+                    'image_type' => $type,
+                    'bytes' => (int)$info['bytes'],
+                    'generated_at' => date('Y-m-d H:i:s', (int)$info['modified_at']),
+                    'storage_path' => (string)$info['absolute_path'],
+                ];
             }
-
-            $derivatives[$type] = $row;
         }
 
-        return $derivatives;
+        return $images;
     }
 
     private function accessWhereSql(int $userId, array &$params, string $photoAlias): string
@@ -300,8 +228,8 @@ final class SwallowtailPhotoUiService
                 " . $photoAlias . ".uploaded_by_user_id = :access_upload_user_id
                 OR EXISTS (
                     SELECT 1
-                    FROM swallowtail_event_photos access_event_photo
-                    INNER JOIN swallowtail_event_permissions access_permission
+                    FROM event_photos access_event_photo
+                    INNER JOIN event_permissions access_permission
                         ON access_permission.event_id = access_event_photo.event_id
                     WHERE access_event_photo.photo_id = " . $photoAlias . ".id
                       AND access_permission.user_id = :access_user_id
@@ -326,11 +254,13 @@ final class SwallowtailPhotoUiService
         $row['id'] = (int)($row['id'] ?? 0);
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
-        $row['storage_location_id'] = $this->nullableInt($row['storage_location_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
-        $row['thumbnail_ready'] = !empty($row['thumbnail_derivative_id']);
-        $row['preview_ready'] = !empty($row['preview_derivative_id']);
-        $row['jpeg_ready'] = !empty($row['jpeg_derivative_id']);
+        $row['thumbnail_ready'] = $this->storageService->imageInfo($row, 'thumbnail') !== null;
+        $row['original_ready'] = $this->storageService->imageInfo($row, 'original') !== null;
+        $row['embedded_ready'] = $this->storageService->imageInfo($row, 'embedded') !== null;
+        $row['filtered_ready'] = $this->storageService->imageInfo($row, 'filtered') !== null;
+        $row['preview_ready'] = $row['filtered_ready'] || $row['original_ready'];
+        $row['jpeg_ready'] = $row['filtered_ready'];
 
         return $row;
     }

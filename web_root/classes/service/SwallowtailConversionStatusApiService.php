@@ -9,10 +9,11 @@ declare(strict_types=1);
 
 final class SwallowtailConversionStatusApiService
 {
-    private const DERIVATIVE_TYPES = ['original_jpeg', 'preview', 'thumbnail', 'jpeg'];
+    private const IMAGE_TYPES = ['original', 'embedded', 'thumbnail', 'filtered', 'profile'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
+        private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
     ) {
     }
 
@@ -93,27 +94,27 @@ final class SwallowtailConversionStatusApiService
             'photo_id' => $photoId,
             'conversion_state' => (string)($photo['conversion_state'] ?? 'pending'),
             'jobs' => $this->jobsForPhoto($photoId),
-            'derivatives' => $this->derivativesForPhoto($photoId),
+            'images' => $this->imagesForPhoto($photo),
         ]);
     }
 
     private function jobsForPhoto(int $photoId): array
     {
-        $jobs = $this->emptyDerivativeMap(['job_id' => null, 'status' => 'not_queued']);
-        if (!InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
+        $jobs = $this->emptyImageMap(['job_id' => null, 'status' => 'not_queued']);
+        if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
             return $jobs;
         }
 
         $rows = InterfaceDB::fetchAll(
-            "SELECT id, derivative_type, status
-             FROM swallowtail_photo_conversion_jobs
+            "SELECT id, image_type, status
+             FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
              ORDER BY id DESC",
             ['photo_id' => $photoId]
         );
 
         foreach ($rows as $row) {
-            $type = (string)($row['derivative_type'] ?? '');
+            $type = (string)($row['image_type'] ?? '');
             if (!array_key_exists($type, $jobs) || $jobs[$type]['job_id'] !== null) {
                 continue;
             }
@@ -127,40 +128,30 @@ final class SwallowtailConversionStatusApiService
         return $jobs;
     }
 
-    private function derivativesForPhoto(int $photoId): array
+    private function imagesForPhoto(array $photo): array
     {
-        $derivatives = $this->emptyDerivativeMap(['ready' => false]);
-        if (!InterfaceDB::tableExists('swallowtail_photo_derivatives')) {
-            return $derivatives;
-        }
-
-        $rows = InterfaceDB::fetchAll(
-            "SELECT derivative_type, bytes, generated_at
-             FROM swallowtail_photo_derivatives
-             WHERE photo_id = :photo_id",
-            ['photo_id' => $photoId]
-        );
-
-        foreach ($rows as $row) {
-            $type = (string)($row['derivative_type'] ?? '');
-            if (!array_key_exists($type, $derivatives)) {
+        $images = $this->emptyImageMap(['ready' => false]);
+        foreach (self::IMAGE_TYPES as $type) {
+            $info = $this->storageService->imageInfo($photo, $type);
+            if ($info === null) {
                 continue;
             }
 
-            $derivatives[$type] = [
+            $images[$type] = [
                 'ready' => true,
-                'bytes' => (int)($row['bytes'] ?? 0),
-                'generated_at' => (string)($row['generated_at'] ?? ''),
+                'bytes' => (int)$info['bytes'],
+                'sha256' => (string)$info['sha256'],
+                'modified_at' => gmdate('c', (int)$info['modified_at']),
             ];
         }
 
-        return $derivatives;
+        return $images;
     }
 
-    private function emptyDerivativeMap(array $default): array
+    private function emptyImageMap(array $default): array
     {
         $map = [];
-        foreach (self::DERIVATIVE_TYPES as $type) {
+        foreach (self::IMAGE_TYPES as $type) {
             $map[$type] = $default;
         }
 

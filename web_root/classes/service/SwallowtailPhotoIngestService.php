@@ -124,10 +124,9 @@ final class SwallowtailPhotoIngestService
             ];
         }
 
-        $relativePath = $this->storageService->originalRelativePath($sha256, $validation['extension']);
-        $stored = $this->storageService->storeOriginalFile(
+        $stored = $this->storageService->storeSourceFile(
             $sourcePath,
-            $relativePath,
+            $sha256,
             !empty($context['move_source'])
         );
 
@@ -137,8 +136,7 @@ final class SwallowtailPhotoIngestService
             'original_filename' => $originalFilename,
             'extension' => $validation['extension'],
             'bytes' => (int)$stored['bytes'],
-            'storage_path' => $relativePath,
-            'storage_location_id' => $stored['storage_location_id'] ?? null,
+            'storage_base_location' => $stored['storage_base_location'] ?? '',
             'uploaded_via' => (string)($context['uploaded_via'] ?? 'api'),
             'uploaded_by_user_id' => $context['uploaded_by_user_id'] ?? null,
             'upload_token_id' => $context['upload_token_id'] ?? null,
@@ -163,7 +161,7 @@ final class SwallowtailPhotoIngestService
             'photo_id' => $photoId,
             'sha256' => $sha256,
             'quick_hash' => $quickHash,
-            'storage_path' => $relativePath,
+            'storage_base_location' => $stored['storage_base_location'] ?? '',
             'conversion_job_id' => $firstJobId,
             'conversion_jobs' => $conversionJobs,
             'warnings' => $validation['warnings'],

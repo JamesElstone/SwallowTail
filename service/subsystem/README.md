@@ -3,9 +3,9 @@
 This service consumes SwallowTail conversion jobs from MariaDB, wakes quickly via
 Redis, and renders `.CR2` RAW image files with `rawtherapee-cli`.
 
-PHP owns storage decisions. Each job includes the input path, optional PP3 path,
-final output path, derivative type, and storage metadata. The worker renders into
-a per-job temporary directory, then moves the completed file to the output path
+PHP owns storage decisions. Each job includes the image type, input path,
+optional PP3 profile path, and final output path. The worker renders into a
+per-job temporary directory, then moves the completed file to the output path
 defined on the job.
 
 ## Install On FreeBSD
@@ -51,20 +51,15 @@ For one-shot testing:
 python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --once
 ```
 
-For host smoke testing:
-
-```sh
-sudo sh tools/bin/rawConversionSmokeTest.sh --input=/home/james.elstone/TEST.CR2
-```
-
-The smoke test uses `/storage/1/swallowtail-raw-smoke` by default, waits for all
-five derivative jobs to succeed, verifies non-empty output files, and cleans up
-the rows/files it created unless `--keep-artifacts` is supplied.
+For one-shot host verification, upload a test CR2 through the normal API and run
+the worker with `--once`. Test-created files use the same deterministic
+`swallowtail-data` paths as production data and should be removed by the test
+that created them.
 
 ## Rendering Notes
 
 RawTherapee processing profiles are layered in command-line order. For thumbnail
 jobs, PHP supplies `output_width` and `output_height` on the job and the worker
 generates a temporary resize PP3 after any user PP3 so thumbnails are bounded to
-the requested dimensions. Preview, full JPEG, and original JPEG jobs remain
-full-size unless PHP supplies dimensions for those derivatives later.
+the requested dimensions. `embedded`, `original`, and `filtered` jobs remain
+full-size unless PHP supplies dimensions for those image types later.

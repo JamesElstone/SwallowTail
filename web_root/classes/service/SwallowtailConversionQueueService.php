@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const DERIVATIVE_TYPES = ['embedded', 'original_jpeg', 'preview', 'thumbnail', 'jpeg'];
+    private const IMAGE_TYPES = ['embedded', 'original', 'thumbnail', 'filtered'];
     private const PRIORITIES = ['low', 'normal', 'high'];
 
     public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
@@ -26,7 +26,7 @@ final class SwallowtailConversionQueueService
 
     public function enqueueRawConversionJobs(int $photoId, string $priority = 'normal'): array
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_conversion_jobs')) {
             return [];
         }
 
@@ -35,28 +35,24 @@ final class SwallowtailConversionQueueService
             return [];
         }
 
+        $storage = new SwallowtailStorageService();
         $sha256 = (string)($photo['original_sha256'] ?? '');
-        $storageLocationId = $this->nullablePositiveInt($photo['storage_location_id'] ?? null);
-        $storage = new SwallowtailStorageService($this->storageRootForLocation($storageLocationId));
-        $inputPath = $storage->absolutePath((string)($photo['original_storage_path'] ?? ''));
+        $base = (string)($photo['storage_base_location'] ?? '');
+        $sourcePath = $storage->imagePath($base, $sha256, 'source');
         $jobs = [];
 
         foreach ([
             'embedded' => 'high',
-            'original_jpeg' => 'normal',
-            'preview' => 'high',
-            'thumbnail' => 'normal',
-            'jpeg' => $priority,
-        ] as $derivativeType => $jobPriority) {
-            $outputStoragePath = $storage->derivativeRelativePath($sha256, $derivativeType);
-            $dimensions = $this->dimensionsForDerivative($derivativeType);
-            $jobId = $this->enqueueDerivativeJob(
+            'original' => 'normal',
+            'thumbnail' => $priority,
+        ] as $imageType => $jobPriority) {
+            $outputPath = $storage->imagePath($base, $sha256, $imageType);
+            $dimensions = $this->dimensionsForImageType($imageType);
+            $jobId = $this->enqueueImageJob(
                 $photoId,
-                $derivativeType,
-                $inputPath,
-                $storage->absolutePath($outputStoragePath),
-                $outputStoragePath,
-                $storageLocationId,
+                $imageType,
+                $sourcePath,
+                $outputPath,
                 null,
                 1,
                 $jobPriority,
@@ -65,7 +61,7 @@ final class SwallowtailConversionQueueService
                 $dimensions['height']
             );
 
-            $jobs[$derivativeType] = [
+            $jobs[$imageType] = [
                 'job_id' => $jobId,
                 'status' => $jobId !== null ? 'queued' : 'not_queued',
             ];
@@ -74,109 +70,7 @@ final class SwallowtailConversionQueueService
         return $jobs;
     }
 
-    public function enqueueDerivativeJob(
-        int $photoId,
-        string $derivativeType,
-        string $inputPath,
-        string $outputPath,
-        string $outputStoragePath,
-        ?int $outputStorageLocationId,
-        ?string $pp3Path = null,
-        int $profileVersion = 1,
-        string $priority = 'normal',
-        ?int $requestedByUserId = null,
-        ?int $outputWidth = null,
-        ?int $outputHeight = null
-    ): ?int {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
-            return null;
-        }
-
-        $derivativeType = $this->normaliseDerivativeType($derivativeType);
-        $priority = $this->normalisePriority($priority);
-        $profileVersion = max(1, $profileVersion);
-        $outputWidth = $this->nullablePositiveInt($outputWidth);
-        $outputHeight = $this->nullablePositiveInt($outputHeight);
-
-        if (($outputWidth === null) !== ($outputHeight === null)) {
-            throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
-        }
-
-        $existingJobId = InterfaceDB::fetchColumn(
-            "SELECT id
-             FROM swallowtail_photo_conversion_jobs
-             WHERE photo_id = :photo_id
-               AND derivative_type = :derivative_type
-               AND profile_version = :profile_version
-               AND status IN ('queued', 'processing')
-             ORDER BY id DESC
-             LIMIT 1",
-            [
-                'photo_id' => $photoId,
-                'derivative_type' => $derivativeType,
-                'profile_version' => $profileVersion,
-            ]
-        );
-
-        if ($existingJobId !== false && $existingJobId !== null) {
-            return (int)$existingJobId;
-        }
-
-        InterfaceDB::prepareExecute(
-            "INSERT INTO swallowtail_photo_conversion_jobs (
-                photo_id,
-                job_type,
-                derivative_type,
-                input_path,
-                pp3_path,
-                output_path,
-                output_storage_path,
-                output_storage_location_id,
-                output_width,
-                output_height,
-                profile_version,
-                requested_by_user_id,
-                priority,
-                status
-            ) VALUES (
-                :photo_id,
-                'derivative',
-                :derivative_type,
-                :input_path,
-                :pp3_path,
-                :output_path,
-                :output_storage_path,
-                :output_storage_location_id,
-                :output_width,
-                :output_height,
-                :profile_version,
-                :requested_by_user_id,
-                :priority,
-                'queued'
-            )",
-            [
-                'photo_id' => $photoId,
-                'derivative_type' => $derivativeType,
-                'input_path' => $this->normaliseRequiredPath($inputPath, 1000),
-                'pp3_path' => $this->normaliseOptionalPath($pp3Path, 1000),
-                'output_path' => $this->normaliseRequiredPath($outputPath, 1000),
-                'output_storage_path' => $this->normaliseRequiredPath($outputStoragePath, 500),
-                'output_storage_location_id' => $this->nullablePositiveInt($outputStorageLocationId),
-                'output_width' => $outputWidth,
-                'output_height' => $outputHeight,
-                'profile_version' => $profileVersion,
-                'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
-                'priority' => $priority,
-            ]
-        );
-
-        $jobId = $this->lastInsertId();
-        $this->notifyRedis($jobId, $derivativeType, $priority);
-
-        return $jobId;
-    }
-
-    public function enqueuePreviewRefresh(
+    public function enqueueFilteredRefresh(
         int $photoId,
         string $profilePath,
         int $profileVersion,
@@ -189,18 +83,17 @@ final class SwallowtailConversionQueueService
             return null;
         }
 
+        $storage = new SwallowtailStorageService();
         $sha256 = (string)($photo['original_sha256'] ?? '');
-        $storageLocationId = $this->nullablePositiveInt($photo['storage_location_id'] ?? null);
-        $storage = new SwallowtailStorageService($this->storageRootForLocation($storageLocationId));
-        $outputStoragePath = $storage->derivativeRelativePath($sha256, 'preview');
+        $base = (string)($photo['storage_base_location'] ?? '');
+        $filteredPath = $storage->imagePath($base, $sha256, 'filtered');
+        $sourcePath = $storage->imagePath($base, $sha256, 'source');
 
-        return $this->enqueueDerivativeJob(
+        $filteredJobId = $this->enqueueImageJob(
             $photoId,
-            'preview',
-            $storage->absolutePath((string)($photo['original_storage_path'] ?? '')),
-            $storage->absolutePath($outputStoragePath),
-            $outputStoragePath,
-            $storageLocationId,
+            'filtered',
+            $sourcePath,
+            $filteredPath,
             $profilePath,
             $profileVersion,
             'high',
@@ -208,11 +101,121 @@ final class SwallowtailConversionQueueService
             $outputWidth,
             $outputHeight
         );
+
+        $thumb = $this->dimensionsForImageType('thumbnail');
+        $this->enqueueImageJob(
+            $photoId,
+            'thumbnail',
+            $sourcePath,
+            $storage->imagePath($base, $sha256, 'thumbnail'),
+            $profilePath,
+            $profileVersion,
+            'normal',
+            $requestedByUserId,
+            $thumb['width'],
+            $thumb['height']
+        );
+
+        return $filteredJobId;
+    }
+
+    public function enqueueImageJob(
+        int $photoId,
+        string $imageType,
+        string $inputPath,
+        string $outputPath,
+        ?string $profilePath = null,
+        int $profileVersion = 1,
+        string $priority = 'normal',
+        ?int $requestedByUserId = null,
+        ?int $outputWidth = null,
+        ?int $outputHeight = null
+    ): ?int {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+            return null;
+        }
+
+        $imageType = $this->normaliseImageType($imageType);
+        $priority = $this->normalisePriority($priority);
+        $profileVersion = max(1, $profileVersion);
+        $outputWidth = $this->nullablePositiveInt($outputWidth);
+        $outputHeight = $this->nullablePositiveInt($outputHeight);
+
+        if (($outputWidth === null) !== ($outputHeight === null)) {
+            throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
+        }
+
+        $existingJobId = InterfaceDB::fetchColumn(
+            "SELECT id
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND profile_version = :profile_version
+               AND status IN ('queued', 'processing')
+             ORDER BY id DESC
+             LIMIT 1",
+            [
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+                'profile_version' => $profileVersion,
+            ]
+        );
+
+        if ($existingJobId !== false && $existingJobId !== null) {
+            return (int)$existingJobId;
+        }
+
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photo_conversion_jobs (
+                photo_id,
+                job_type,
+                image_type,
+                input_path,
+                profile_path,
+                output_path,
+                output_width,
+                output_height,
+                profile_version,
+                requested_by_user_id,
+                priority,
+                status
+            ) VALUES (
+                :photo_id,
+                'image',
+                :image_type,
+                :input_path,
+                :profile_path,
+                :output_path,
+                :output_width,
+                :output_height,
+                :profile_version,
+                :requested_by_user_id,
+                :priority,
+                'queued'
+            )",
+            [
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+                'input_path' => $this->normaliseRequiredPath($inputPath, 1000),
+                'profile_path' => $this->normaliseOptionalPath($profilePath, 1000),
+                'output_path' => $this->normaliseRequiredPath($outputPath, 1000),
+                'output_width' => $outputWidth,
+                'output_height' => $outputHeight,
+                'profile_version' => $profileVersion,
+                'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
+                'priority' => $priority,
+            ]
+        );
+
+        $jobId = $this->lastInsertId();
+        $this->notifyRedis($jobId, $imageType, $priority);
+
+        return $jobId;
     }
 
     public function queuedJobs(int $limit = 50): array
     {
-        if (!InterfaceDB::tableExists('swallowtail_photo_conversion_jobs')) {
+        if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
             return [];
         }
 
@@ -220,17 +223,16 @@ final class SwallowtailConversionQueueService
 
         return InterfaceDB::fetchAll(
             "SELECT *
-             FROM swallowtail_photo_conversion_jobs
+             FROM photo_conversion_jobs
              WHERE status = 'queued'
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
-               CASE derivative_type
+               CASE image_type
                  WHEN 'embedded' THEN 1
-                 WHEN 'preview' THEN 2
-                 WHEN 'thumbnail' THEN 3
-                 WHEN 'jpeg' THEN 4
-                 WHEN 'original_jpeg' THEN 5
-                 ELSE 6
+                 WHEN 'original' THEN 2
+                 WHEN 'filtered' THEN 3
+                 WHEN 'thumbnail' THEN 4
+                 ELSE 5
                END,
                CASE priority
                  WHEN 'high' THEN 1
@@ -242,7 +244,7 @@ final class SwallowtailConversionQueueService
         );
     }
 
-    private function notifyRedis(int $jobId, string $derivativeType, string $priority): void
+    private function notifyRedis(int $jobId, string $imageType, string $priority): void
     {
         $host = trim((string)AppConfigurationStore::get('swallowtail.redis.host', '127.0.0.1'));
         $port = (int)AppConfigurationStore::get('swallowtail.redis.port', 6379);
@@ -253,7 +255,7 @@ final class SwallowtailConversionQueueService
             return;
         }
 
-        $queue = $derivativeType === 'embedded' || $derivativeType === 'preview' || $priority === 'high' ? $urgentQueue : $normalQueue;
+        $queue = $imageType === 'embedded' || $imageType === 'filtered' || $priority === 'high' ? $urgentQueue : $normalQueue;
         if ($queue === '') {
             return;
         }
@@ -276,7 +278,7 @@ final class SwallowtailConversionQueueService
             fclose($socket);
 
             InterfaceDB::prepareExecute(
-                'UPDATE swallowtail_photo_conversion_jobs SET redis_notified_at = CURRENT_TIMESTAMP WHERE id = :id',
+                'UPDATE photo_conversion_jobs SET redis_notified_at = CURRENT_TIMESTAMP WHERE id = :id',
                 ['id' => $jobId]
             );
         } catch (Throwable) {
@@ -286,28 +288,14 @@ final class SwallowtailConversionQueueService
         }
     }
 
-    private function storageRootForLocation(?int $storageLocationId): string
+    private function normaliseImageType(string $imageType): string
     {
-        if ($storageLocationId === null || !InterfaceDB::tableExists('swallowtail_storage_locations')) {
-            return '';
+        $imageType = strtolower(trim($imageType));
+        if (!in_array($imageType, self::IMAGE_TYPES, true)) {
+            throw new InvalidArgumentException('Unsupported image type.');
         }
 
-        $root = InterfaceDB::fetchColumn(
-            'SELECT root_path FROM swallowtail_storage_locations WHERE id = :id LIMIT 1',
-            ['id' => $storageLocationId]
-        );
-
-        return is_scalar($root) ? (string)$root : '';
-    }
-
-    private function normaliseDerivativeType(string $derivativeType): string
-    {
-        $derivativeType = strtolower(trim($derivativeType));
-        if (!in_array($derivativeType, self::DERIVATIVE_TYPES, true)) {
-            throw new InvalidArgumentException('Unsupported derivative type.');
-        }
-
-        return $derivativeType;
+        return $imageType;
     }
 
     private function normalisePriority(string $priority): string
@@ -341,9 +329,9 @@ final class SwallowtailConversionQueueService
         return $value > 0 ? $value : null;
     }
 
-    private function dimensionsForDerivative(string $derivativeType): array
+    private function dimensionsForImageType(string $imageType): array
     {
-        if ($derivativeType !== 'thumbnail') {
+        if ($imageType !== 'thumbnail') {
             return ['width' => null, 'height' => null];
         }
 
