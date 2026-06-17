@@ -3251,6 +3251,49 @@ label {
   overflow-wrap: anywhere;
 }
 
+.storage-summary-dashboard {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(260px, 360px);
+  align-items: center;
+  gap: 18px;
+}
+
+.storage-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.storage-summary-metrics div {
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.storage-summary-metrics dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.storage-summary-metrics dd {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.storage-summary-chart {
+  min-width: 0;
+}
+
+.storage-summary-chart .chart {
+  width: 100%;
+  height: auto;
+}
+
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -3542,6 +3585,7 @@ label {
   .form-grid,
   .summary-grid,
   .chart-demo-grid,
+  .storage-summary-dashboard,
   .month-grid,
   .path-meta {
     grid-template-columns: 1fr;

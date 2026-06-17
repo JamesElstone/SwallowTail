@@ -32,6 +32,7 @@ final class _dashboard extends PageContextFramework
     public function cards(): array
     {
         return [
+            'storage_summary',
             'activity',
             'dashboard_notes',
             // 'dump_context',

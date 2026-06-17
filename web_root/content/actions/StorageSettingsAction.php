@@ -21,6 +21,28 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             ]]);
         }
 
+        if ((string)$request->input('storage_settings_action', 'update_settings') === 'set_location_excluded') {
+            $storageBaseLocation = trim((string)$request->input('storage_base_location', ''));
+            if ($storageBaseLocation === '') {
+                return new ActionResultFramework(false, ['storage.available'], [[
+                    'type' => 'error',
+                    'message' => 'Storage location was not supplied.',
+                ]]);
+            }
+
+            (new SwallowtailStorageLocationService())->setExcluded(
+                $storageBaseLocation,
+                $this->checkboxValue($request, 'is_excluded')
+            );
+
+            return ActionResultFramework::success(['storage.available'], [[
+                'type' => 'success',
+                'message' => $this->checkboxValue($request, 'is_excluded')
+                    ? 'Storage location excluded from new writes.'
+                    : 'Storage location returned to new writes.',
+            ]]);
+        }
+
         AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', $this->checkboxValue($request, 'store_on_root_partition'));
         AppConfigurationStore::set('swallowtail.storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
         AppConfigurationStore::set(

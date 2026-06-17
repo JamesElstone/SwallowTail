@@ -45,24 +45,26 @@ final class _storage_availableCard extends CardBaseFramework
 
         $html .= '<div class="storage-location-grid">';
         foreach ($locations as $location) {
-            $html .= $this->locationCard((array)$location);
+            $html .= $this->locationCard((array)$location, $context);
         }
 
         return $html . '</div>';
     }
 
-    private function locationCard(array $location): string
+    private function locationCard(array $location, array $context): string
     {
         $canWrite = !empty($location['can_write']);
         $isExcluded = !empty($location['is_excluded']);
         $isFull = !empty($location['is_full']);
         $label = (string)($location['label'] ?? 'Storage location');
+        $baseLocation = (string)($location['storage_base_location'] ?? '');
         $availableBytes = $location['available_bytes'] ?? null;
         $totalBytes = $location['total_bytes'] ?? null;
         $freePercent = $location['free_percent'] ?? null;
         $threshold = (float)($location['full_threshold_percent'] ?? 5);
         $statusClass = $canWrite ? 'success' : 'warning';
         $statusLabel = $canWrite ? 'Writable' : ($isExcluded ? 'Excluded' : ($isFull ? 'Below threshold' : 'Unavailable'));
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
 
         return '<article class="storage-location-card">
             <div class="storage-location-head">
@@ -88,6 +90,18 @@ final class _storage_availableCard extends CardBaseFramework
                 </div>
             </dl>
             <p class="storage-location-path">' . HelperFramework::escape((string)($location['root_path'] ?? '')) . '</p>
+            <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
+                ' . $this->hiddenFields($context) . '
+                <input type="hidden" name="card_action" value="StorageSettings">
+                <input type="hidden" name="storage_settings_action" value="set_location_excluded">
+                <input type="hidden" name="storage_base_location" value="' . HelperFramework::escape($baseLocation) . '">
+                <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+                <label class="checkbox-row">
+                    <input type="hidden" name="is_excluded" value="0">
+                    <input type="checkbox" name="is_excluded" value="1"' . ($isExcluded ? ' checked' : '') . ' data-submit-on-change="true">
+                    <span>Exclude from new writes</span>
+                </label>
+            </form>
         </article>';
     }
 
@@ -99,23 +113,35 @@ final class _storage_availableCard extends CardBaseFramework
         $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
 
         return '<form method="post" action="?page=settings" data-ajax="true" class="form-grid">
+            ' . $this->hiddenFields($context) . '
             <input type="hidden" name="card_action" value="StorageSettings">
+            <input type="hidden" name="storage_settings_action" value="update_settings">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
             <label class="checkbox-row">
                 <input type="hidden" name="store_on_root_partition" value="0">
-                <input type="checkbox" name="store_on_root_partition" value="1"' . ($storeOnRoot ? ' checked' : '') . ' onchange="this.form.requestSubmit()">
+                <input type="checkbox" name="store_on_root_partition" value="1"' . ($storeOnRoot ? ' checked' : '') . ' data-submit-on-change="true">
                 <span>Store on root partition</span>
             </label>
             <label class="checkbox-row">
                 <input type="hidden" name="round_robin_locations" value="0">
-                <input type="checkbox" name="round_robin_locations" value="1"' . ($roundRobin ? ' checked' : '') . ' onchange="this.form.requestSubmit()">
+                <input type="checkbox" name="round_robin_locations" value="1"' . ($roundRobin ? ' checked' : '') . ' data-submit-on-change="true">
                 <span>Round-Robin Storage between locations</span>
             </label>
             <label>
                 <span>Full threshold</span>
-                <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" onchange="this.form.requestSubmit()">
+                <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" data-submit-on-change="true">
             </label>
         </form>';
+    }
+
+    private function hiddenFields(array $context): string
+    {
+        $html = '';
+        foreach ((array)($context['page']['page_cards'] ?? []) as $cardKey) {
+            $html .= '<input type="hidden" name="cards[]" value="' . HelperFramework::escape((string)$cardKey) . '">';
+        }
+
+        return $html;
     }
 
     private function formatBytes(mixed $bytes): string

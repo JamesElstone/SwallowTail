@@ -23,16 +23,128 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
+});
+
+$harness->check(_dashboard::class, 'shows storage summary first on dashboard', function () use ($harness): void {
+    $cards = (new _dashboard())->cards();
+
+    $harness->assertSame('storage_summary', (string)($cards[0] ?? ''));
 });
 
 $harness->check(_settings::class, 'includes reusable storage card', function () use ($harness): void {
     $settings = new _settings();
 
     $harness->assertTrue(in_array('storage_available', $settings->cards(), true));
+});
+
+$harness->check(_storage_summaryCard::class, 'summarises included storage capacity for dashboard', function () use ($harness): void {
+    $card = new _storage_summaryCard();
+    $summaryMethod = new ReflectionMethod($card, 'summariseLocations');
+    $summaryMethod->setAccessible(true);
+
+    $summary = (array)$summaryMethod->invoke($card, [
+        [
+            'storage_base_location' => '/storage/1',
+            'total_bytes' => 1000,
+            'available_bytes' => 250,
+            'is_excluded' => false,
+            'can_write' => true,
+        ],
+        [
+            'storage_base_location' => '/storage/2',
+            'total_bytes' => 3000,
+            'available_bytes' => 750,
+            'is_excluded' => false,
+            'can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/3',
+            'total_bytes' => 9000,
+            'available_bytes' => 9000,
+            'is_excluded' => true,
+            'can_write' => true,
+        ],
+    ]);
+
+    $harness->assertSame(2, (int)$summary['included_locations']);
+    $harness->assertSame(1, (int)$summary['writable_locations']);
+    $harness->assertSame(4000, (int)$summary['total_bytes']);
+    $harness->assertSame(1000, (int)$summary['available_bytes']);
+    $harness->assertSame(3000, (int)$summary['used_bytes']);
+    $harness->assertSame(25.0, (float)$summary['free_percent']);
+
+    $chartMethod = new ReflectionMethod($card, 'capacityChart');
+    $chartMethod->setAccessible(true);
+    $chartHtml = (string)$chartMethod->invoke($card, $summary);
+
+    $harness->assertTrue(str_contains($chartHtml, 'chart-pie-slice'));
+    $harness->assertTrue(str_contains($chartHtml, 'Included storage capacity'));
+});
+
+
+$harness->check(_storage_availableCard::class, 'renders ajax settings and per-location exclusion controls', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ];
+
+    $settingsForm = new ReflectionMethod($card, 'settingsForm');
+    $settingsForm->setAccessible(true);
+    $settingsHtml = (string)$settingsForm->invoke($card, $context);
+
+    $harness->assertTrue(str_contains($settingsHtml, 'data-ajax="true"'));
+    $harness->assertTrue(str_contains($settingsHtml, 'name="card_action" value="StorageSettings"'));
+    $harness->assertTrue(str_contains($settingsHtml, 'name="storage_settings_action" value="update_settings"'));
+    $harness->assertTrue(str_contains($settingsHtml, 'data-submit-on-change="true"'));
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => true,
+        'is_full' => false,
+        'can_write' => false,
+    ], $context);
+
+    $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="set_location_excluded"'));
+    $harness->assertTrue(str_contains($locationHtml, 'name="storage_base_location" value="/storage/1"'));
+    $harness->assertTrue(str_contains($locationHtml, 'name="is_excluded" value="1" checked'));
+    $harness->assertTrue(str_contains($locationHtml, 'Exclude from new writes'));
+});
+
+$harness->check(StorageSettingsAction::class, 'returns flash messages for ajax storage settings failures', function () use ($harness): void {
+    $request = new RequestFramework(
+        ['page' => 'settings'],
+        [
+            'card_action' => 'StorageSettings',
+            'storage_settings_action' => 'update_settings',
+            'csrf_token' => 'invalid',
+        ],
+        ['REQUEST_METHOD' => 'POST'],
+        [],
+        [],
+        null,
+        []
+    );
+
+    $result = (new StorageSettingsAction())->handle($request, new PageServiceFramework(new AppService('')));
+
+    $harness->assertSame(false, $result->isSuccess());
+    $harness->assertSame(['storage.available'], $result->changedFacts());
+    $harness->assertTrue(str_contains((string)($result->flashMessages()[0]['message'] ?? ''), 'permission'));
 });
 
 $harness->check(_gallery::class, 'browse gallery thumbnails link to picture viewer', function () use ($harness): void {
