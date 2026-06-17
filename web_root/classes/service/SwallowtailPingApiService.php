@@ -30,18 +30,46 @@ final class SwallowtailPingApiService
             ], 503);
         }
 
+        if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
+            return $this->photoLibraryService->uploadTokenLockoutResponse();
+        }
+
         $token = $this->photoLibraryService->uploadTokenFromRequest($request);
         $remoteAddress = $request->remoteAddress();
         $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $remoteAddress);
+        $metadata = $this->photoLibraryService->uploadTokenAuditMetadata($request);
 
         if ($uploadToken === null) {
+            $this->photoLibraryService->recordUploadTokenUsage(
+                null,
+                $token,
+                $remoteAddress,
+                'upload_token_ping_failed',
+                false,
+                $this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress),
+                $metadata
+            );
+
+            if (!empty($this->photoLibraryService->recordFailedUploadTokenRequest($request)['is_blocked'])) {
+                return $this->photoLibraryService->uploadTokenLockoutResponse();
+            }
+
             return ResponseFramework::json([
                 'success' => false,
-                'errors' => [$this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress)],
+                'errors' => ['Bearer upload token was rejected.'],
             ], 401);
         }
 
         $this->photoLibraryService->markUploadTokenUsed((int)$uploadToken['id']);
+        $this->photoLibraryService->recordUploadTokenUsage(
+            $uploadToken,
+            $token,
+            $remoteAddress,
+            'upload_token_ping_succeeded',
+            true,
+            'Upload token ping succeeded.',
+            $metadata
+        );
 
         return ResponseFramework::json([
             'success' => true,

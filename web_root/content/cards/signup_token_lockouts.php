@@ -16,12 +16,12 @@ final class _signup_token_lockoutsCard extends CardBaseFramework
 
     public function title(): string
     {
-        return 'Signup Token Lockouts';
+        return 'Token Lockouts';
     }
 
     public function helper(array $context): string
     {
-        return 'Active client IP blocks caused by repeated invalid account completion token attempts.';
+        return 'Active client IP blocks caused by repeated invalid signup or API token attempts.';
     }
 
     public function services(): array
@@ -75,9 +75,9 @@ final class _signup_token_lockoutsCard extends CardBaseFramework
     private function table(array $context): TableFramework
     {
         return TableFramework::make($this->key(), $this->rows($context))
-            ->filename('signup-token-lockouts')
+            ->filename('token-lockouts')
             ->exportLimit(200)
-            ->empty('No client IPs are currently blocked for signup token attempts.')
+            ->empty('No client IPs are currently blocked for token attempts.')
             ->textColumn('client_ip', 'Client IP')
             ->textColumn('failed_attempts', 'Attempts', fallback: '0', exportType: 'number')
             ->textColumn('window_started_at', 'Window Started')

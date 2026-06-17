@@ -89,14 +89,14 @@ final class _logs extends PageContextFramework
         if (!$canReset) {
             return new ActionResultFramework(false, ['signup.token.lockouts'], [[
                 'type' => 'error',
-                'message' => 'You do not have permission to reset signup token lockouts.',
+                'message' => 'You do not have permission to reset token lockouts.',
             ]]);
         }
 
         $clearedRows = (new SignupTokenRateLimitService())->clearBlock((string)$request->input('client_ip', ''));
         $message = $clearedRows > 0
-            ? 'Signup token lockout reset. The client can try the invitation link again.'
-            : 'No matching signup token lockout was found.';
+            ? 'Token lockout reset. The client can try again.'
+            : 'No matching token lockout was found.';
 
         return ActionResultFramework::success(['signup.token.lockouts'], [[
             'type' => 'success',

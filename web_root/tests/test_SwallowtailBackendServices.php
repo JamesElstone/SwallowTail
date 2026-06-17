@@ -36,6 +36,7 @@ $swallowtailCreateSqliteSchema = static function (): void {
         'swallowtail_storage_locations',
         'swallowtail_api_upload_token_cidrs',
         'swallowtail_api_upload_tokens',
+        'signup_token_rate_limits',
         'swallowtail_events',
     ] as $table) {
         InterfaceDB::execute('DROP TABLE IF EXISTS ' . $table);
@@ -73,6 +74,18 @@ $swallowtailCreateSqliteSchema = static function (): void {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (token_id, cidr)
+    )");
+
+    InterfaceDB::execute("CREATE TABLE signup_token_rate_limits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_ip TEXT NOT NULL UNIQUE,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        window_started_at TEXT NULL,
+        last_failed_at TEXT NULL,
+        blocked_at TEXT NULL,
+        block_expires_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 
     InterfaceDB::execute("CREATE TABLE swallowtail_storage_locations (
@@ -197,6 +210,8 @@ $swallowtailWriteRawFixture = static function (string $path, string $extension =
 };
 
 $swallowtailCreateSpiceBushUserSchema = static function (): void {
+    InterfaceDB::execute('DROP TABLE IF EXISTS user_account_audit');
+    InterfaceDB::execute('DROP TABLE IF EXISTS user_login_rate_limits');
     InterfaceDB::execute('DROP TABLE IF EXISTS user_totp');
     InterfaceDB::execute('DROP TABLE IF EXISTS users');
     InterfaceDB::execute("CREATE TABLE users (
@@ -240,6 +255,35 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
+    InterfaceDB::execute("CREATE TABLE user_account_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        affected_user_id INTEGER NOT NULL,
+        actor_user_id INTEGER NULL,
+        action_type TEXT NOT NULL,
+        reason TEXT NULL,
+        details_json TEXT NULL,
+        device_id TEXT NULL,
+        ip_address TEXT NULL,
+        user_agent TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+    InterfaceDB::execute("CREATE TABLE user_login_rate_limits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email_address TEXT NOT NULL,
+        scope_type TEXT NOT NULL DEFAULT 'email',
+        scope_key TEXT NULL,
+        user_id INTEGER NULL,
+        consecutive_failed_password_attempts INTEGER NOT NULL DEFAULT 0,
+        failed_attempt_window_started_at TEXT NULL,
+        last_failed_password_attempt_at TEXT NULL,
+        next_allowed_login_at TEXT NULL,
+        locked_at TEXT NULL,
+        lock_reason TEXT NULL,
+        lock_expires_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (scope_type, scope_key)
+    )");
 };
 
 $harness->check(SwallowtailStorageService::class, 'stores originals outside web_root using checksum paths', function () use ($harness): void {
@@ -259,6 +303,50 @@ $harness->check(SwallowtailStorageService::class, 'stores originals outside web_
     }
 
     throw new RuntimeException('Storage service allowed a web_root storage path.');
+});
+
+$harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to PHP upload limits', function () use ($harness, $swallowtailWriteRawFixture): void {
+    $harness->assertSame(52428800, SwallowtailPhotoIngestService::phpIniBytes('50M'));
+    $harness->assertSame(1073741824, SwallowtailPhotoIngestService::phpIniBytes('1G'));
+    $harness->assertSame(null, SwallowtailPhotoIngestService::phpIniBytes('-1'));
+    $harness->assertSame(null, SwallowtailPhotoIngestService::phpIniBytes('not-a-size'));
+
+    $appLimit = 1024 * 1024 * 1024;
+    $uploadLimited = new SwallowtailPhotoIngestService(
+        appMaxRawBytes: $appLimit,
+        phpUploadLimits: ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+    );
+    $postLimited = new SwallowtailPhotoIngestService(
+        appMaxRawBytes: $appLimit,
+        phpUploadLimits: ['upload_max_filesize' => '64M', 'post_max_size' => '50M']
+    );
+    $unlimited = new SwallowtailPhotoIngestService(
+        appMaxRawBytes: $appLimit,
+        phpUploadLimits: ['upload_max_filesize' => '-1', 'post_max_size' => 'not-a-size']
+    );
+
+    $harness->assertSame(52428800, $uploadLimited->maxRawBytes());
+    $harness->assertSame(52428800, $postLimited->maxRawBytes());
+    $harness->assertSame($appLimit, $unlimited->maxRawBytes());
+
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-limit-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW limit fixture.');
+    }
+
+    try {
+        $swallowtailWriteRawFixture($source, 'cr2');
+        $smallLimit = new SwallowtailPhotoIngestService(
+            appMaxRawBytes: 64,
+            phpUploadLimits: ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+        );
+        $validation = $smallLimit->validateRawFile($source, 'IMG_LIMIT.CR2');
+
+        $harness->assertTrue(empty($validation['valid']));
+        $harness->assertTrue(in_array('RAW file exceeded the configured upload limit.', (array)($validation['errors'] ?? []), true));
+    } finally {
+        @unlink($source);
+    }
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unassigned photos and queues conversion', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -455,10 +543,163 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
     @unlink($source);
 });
 
+$harness->check(SwallowtailPingApiService::class, 'keeps token diagnostics out of ping responses and records them in account audit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO users (
+            id,
+            display_name,
+            email_address,
+            password_hash,
+            otp_required,
+            is_active,
+            account_status
+        ) VALUES (
+            :id,
+            :display_name,
+            :email_address,
+            :password_hash,
+            0,
+            1,
+            'active'
+        )",
+        [
+            'id' => 44,
+            'display_name' => 'Token Account',
+            'email_address' => 'token-account@example.test',
+            'password_hash' => 'not-used',
+        ]
+    );
+
+    $library = new SwallowtailPhotoLibraryService();
+    $allowedToken = $library->createUploadToken('Allowed bridge', 44, null, ['203.0.113.0/24']);
+    $blockedToken = $library->createUploadToken('Blocked bridge', 44, null, ['198.51.100.0/24']);
+    $listedTokens = $library->listUploadTokens();
+    $harness->assertSame('Token Account', (string)($listedTokens[0]['created_by_user_label'] ?? ''));
+    $harness->assertSame('token-account@example.test', (string)($listedTokens[0]['created_by_user_email_address'] ?? ''));
+    $service = new SwallowtailPingApiService($library);
+
+    $successRequest = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $allowedToken['token'],
+            'User-Agent' => 'spicebush-test',
+            'X-Swallowtail-Device-ID' => 'bridge-a',
+        ],
+        null,
+        []
+    );
+    $successPayload = json_decode($service->handlePing($successRequest)->body(), true);
+
+    $harness->assertTrue(is_array($successPayload));
+    $harness->assertTrue(!empty($successPayload['success']));
+    $harness->assertTrue(!empty($successPayload['pong']));
+
+    $failureRequest = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $blockedToken['token'],
+            'User-Agent' => 'spicebush-test',
+            'X-Swallowtail-Device-ID' => 'bridge-b',
+        ],
+        null,
+        []
+    );
+    $failureResponse = $service->handlePing($failureRequest);
+    $failurePayload = json_decode($failureResponse->body(), true);
+
+    $harness->assertTrue(is_array($failurePayload));
+    $harness->assertTrue(empty($failurePayload['success']));
+    $harness->assertSame('Bearer upload token was rejected.', (string)(($failurePayload['errors'] ?? [])[0] ?? ''));
+
+    $auditRows = (new UserHistoryStore())->fetchRecentAccountAudit(10);
+    $harness->assertSame(2, count($auditRows));
+    $harness->assertSame('upload_token_ping_failed', (string)($auditRows[0]['action_type'] ?? ''));
+    $harness->assertSame('Token Account', (string)($auditRows[0]['affected_user_display_name'] ?? ''));
+    $harness->assertTrue(str_contains((string)($auditRows[0]['reason'] ?? ''), 'not allowed from this network'));
+    $harness->assertTrue(str_contains((string)($auditRows[0]['details_json'] ?? ''), 'Blocked bridge'));
+    $harness->assertSame('upload_token_ping_succeeded', (string)($auditRows[1]['action_type'] ?? ''));
+    $harness->assertTrue(str_contains((string)($auditRows[1]['details_json'] ?? ''), 'Allowed bridge'));
+
+    $tokenLockoutRow = InterfaceDB::fetchOne(
+        'SELECT failed_attempts FROM signup_token_rate_limits WHERE client_ip = :client_ip LIMIT 1',
+        ['client_ip' => '203.0.113.15']
+    );
+    $harness->assertTrue(is_array($tokenLockoutRow));
+    $harness->assertSame(1, (int)($tokenLockoutRow['failed_attempts'] ?? 0));
+});
+
+$harness->check(SwallowtailPingApiService::class, 'locks out repeated unknown upload token failures by client IP', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $clientIp = '203.0.113.241';
+    $pingService = new SwallowtailPingApiService();
+
+    for ($attempt = 1; $attempt <= 4; $attempt++) {
+        $request = new RequestFramework(
+            [],
+            [],
+            ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $clientIp],
+            [],
+            ['Authorization' => 'Bearer missing-token-' . $attempt],
+            null,
+            []
+        );
+        $payload = json_decode($pingService->handlePing($request)->body(), true);
+
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(empty($payload['success']));
+        $harness->assertSame('Bearer upload token was rejected.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    }
+
+    $lockedRequest = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $clientIp],
+        [],
+        ['Authorization' => 'Bearer missing-token-5'],
+        null,
+        []
+    );
+    $lockedPayload = json_decode($pingService->handlePing($lockedRequest)->body(), true);
+
+    $harness->assertTrue(is_array($lockedPayload));
+    $harness->assertTrue(empty($lockedPayload['success']));
+    $harness->assertSame('Too many invalid token attempts. Please try again later.', (string)(($lockedPayload['errors'] ?? [])[0] ?? ''));
+
+    $activeBlocks = (new SignupTokenRateLimitService())->activeBlocks();
+    $harness->assertTrue(in_array($clientIp, array_map(static fn(array $row): string => (string)($row['client_ip'] ?? ''), $activeBlocks), true));
+
+    $blockedChecksumRequest = new RequestFramework(
+        ['algorithm' => 'sha256'],
+        [],
+        ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => $clientIp],
+        [],
+        ['Authorization' => 'Bearer missing-token-6'],
+        null,
+        []
+    );
+    $blockedChecksumPayload = json_decode((new SwallowtailQuickChecksumApiService())->handleCheck($blockedChecksumRequest)->body(), true);
+
+    $harness->assertTrue(is_array($blockedChecksumPayload));
+    $harness->assertTrue(empty($blockedChecksumPayload['success']));
+    $harness->assertSame('Too many invalid token attempts. Please try again later.', (string)(($blockedChecksumPayload['errors'] ?? [])[0] ?? ''));
+});
+
 $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'creates an upload token for a user allowed to manage upload tokens', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
     $swallowtailCreateSqliteSchema();
     $swallowtailCreateSpiceBushUserSchema();
 
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = is_file($configPath) ? (string)file_get_contents($configPath) : '';
     $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-' . bin2hex(random_bytes(6)) . '.keys';
     $auth = new UserAuthenticationService($securityPath, [
         'memory_cost' => 8192,
@@ -467,6 +708,12 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'creates an u
     ]);
 
     try {
+        AppConfigurationStore::setWebEnvironmentSettings([
+            'base_url_override' => 'https://swallowtail.example.test',
+            'trusted_proxy_ips' => [],
+            'client_ip_headers' => ['X-Forwarded-For', 'X-Real-IP'],
+        ]);
+
         $created = $auth->createUser('SpiceBush Admin', 'spicebush-admin@example.test', 'SpiceBush Pass 1!', true);
         $userId = (int)($created['user_id'] ?? 0);
         UserAuthenticationService::forgetUserByIdCache($userId);
@@ -502,6 +749,217 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'creates an u
         $harness->assertSame('https://swallowtail.example.test/api', (string)($payload['api_url'] ?? ''));
         $harness->assertSame(['203.0.113.15/32'], (array)($payload['cidrs'] ?? []));
         $harness->assertTrue((new SwallowtailPhotoLibraryService())->authenticateUploadToken((string)$payload['token'], '203.0.113.15') !== null);
+    } finally {
+        if (is_file($securityPath)) {
+            unlink($securityPath);
+        }
+        if ($originalConfig !== '') {
+            file_put_contents($configPath, $originalConfig);
+            AppConfigurationStore::config(true);
+        }
+    }
+});
+
+$harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects registration when API URL cannot be trusted', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = is_file($configPath) ? (string)file_get_contents($configPath) : '';
+    $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-untrusted-url-' . bin2hex(random_bytes(6)) . '.keys';
+    $auth = new UserAuthenticationService($securityPath, [
+        'memory_cost' => 8192,
+        'time_cost' => 1,
+        'threads' => 1,
+    ]);
+
+    try {
+        AppConfigurationStore::setWebEnvironmentSettings([
+            'base_url_override' => '',
+            'trusted_proxy_ips' => [],
+            'client_ip_headers' => ['X-Forwarded-For', 'X-Real-IP'],
+        ]);
+
+        $created = $auth->createUser('SpiceBush Admin', 'spicebush-untrusted-url@example.test', 'SpiceBush Pass 1!', true);
+        $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
+        InterfaceDB::prepareExecute(
+            'UPDATE users SET role_id = :role_id WHERE id = :id',
+            ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
+        );
+        UserAuthenticationService::forgetUserByIdCache($userId);
+
+        $request = new RequestFramework(
+            [],
+            [],
+            ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'HTTPS' => 'on', 'HTTP_HOST' => 'swallowtail.example.test'],
+            [],
+            ['Content-Type' => 'application/json', 'Host' => 'swallowtail.example.test'],
+            json_encode([
+                'username' => 'spicebush-untrusted-url@example.test',
+                'password' => 'SpiceBush Pass 1!',
+                'device_id' => 'spicebush-test-rig',
+            ], JSON_THROW_ON_ERROR),
+            []
+        );
+        $service = new SwallowtailSpiceBushRegistrationApiService(
+            $auth,
+            new SwallowtailPhotoLibraryService(),
+            new CardAccessFramework(new RoleRepository(), $auth)
+        );
+        $response = $service->handleRegister($request);
+        $payload = json_decode($response->body(), true);
+
+        $harness->assertSame(503, $response->statusCode());
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(empty($payload['success']));
+        $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'External Base Web URL'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+    } finally {
+        if (is_file($securityPath)) {
+            unlink($securityPath);
+        }
+        if ($originalConfig !== '') {
+            file_put_contents($configPath, $originalConfig);
+            AppConfigurationStore::config(true);
+        }
+    }
+});
+
+$harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'uses forwarded API URL only from trusted reverse proxies', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = is_file($configPath) ? (string)file_get_contents($configPath) : '';
+    $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-trusted-proxy-' . bin2hex(random_bytes(6)) . '.keys';
+    $auth = new UserAuthenticationService($securityPath, [
+        'memory_cost' => 8192,
+        'time_cost' => 1,
+        'threads' => 1,
+    ]);
+
+    try {
+        AppConfigurationStore::setWebEnvironmentSettings([
+            'base_url_override' => '',
+            'trusted_proxy_ips' => ['198.51.100.10'],
+            'client_ip_headers' => ['X-Forwarded-For', 'X-Real-IP'],
+        ]);
+
+        $created = $auth->createUser('SpiceBush Admin', 'spicebush-trusted-proxy@example.test', 'SpiceBush Pass 1!', true);
+        $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
+        InterfaceDB::prepareExecute(
+            'UPDATE users SET role_id = :role_id WHERE id = :id',
+            ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
+        );
+        UserAuthenticationService::forgetUserByIdCache($userId);
+
+        $request = new RequestFramework(
+            [],
+            [],
+            ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '198.51.100.10', 'HTTP_HOST' => 'internal.invalid'],
+            [],
+            [
+                'Content-Type' => 'application/json',
+                'Host' => 'internal.invalid',
+                'X-Forwarded-Host' => 'swallowtail.example.test:8443',
+                'X-Forwarded-Proto' => 'https',
+            ],
+            json_encode([
+                'username' => 'spicebush-trusted-proxy@example.test',
+                'password' => 'SpiceBush Pass 1!',
+                'device_id' => 'spicebush-test-rig',
+                'cidrs' => ['203.0.113.15/32'],
+            ], JSON_THROW_ON_ERROR),
+            []
+        );
+        $service = new SwallowtailSpiceBushRegistrationApiService(
+            $auth,
+            new SwallowtailPhotoLibraryService(),
+            new CardAccessFramework(new RoleRepository(), $auth)
+        );
+        $payload = json_decode($service->handleRegister($request)->body(), true);
+
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(!empty($payload['success']));
+        $harness->assertSame('https://swallowtail.example.test:8443/api', (string)($payload['api_url'] ?? ''));
+        $harness->assertTrue(str_starts_with((string)($payload['token'] ?? ''), 'stup_'));
+        $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+    } finally {
+        if (is_file($securityPath)) {
+            unlink($securityPath);
+        }
+        if ($originalConfig !== '') {
+            file_put_contents($configPath, $originalConfig);
+            AppConfigurationStore::config(true);
+        }
+    }
+});
+
+$harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'records failed registration passwords in the login rate limit table', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-rate-limit-' . bin2hex(random_bytes(6)) . '.keys';
+    $auth = new UserAuthenticationService($securityPath, [
+        'memory_cost' => 8192,
+        'time_cost' => 1,
+        'threads' => 1,
+    ]);
+
+    try {
+        $created = $auth->createUser('SpiceBush Admin', 'spicebush-rate-limit@example.test', 'SpiceBush Pass 1!', true);
+        $userId = (int)($created['user_id'] ?? 0);
+        UserAuthenticationService::forgetUserByIdCache($userId);
+        InterfaceDB::prepareExecute(
+            'UPDATE users SET role_id = :role_id WHERE id = :id',
+            ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID, 'id' => $userId]
+        );
+        UserAuthenticationService::forgetUserByIdCache($userId);
+
+        $service = new SwallowtailSpiceBushRegistrationApiService(
+            $auth,
+            new SwallowtailPhotoLibraryService(),
+            new CardAccessFramework(new RoleRepository(), $auth)
+        );
+
+        $payload = [];
+        for ($attempt = 0; $attempt < 3; $attempt += 1) {
+            $request = new RequestFramework(
+                [],
+                [],
+                ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'HTTP_HOST' => 'swallowtail.example.test'],
+                [],
+                ['Content-Type' => 'application/json', 'Host' => 'swallowtail.example.test'],
+                json_encode([
+                    'username' => 'spicebush-rate-limit@example.test',
+                    'password' => 'wrong-password',
+                    'device_id' => 'spicebush-test-rig',
+                ], JSON_THROW_ON_ERROR),
+                []
+            );
+            $payload = json_decode($service->handleRegister($request)->body(), true);
+        }
+
+        $harness->assertTrue(is_array($payload));
+        $harness->assertTrue(empty($payload['success']));
+        $harness->assertTrue(str_contains(implode(' ', (array)($payload['errors'] ?? [])), 'Please wait'));
+        $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_api_upload_tokens'));
+
+        $emailLimit = InterfaceDB::fetchOne(
+            "SELECT consecutive_failed_password_attempts, user_id, next_allowed_login_at
+             FROM user_login_rate_limits
+             WHERE scope_type = 'email'
+               AND scope_key = :scope_key
+             LIMIT 1",
+            ['scope_key' => 'spicebush-rate-limit@example.test']
+        );
+
+        $harness->assertTrue(is_array($emailLimit));
+        $harness->assertSame(3, (int)($emailLimit['consecutive_failed_password_attempts'] ?? 0));
+        $harness->assertSame($userId, (int)($emailLimit['user_id'] ?? 0));
+        $harness->assertTrue(trim((string)($emailLimit['next_allowed_login_at'] ?? '')) !== '');
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
@@ -596,6 +1054,8 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts vali
     $swallowtailCreateSqliteSchema();
     $swallowtailCreateSpiceBushUserSchema();
 
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = is_file($configPath) ? (string)file_get_contents($configPath) : '';
     $securityPath = APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'spicebush-register-otp-valid-' . bin2hex(random_bytes(6)) . '.keys';
     $auth = new UserAuthenticationService($securityPath, [
         'memory_cost' => 8192,
@@ -604,6 +1064,12 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts vali
     ]);
 
     try {
+        AppConfigurationStore::setWebEnvironmentSettings([
+            'base_url_override' => 'https://swallowtail.example.test',
+            'trusted_proxy_ips' => [],
+            'client_ip_headers' => ['X-Forwarded-For', 'X-Real-IP'],
+        ]);
+
         $created = $auth->createUser('SpiceBush OTP Admin', 'spicebush-otp-valid@example.test', 'SpiceBush Pass 1!', true);
         $userId = (int)($created['user_id'] ?? 0);
         UserAuthenticationService::forgetUserByIdCache($userId);
@@ -680,6 +1146,10 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'accepts vali
     } finally {
         if (is_file($securityPath)) {
             unlink($securityPath);
+        }
+        if ($originalConfig !== '') {
+            file_put_contents($configPath, $originalConfig);
+            AppConfigurationStore::config(true);
         }
     }
 });
@@ -977,6 +1447,209 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue((int)(($payload['conversion_jobs']['thumbnail'] ?? [])['job_id'] ?? 0) > 0);
     $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads when content length exceeds RAW limit', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-content-length';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary API content length storage', $root);
+
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'CONTENT_LENGTH' => '65'],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $token['token'],
+            'X-Swallowtail-Filename' => 'IMG_0004.CR2',
+            'User-Agent' => 'swallowtail-test',
+        ],
+        null,
+        []
+    );
+
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService($root),
+            $library,
+            new SwallowtailConversionQueueService(),
+            64,
+            ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+        ),
+        $library
+    );
+    $missingInput = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'missing-swallowtail-raw-input';
+    $response = $service->handleUpload($request, [], $missingInput);
+    $payload = json_decode($response->body(), true);
+
+    $harness->assertSame(413, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(empty($payload['success']));
+    $harness->assertSame('RAW upload exceeded the configured size limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming when RAW limit is exceeded', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-stream-limit';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary API stream limit storage', $root);
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-stream-test-');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    $swallowtailWriteRawFixture($source, 'cr2');
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'CONTENT_LENGTH' => '64'],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $token['token'],
+            'X-Swallowtail-Filename' => 'IMG_0004.CR2',
+            'User-Agent' => 'swallowtail-test',
+        ],
+        null,
+        []
+    );
+
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService($root),
+            $library,
+            new SwallowtailConversionQueueService(),
+            64,
+            ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+        ),
+        $library
+    );
+    $temporaryPattern = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'swallowtail-raw-*';
+    $before = glob($temporaryPattern) ?: [];
+    sort($before);
+    $response = $service->handleUpload($request, [], $source);
+    $after = glob($temporaryPattern) ?: [];
+    sort($after);
+    $payload = json_decode($response->body(), true);
+
+    $harness->assertSame(413, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(empty($payload['success']));
+    $harness->assertSame('RAW upload exceeded the configured size limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    $harness->assertSame($before, $after);
+    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'accepts token authenticated raw body uploads under RAW limit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-raw-body';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary API raw body storage', $root);
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-body-test-');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    $swallowtailWriteRawFixture($source, 'cr2');
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'CONTENT_LENGTH' => (string)filesize($source)],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $token['token'],
+            'X-Swallowtail-Filename' => 'IMG_0004.CR2',
+            'User-Agent' => 'swallowtail-test',
+        ],
+        null,
+        []
+    );
+
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService($root),
+            $library,
+            new SwallowtailConversionQueueService(),
+            4096,
+            ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+        ),
+        $library
+    );
+    $response = $service->handleUpload($request, [], $source);
+    $payload = json_decode($response->body(), true);
+
+    $harness->assertSame(201, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(!empty($payload['success']));
+    $harness->assertSame('uploaded', $payload['status'] ?? null);
+    $harness->assertSame(1, InterfaceDB::tableRowCount('swallowtail_photos'));
+    $harness->assertSame(1, InterfaceDB::countWhereNotNull('swallowtail_api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'rejects multipart RAW uploads over effective RAW limit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-multipart-limit';
+    (new SwallowtailStorageLocationService())->registerLocation('Primary API multipart limit storage', $root);
+    $source = tempnam(sys_get_temp_dir(), 'swallowtail-multipart-test-');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    $swallowtailWriteRawFixture($source, 'cr2');
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15'],
+        [],
+        ['Authorization' => 'Bearer ' . $token['token'], 'User-Agent' => 'swallowtail-test'],
+        null,
+        []
+    );
+
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService($root),
+            $library,
+            new SwallowtailConversionQueueService(),
+            64,
+            ['upload_max_filesize' => '50M', 'post_max_size' => '64M']
+        ),
+        $library
+    );
+    $response = $service->handleUpload($request, [
+        'raw_file' => [
+            'tmp_name' => $source,
+            'name' => 'IMG_0004.CR2',
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($source),
+        ],
+    ]);
+    $payload = json_decode($response->body(), true);
+
+    $harness->assertSame(400, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(empty($payload['success']));
+    $harness->assertSame('RAW file exceeded the configured upload limit.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('swallowtail_photos'));
 
     @unlink($source);
 });

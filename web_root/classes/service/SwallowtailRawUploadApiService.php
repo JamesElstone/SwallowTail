@@ -31,21 +31,60 @@ final class SwallowtailRawUploadApiService
             ], 503);
         }
 
+        if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
+            return $this->photoLibraryService->uploadTokenLockoutResponse();
+        }
+
         $token = $this->photoLibraryService->uploadTokenFromRequest($request);
         $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $request->remoteAddress());
+        $remoteAddress = $request->remoteAddress();
+        $metadata = $this->photoLibraryService->uploadTokenAuditMetadata($request);
 
         if ($uploadToken === null) {
+            $this->photoLibraryService->recordUploadTokenUsage(
+                null,
+                $token,
+                $remoteAddress,
+                'upload_token_raw_upload_failed',
+                false,
+                $this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress),
+                $metadata
+            );
+
+            if (!empty($this->photoLibraryService->recordFailedUploadTokenRequest($request)['is_blocked'])) {
+                return $this->photoLibraryService->uploadTokenLockoutResponse();
+            }
+
             return ResponseFramework::json([
                 'success' => false,
                 'errors' => ['Bearer upload token was missing, invalid, expired, disabled, or not allowed from this network.'],
             ], 401);
         }
 
+        $this->photoLibraryService->recordUploadTokenUsage(
+            $uploadToken,
+            $token,
+            $remoteAddress,
+            'upload_token_raw_upload_succeeded',
+            true,
+            'Upload token RAW upload request was accepted.',
+            $metadata
+        );
+
         $temporaryFile = null;
         $upload = $this->uploadFileFromRequest($files);
 
         if ($upload === null) {
-            $temporaryFile = $this->copyInputStreamToTemporaryFile($inputStream);
+            $maxRawBytes = $this->photoIngestService->maxRawBytes();
+            if ($this->contentLengthExceedsRawLimit($request, $maxRawBytes)) {
+                return $this->rawUploadLimitResponse();
+            }
+
+            try {
+                $temporaryFile = $this->copyInputStreamToTemporaryFile($inputStream, $maxRawBytes);
+            } catch (LengthException) {
+                return $this->rawUploadLimitResponse();
+            }
             $upload = [
                 'tmp_name' => $temporaryFile,
                 'name' => $this->filenameFromRequest($request),
@@ -136,7 +175,7 @@ final class SwallowtailRawUploadApiService
         return $filename !== '' ? $filename : 'upload.CR2';
     }
 
-    private function copyInputStreamToTemporaryFile(string $inputStream): string
+    private function copyInputStreamToTemporaryFile(string $inputStream, int $maxBytes): string
     {
         $temporaryFile = tempnam(sys_get_temp_dir(), 'swallowtail-raw-');
         if (!is_string($temporaryFile)) {
@@ -157,11 +196,60 @@ final class SwallowtailRawUploadApiService
             throw new RuntimeException('Unable to open RAW upload stream.');
         }
 
-        stream_copy_to_stream($source, $destination);
+        $bytesCopied = 0;
+        while (!feof($source)) {
+            $chunk = fread($source, 1024 * 1024);
+            if ($chunk === false) {
+                fclose($source);
+                fclose($destination);
+                @unlink($temporaryFile);
+                throw new RuntimeException('Unable to read RAW upload stream.');
+            }
+
+            if ($chunk === '') {
+                continue;
+            }
+
+            $chunkBytes = strlen($chunk);
+            if ($bytesCopied + $chunkBytes > $maxBytes) {
+                fclose($source);
+                fclose($destination);
+                @unlink($temporaryFile);
+                throw new LengthException('RAW upload exceeded the configured size limit.');
+            }
+
+            $written = fwrite($destination, $chunk);
+            if ($written === false || $written !== $chunkBytes) {
+                fclose($source);
+                fclose($destination);
+                @unlink($temporaryFile);
+                throw new RuntimeException('Unable to write RAW upload stream.');
+            }
+
+            $bytesCopied += $chunkBytes;
+        }
         fclose($source);
         fclose($destination);
 
         return $temporaryFile;
+    }
+
+    private function contentLengthExceedsRawLimit(RequestFramework $request, int $maxBytes): bool
+    {
+        $value = trim((string)$request->server('CONTENT_LENGTH', (string)$request->header('Content-Length', '')));
+        if ($value === '' || preg_match('/^\d+$/', $value) !== 1) {
+            return false;
+        }
+
+        return (int)$value > $maxBytes;
+    }
+
+    private function rawUploadLimitResponse(): ResponseFramework
+    {
+        return ResponseFramework::json([
+            'success' => false,
+            'errors' => ['RAW upload exceeded the configured size limit.'],
+        ], 413);
     }
 
     private function uploadErrorMessage(int $errorCode): string

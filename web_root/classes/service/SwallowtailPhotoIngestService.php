@@ -15,8 +15,60 @@ final class SwallowtailPhotoIngestService
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
         private readonly SwallowtailConversionQueueService $conversionQueueService = new SwallowtailConversionQueueService(),
-        private readonly int $maxRawBytes = self::MAX_RAW_BYTES,
+        private readonly int $appMaxRawBytes = self::MAX_RAW_BYTES,
+        private readonly ?array $phpUploadLimits = null,
     ) {
+    }
+
+    public function maxRawBytes(): int
+    {
+        $limits = [max(1, $this->appMaxRawBytes)];
+
+        foreach (['upload_max_filesize', 'post_max_size'] as $key) {
+            $bytes = self::phpIniBytes($this->phpUploadLimit($key));
+            if ($bytes !== null && $bytes > 0) {
+                $limits[] = $bytes;
+            }
+        }
+
+        return min($limits);
+    }
+
+    public static function phpIniBytes(mixed $value): ?int
+    {
+        if (!is_scalar($value) && $value !== null) {
+            return null;
+        }
+
+        $value = strtolower(trim((string)$value));
+        if ($value === '' || str_starts_with($value, '-')) {
+            return null;
+        }
+
+        if (preg_match('/^(\d+(?:\.\d+)?)\s*([kmgtpezy]?)b?$/i', $value, $matches) !== 1) {
+            return null;
+        }
+
+        $number = (float)$matches[1];
+        if ($number <= 0) {
+            return null;
+        }
+
+        $powers = [
+            '' => 0,
+            'k' => 1,
+            'm' => 2,
+            'g' => 3,
+            't' => 4,
+            'p' => 5,
+            'e' => 6,
+            'z' => 7,
+            'y' => 8,
+        ];
+        $power = $powers[strtolower((string)($matches[2] ?? ''))] ?? 0;
+        $bytes = $number * (1024 ** $power);
+
+        return $bytes >= PHP_INT_MAX ? PHP_INT_MAX : (int)floor($bytes);
     }
 
     public function ingestLocalRawFile(string $sourcePath, string $originalFilename, array $context = []): array
@@ -130,7 +182,7 @@ final class SwallowtailPhotoIngestService
         $bytes = is_file($sourcePath) ? (int)filesize($sourcePath) : 0;
         if ($bytes <= 0) {
             $errors[] = 'RAW file was empty.';
-        } elseif ($bytes > $this->maxRawBytes) {
+        } elseif ($bytes > $this->maxRawBytes()) {
             $errors[] = 'RAW file exceeded the configured upload limit.';
         }
 
@@ -167,5 +219,14 @@ final class SwallowtailPhotoIngestService
         }
 
         return false;
+    }
+
+    private function phpUploadLimit(string $key): mixed
+    {
+        if (is_array($this->phpUploadLimits) && array_key_exists($key, $this->phpUploadLimits)) {
+            return $this->phpUploadLimits[$key];
+        }
+
+        return ini_get($key);
     }
 }

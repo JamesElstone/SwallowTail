@@ -40,6 +40,33 @@ $harness->check(ReverseProxyService::class, 'uses forwarded client IP only from 
 
         $harness->assertSame('203.0.113.40', $service->clientIpAddress($trustedRequest));
         $harness->assertSame('198.51.100.20', $service->clientIpAddress($untrustedRequest));
+        $trustedHostRequest = new RequestFramework(
+            [],
+            [],
+            ['REMOTE_ADDR' => '198.51.100.10'],
+            [],
+            ['X-Forwarded-Host' => 'swallowtail.example.test', 'X-Forwarded-Proto' => 'https']
+        );
+        $untrustedHostRequest = new RequestFramework(
+            [],
+            [],
+            ['REMOTE_ADDR' => '198.51.100.20'],
+            [],
+            ['X-Forwarded-Host' => 'attacker.example.test', 'X-Forwarded-Proto' => 'https']
+        );
+        $invalidHostRequest = new RequestFramework(
+            [],
+            [],
+            ['REMOTE_ADDR' => '198.51.100.10'],
+            [],
+            ['X-Forwarded-Host' => 'https://swallowtail.example.test/', 'X-Forwarded-Proto' => 'https']
+        );
+
+        $harness->assertSame('swallowtail.example.test', $service->forwardedHost($trustedHostRequest));
+        $harness->assertSame('https', $service->forwardedScheme($trustedHostRequest));
+        $harness->assertSame('', $service->forwardedHost($untrustedHostRequest));
+        $harness->assertSame('', $service->forwardedScheme($untrustedHostRequest));
+        $harness->assertSame('', $service->forwardedHost($invalidHostRequest));
     } finally {
         if ($originalConfig !== '') {
             file_put_contents($configPath, $originalConfig);

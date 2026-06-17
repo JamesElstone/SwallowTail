@@ -463,6 +463,88 @@ final class SwallowtailPhotoLibraryService
         return 'Bearer upload token was rejected.';
     }
 
+    public function uploadTokenAuditMetadata(RequestFramework $request): array
+    {
+        $deviceId = trim((string)$request->header('X-Swallowtail-Device-ID', ''));
+        if ($deviceId === '') {
+            $deviceId = trim((string)$request->header('X-AntiFraud-Client-Device-ID', ''));
+        }
+
+        return [
+            'device_id' => $deviceId,
+            'ip_address' => (string)$request->remoteAddress(),
+            'user_agent' => (string)$request->header('User-Agent', ''),
+        ];
+    }
+
+    public function isUploadTokenRequestBlocked(RequestFramework $request): bool
+    {
+        return (new SignupTokenRateLimitService())->isBlocked($request);
+    }
+
+    public function recordFailedUploadTokenRequest(RequestFramework $request): array
+    {
+        return (new SignupTokenRateLimitService())->recordFailedToken($request);
+    }
+
+    public function uploadTokenLockoutResponse(): ResponseFramework
+    {
+        return ResponseFramework::json([
+            'success' => false,
+            'errors' => ['Too many invalid token attempts. Please try again later.'],
+        ], 429);
+    }
+
+    public function recordUploadTokenUsage(
+        ?array $uploadToken,
+        string $token,
+        ?string $remoteAddress,
+        string $actionType,
+        bool $success,
+        string $reason = '',
+        array $metadata = []
+    ): void {
+        if (!InterfaceDB::tableExists('user_account_audit') || !InterfaceDB::tableExists('users')) {
+            return;
+        }
+
+        $uploadToken = is_array($uploadToken) ? $uploadToken : $this->uploadTokenForAudit($token);
+        if (!is_array($uploadToken)) {
+            return;
+        }
+
+        $affectedUserId = $this->uploadTokenAccountUserId($uploadToken);
+        if ($affectedUserId === null) {
+            return;
+        }
+
+        $tokenId = (int)($uploadToken['id'] ?? 0);
+        if ($tokenId <= 0) {
+            return;
+        }
+
+        $cidrs = $uploadToken['cidrs'] ?? $this->cidrsForUploadToken($tokenId);
+        $reason = trim($reason) !== ''
+            ? trim($reason)
+            : ($success ? 'Upload token request was accepted.' : 'Upload token request was rejected.');
+
+        (new UserHistoryStore())->recordAccountAudit(
+            $affectedUserId,
+            null,
+            trim($actionType) !== '' ? trim($actionType) : 'upload_token_used',
+            $reason,
+            [
+                'upload_token_id' => $tokenId,
+                'token_label' => (string)($uploadToken['token_label'] ?? ''),
+                'success' => $success,
+                'client_ip' => trim((string)$remoteAddress),
+                'allowed_cidrs' => array_values((array)$cidrs),
+                'failure_reason' => $success ? null : $reason,
+            ],
+            $metadata
+        );
+    }
+
     public function markUploadTokenUsed(int $tokenId): void
     {
         if ($tokenId <= 0 || !InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
@@ -475,16 +557,82 @@ final class SwallowtailPhotoLibraryService
         );
     }
 
+    private function uploadTokenForAudit(string $token): ?array
+    {
+        if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
+            return null;
+        }
+
+        $token = trim($token);
+        if ($token === '') {
+            return null;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            'SELECT * FROM swallowtail_api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
+            ['token_hash' => hash('sha256', $token)]
+        );
+
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $row['cidrs'] = $this->cidrsForUploadToken((int)($row['id'] ?? 0));
+
+        return $row;
+    }
+
+    private function uploadTokenAccountUserId(array $uploadToken): ?int
+    {
+        foreach (['user_id', 'owner_user_id', 'associated_user_id', 'created_by_user_id'] as $key) {
+            $userId = $this->nullablePositiveInt($uploadToken[$key] ?? null);
+            if ($userId !== null) {
+                return $userId;
+            }
+        }
+
+        return null;
+    }
+
+    private function uploadTokenUserLabel(array $uploadToken): string
+    {
+        $displayName = trim((string)($uploadToken['created_by_user_display_name'] ?? ''));
+        if ($displayName !== '') {
+            return $displayName;
+        }
+
+        $emailAddress = trim((string)($uploadToken['created_by_user_email_address'] ?? ''));
+        if ($emailAddress !== '') {
+            return $emailAddress;
+        }
+
+        $userId = $this->uploadTokenAccountUserId($uploadToken);
+
+        return $userId !== null ? 'User #' . $userId : 'Unassigned';
+    }
+
     public function listUploadTokens(): array
     {
         if (!InterfaceDB::tableExists('swallowtail_api_upload_tokens')) {
             return [];
         }
 
+        $hasUsersTable = InterfaceDB::tableExists('users');
+        $userJoinSql = $hasUsersTable
+            ? "LEFT JOIN users created_by_user
+                ON created_by_user.id = token.created_by_user_id"
+            : '';
+        $userColumnsSql = $hasUsersTable
+            ? ', created_by_user.display_name AS created_by_user_display_name,
+                 created_by_user.email_address AS created_by_user_email_address'
+            : ", '' AS created_by_user_display_name,
+                 '' AS created_by_user_email_address";
+
         $rows = InterfaceDB::fetchAll(
-            "SELECT *
-             FROM swallowtail_api_upload_tokens
-             ORDER BY is_active DESC, created_at DESC, id DESC"
+            "SELECT token.*" . $userColumnsSql . "
+             FROM swallowtail_api_upload_tokens token
+             " . $userJoinSql . "
+             ORDER BY token.is_active DESC, token.created_at DESC, token.id DESC"
         );
         $tokens = [];
 
@@ -496,6 +644,7 @@ final class SwallowtailPhotoLibraryService
             $tokenId = (int)($row['id'] ?? 0);
             $row['cidrs'] = $this->cidrsForUploadToken($tokenId);
             $row['cidr_summary'] = implode(', ', $row['cidrs']);
+            $row['created_by_user_label'] = $this->uploadTokenUserLabel($row);
             $tokens[] = $row;
         }
 

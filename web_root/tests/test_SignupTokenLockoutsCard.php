@@ -12,8 +12,9 @@ require_once APP_CARDS . 'signup_token_lockouts.php';
 
 $harness = new GeneratedServiceClassTestHarness();
 
-$harness->check(_signup_token_lockoutsCard::class, 'renders signup token block reset forms by IP', function () use ($harness): void {
-    $html = (new _signup_token_lockoutsCard())->render([
+$harness->check(_signup_token_lockoutsCard::class, 'renders token block reset forms by IP', function () use ($harness): void {
+    $card = new _signup_token_lockoutsCard();
+    $html = $card->render([
         'page' => [
             'csrf_token' => 'test-csrf',
             'page_cards' => ['signup_token_lockouts'],
@@ -32,10 +33,27 @@ $harness->check(_signup_token_lockoutsCard::class, 'renders signup token block r
         ],
     ]);
 
+    $harness->assertSame('Token Lockouts', $card->title());
+    $harness->assertTrue(str_contains($card->helper([]), 'invalid signup or API token attempts'));
     $harness->assertTrue(str_contains($html, 'Client IP'));
     $harness->assertTrue(str_contains($html, '203.0.113.12'));
     $harness->assertTrue(str_contains($html, 'name="action" value="logs-reset-signup-token-lockout"'));
     $harness->assertTrue(str_contains($html, 'name="client_ip" value="203.0.113.12"'));
+});
+
+$harness->check(_signup_token_lockoutsCard::class, 'renders generic empty token lockout text', function () use ($harness): void {
+    $html = (new _signup_token_lockoutsCard())->render([
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['signup_token_lockouts'],
+            'page_id' => 'logs',
+        ],
+        'services' => [
+            'signup_token_lockouts' => [],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'No client IPs are currently blocked for token attempts.'));
 });
 
 $harness->check(_signup_token_lockoutsCard::class, 'suppresses missing lockout service errors', function () use ($harness): void {

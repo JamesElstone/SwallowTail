@@ -29,11 +29,40 @@ final class SwallowtailSpiceBushRegistrationApiService
 
         $username = trim((string)$request->post('username', (string)$request->post('email_address', '')));
         $password = (string)$request->post('password', '');
+        $deviceId = $this->deviceIdFromRequest($request);
+        $rateLimit = $this->userAuthenticationService->loginRateLimitStatus($username, $deviceId);
+
+        if (!empty($rateLimit['is_locked'])) {
+            return $this->error(['This account has been locked after too many incorrect password attempts.'], 401);
+        }
+
+        if (!empty($rateLimit['is_throttled'])) {
+            $rateLimit = $this->userAuthenticationService->recordFailedPasswordAttempt($username, $deviceId);
+
+            return $this->error(
+                !empty($rateLimit['is_locked'])
+                    ? ['This account has been locked after too many incorrect password attempts.']
+                    : ['Please wait before trying again.'],
+                429
+            );
+        }
+
         $user = $this->userAuthenticationService->authenticateByEmailAddress($username, $password);
 
         if (!is_array($user)) {
-            return $this->error(['Invalid email address or password.'], 401);
+            $rateLimit = $this->userAuthenticationService->recordFailedPasswordAttempt($username, $deviceId);
+
+            return $this->error(
+                !empty($rateLimit['is_locked'])
+                    ? ['This account has been locked after too many incorrect password attempts.']
+                    : (!empty($rateLimit['is_throttled'])
+                        ? ['Invalid email address or password. Please wait before trying again.']
+                        : ['Invalid email address or password.']),
+                !empty($rateLimit['is_locked']) || !empty($rateLimit['is_throttled']) ? 429 : 401
+            );
         }
+
+        $this->userAuthenticationService->clearLoginRateLimit($username, $deviceId);
 
         $userId = (int)($user['id'] ?? 0);
         if ($userId <= 0 || !in_array('upload_tokens', $this->cardAccess->allowedCardsForUser($userId, ['upload_tokens']), true)) {
@@ -48,6 +77,11 @@ final class SwallowtailSpiceBushRegistrationApiService
             return $this->error(['A valid six digit OTP code is required for this account.'], 403);
         }
 
+        $apiUrl = $this->apiUrl($request);
+        if ($apiUrl === '') {
+            return $this->error(['SpiceBush registration requires a configured External Base Web URL or trusted reverse proxy forwarded host.'], 503);
+        }
+
         try {
             $cidrs = $this->cidrsFromRequest($request);
             $token = $this->photoLibraryService->createUploadToken(
@@ -59,8 +93,6 @@ final class SwallowtailSpiceBushRegistrationApiService
         } catch (Throwable $exception) {
             return $this->error([$exception->getMessage()], 400);
         }
-
-        $apiUrl = $this->apiUrl($request);
 
         return ResponseFramework::json([
             'success' => true,
@@ -110,6 +142,16 @@ final class SwallowtailSpiceBushRegistrationApiService
         return 'SpiceBush';
     }
 
+    private function deviceIdFromRequest(RequestFramework $request): string
+    {
+        $deviceId = trim((string)$request->post('device_id', ''));
+        if ($deviceId !== '') {
+            return $deviceId;
+        }
+
+        return trim((string)$request->header('X-AntiFraud-Client-Device-ID', ''));
+    }
+
     private function otpSatisfied(RequestFramework $request, int $userId): bool
     {
         if (!$this->otpService->isOTPenabled($userId)) {
@@ -128,16 +170,21 @@ final class SwallowtailSpiceBushRegistrationApiService
             return $override . '/api';
         }
 
-        $host = trim((string)$request->header('Host', (string)$request->server('HTTP_HOST', '')));
+        $reverseProxy = new ReverseProxyService();
+        $host = $reverseProxy->forwardedHost($request);
         if ($host === '') {
-            $host = trim((string)$request->server('SERVER_NAME', ''));
+            return '';
         }
 
-        if ($host === '') {
-            return '/api';
+        $scheme = $reverseProxy->forwardedScheme($request);
+        if ($scheme === '') {
+            $scheme = $request->isSecure() ? 'https' : '';
         }
 
-        $scheme = $request->isSecure() ? 'https' : 'http';
+        if ($scheme === '') {
+            return '';
+        }
+
 
         return $scheme . '://' . $host . '/api';
     }

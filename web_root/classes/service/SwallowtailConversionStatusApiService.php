@@ -32,17 +32,45 @@ final class SwallowtailConversionStatusApiService
             ], 503);
         }
 
-        $uploadToken = $this->photoLibraryService->authenticateUploadToken(
-            $this->photoLibraryService->uploadTokenFromRequest($request),
-            $request->remoteAddress()
-        );
+        if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
+            return $this->photoLibraryService->uploadTokenLockoutResponse();
+        }
+
+        $token = $this->photoLibraryService->uploadTokenFromRequest($request);
+        $remoteAddress = $request->remoteAddress();
+        $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $remoteAddress);
+        $metadata = $this->photoLibraryService->uploadTokenAuditMetadata($request);
 
         if ($uploadToken === null) {
+            $this->photoLibraryService->recordUploadTokenUsage(
+                null,
+                $token,
+                $remoteAddress,
+                'upload_token_conversion_status_failed',
+                false,
+                $this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress),
+                $metadata
+            );
+
+            if (!empty($this->photoLibraryService->recordFailedUploadTokenRequest($request)['is_blocked'])) {
+                return $this->photoLibraryService->uploadTokenLockoutResponse();
+            }
+
             return ResponseFramework::json([
                 'success' => false,
                 'errors' => ['Bearer upload token was missing, invalid, expired, disabled, or not allowed from this network.'],
             ], 401);
         }
+
+        $this->photoLibraryService->recordUploadTokenUsage(
+            $uploadToken,
+            $token,
+            $remoteAddress,
+            'upload_token_conversion_status_succeeded',
+            true,
+            'Upload token conversion status request succeeded.',
+            $metadata
+        );
 
         $photoId = max(0, (int)$request->query('photo_id', 0));
         if ($photoId <= 0) {
