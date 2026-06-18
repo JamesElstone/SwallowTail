@@ -24,6 +24,7 @@ typedef struct SpiceBushConfig {
     char api_url[SB_TEXT];
     char upload_token[SB_TEXT];
     char device_id[128];
+    sb_u64 server_max_raw_upload_bytes;
 } SpiceBushConfig;
 
 typedef struct SpiceBushUploadedRecord {
@@ -40,6 +41,7 @@ typedef struct SpiceBushStats {
     unsigned long known;
     unsigned long skipped_local;
     unsigned long failed;
+    unsigned long rejected_oversize;
     unsigned long scanned_roots;
     sb_u64 upload_millis;
 } SpiceBushStats;
@@ -70,5 +72,6 @@ void sb_json_escape(const char *src, char *dst, size_t dst_size);
 int sb_json_string_value(const char *json, const char *key, char *out, size_t out_size);
 int sb_json_bool_value(const char *json, const char *key, int *value);
 int sb_json_ulong_value(const char *json, const char *key, unsigned long *value);
+int sb_json_u64_value(const char *json, const char *key, sb_u64 *value);
 
 #endif

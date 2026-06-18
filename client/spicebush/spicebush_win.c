@@ -38,7 +38,7 @@
 #define ID_STATS_CLEAR_HISTORY 3003
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
-#define STATS_LABEL_COUNT 16
+#define STATS_LABEL_COUNT 17
 
 typedef unsigned __int64 U64;
 
@@ -84,6 +84,7 @@ typedef struct AppState {
     LONG totalKnown;
     LONG totalFailed;
     LONG totalSkippedLocal;
+    LONG totalRejectedOversize;
     LONG totalScannedDrives;
     LONG activeScans;
     LONG processing;
@@ -129,6 +130,7 @@ static void UpdateTrayTooltip(HWND hwnd);
 static void MigrateUploadedCache(void);
 static void CompactQueueIfNeeded(void);
 static DWORD ClearUploadedHistoryCache(void);
+static U64 ParseU64(const char *text);
 
 static HICON AppIcon(void)
 {
@@ -416,39 +418,49 @@ static void EnsureAppStorage(void)
         WritePrivateProfileStringA("spicebush", "api_url", "", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "upload_token", "", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
+        WritePrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", "0", g_app.iniPath);
     }
 }
 
 static void LoadConfig(void)
 {
+    char serverLimit[64];
     GetPrivateProfileStringA("spicebush", "site_url", "", g_app.siteUrl, sizeof(g_app.siteUrl), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "api_url", "", g_app.apiUrl, sizeof(g_app.apiUrl), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "upload_token", "", g_app.uploadToken, sizeof(g_app.uploadToken), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.deviceId, sizeof(g_app.deviceId), g_app.iniPath);
+    GetPrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", "0", serverLimit, sizeof(serverLimit), g_app.iniPath);
+    g_app.serverMaxRawUploadBytes = ParseU64(serverLimit);
+    g_app.serverMaxRawUploadState = g_app.serverMaxRawUploadBytes > 0 ? 1 : 0;
     if (NormaliseDeviceId(g_app.deviceId, sizeof(g_app.deviceId))) {
         WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
         LogMessage("Normalised legacy device_id prefix; device_id=%s", g_app.deviceId);
     }
-    LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s",
+    LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s server_max_raw_upload_bytes=%I64u",
         g_app.siteUrl,
         g_app.apiUrl,
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken),
-        g_app.deviceId);
+        g_app.deviceId,
+        g_app.serverMaxRawUploadBytes);
 }
 
 static void SaveConfig(void)
 {
+    char serverLimit[64];
+    SbSnprintf(serverLimit, sizeof(serverLimit), "%I64u", g_app.serverMaxRawUploadBytes);
     WritePrivateProfileStringA("spicebush", "site_url", g_app.siteUrl, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "api_url", g_app.apiUrl, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "upload_token", g_app.uploadToken, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
-    LogMessage("Saved config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s",
+    WritePrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", serverLimit, g_app.iniPath);
+    LogMessage("Saved config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s server_max_raw_upload_bytes=%I64u",
         g_app.siteUrl,
         g_app.apiUrl,
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken),
-        g_app.deviceId);
+        g_app.deviceId,
+        g_app.serverMaxRawUploadBytes);
 }
 
 static void AppendLine(const char *path, const char *line)
@@ -1454,14 +1466,21 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
     return 0;
 }
 
-static DWORD WINAPI PingThread(LPVOID param)
+static int PerformPingCheck(U64 *maxRawUploadBytesOut, char *errorMessage, DWORD errorMessageSize)
 {
     char url[MAX_TEXT * 2], headers[(MAX_TEXT * 2) + 160], response[4096], errorText[512];
-    char *postedError = NULL;
     DWORD status = 0;
     int requestOk;
+    int pong = 0;
     U64 maxRawUploadBytes = 0;
-    (void)param;
+
+    if (maxRawUploadBytesOut) *maxRawUploadBytesOut = 0;
+    if (errorMessage && errorMessageSize > 0) errorMessage[0] = '\0';
+
+    if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') {
+        SafeCopy(errorMessage, errorMessageSize, "Connection check failed: SpiceBush is not registered.");
+        return 0;
+    }
 
     SbSnprintf(url, sizeof(url) - 1, "%s/ping.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
@@ -1477,15 +1496,20 @@ static DWORD WINAPI PingThread(LPVOID param)
         (unsigned)lstrlenA(g_app.uploadToken));
 
     requestOk = HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response));
-    if (requestOk && status == 200 && JsonBoolValue(response, "pong", &requestOk) && requestOk) {
-        JsonU64Value(response, "max_raw_upload_bytes", &maxRawUploadBytes);
+    if (requestOk
+        && status == 200
+        && JsonBoolValue(response, "pong", &pong)
+        && pong
+        && JsonU64Value(response, "max_raw_upload_bytes", &maxRawUploadBytes)
+        && maxRawUploadBytes > 0) {
         EnterCriticalSection(&g_app.lock);
         g_app.serverMaxRawUploadBytes = maxRawUploadBytes;
         g_app.serverMaxRawUploadState = maxRawUploadBytes > 0 ? 1 : -1;
         LeaveCriticalSection(&g_app.lock);
+        SaveConfig();
+        if (maxRawUploadBytesOut) *maxRawUploadBytesOut = maxRawUploadBytes;
         LogMessage("Ping succeeded: status=%lu max_raw_upload_bytes=%I64u", status, maxRawUploadBytes);
-        PostMessageA(g_app.mainWindow, WM_PING_DONE, 1, 0);
-        return 0;
+        return 1;
     }
 
     EnterCriticalSection(&g_app.lock);
@@ -1493,22 +1517,44 @@ static DWORD WINAPI PingThread(LPVOID param)
     g_app.serverMaxRawUploadState = -1;
     LeaveCriticalSection(&g_app.lock);
 
-    if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+    if (requestOk && status == 200 && pong) {
+        LogMessage("Ping failed without max_raw_upload_bytes: status=%lu", status);
+        if (errorMessage && errorMessageSize > 0) {
+            SafeCopy(errorMessage, errorMessageSize, "Connection check failed: server did not report an upload limit.");
+        }
+    } else if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
         LogMessage("Ping failed with server error: status=%lu error=%s", status, errorText);
-        postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 48);
-        if (postedError) {
-            SbSnprintf(postedError, lstrlenA(errorText) + 48, "Connection check failed: %s", errorText);
+        if (errorMessage && errorMessageSize > 0) {
+            SbSnprintf(errorMessage, errorMessageSize, "Connection check failed: %s", errorText);
         }
     } else {
         LogMessage("Ping failed without JSON error: request_ok=%s status=%lu", requestOk ? "yes" : "no", status);
-        postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 180);
-        if (postedError) {
+        if (errorMessage && errorMessageSize > 0) {
             if (requestOk && status > 0) {
-                SbSnprintf(postedError, 180, "Connection check failed: server returned HTTP %lu.", status);
+                SbSnprintf(errorMessage, errorMessageSize, "Connection check failed: server returned HTTP %lu.", status);
             } else {
-                SafeCopy(postedError, 180, "Connection check failed: could not connect to the SwallowTail server.");
+                SafeCopy(errorMessage, errorMessageSize, "Connection check failed: could not connect to the SwallowTail server.");
             }
         }
+    }
+    return 0;
+}
+
+static DWORD WINAPI PingThread(LPVOID param)
+{
+    char errorText[512];
+    char *postedError = NULL;
+    U64 maxRawUploadBytes = 0;
+    (void)param;
+
+    if (PerformPingCheck(&maxRawUploadBytes, errorText, sizeof(errorText))) {
+        PostMessageA(g_app.mainWindow, WM_PING_DONE, 1, 0);
+        return 0;
+    }
+
+    postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 1);
+    if (postedError) {
+        SafeCopy(postedError, lstrlenA(errorText) + 1, errorText);
     }
     PostMessageA(g_app.mainWindow, WM_PING_DONE, 0, (LPARAM)postedError);
     return 0;
@@ -1523,7 +1569,7 @@ static void StartPingCheck(void)
     else ShowRegisterWindow(0);
 }
 
-static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
+static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes, int *permanentReject)
 {
     ParsedUrl parsed;
     char url[2048], headers[1800], filename[MAX_PATH], response[4096];
@@ -1538,6 +1584,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     int duplicate = 0;
     DWORD photoId = 0;
     const char *slash = strrchr(path, '\\');
+    if (permanentReject) *permanentReject = 0;
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
     SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
@@ -1625,6 +1672,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         hash,
         sizeBytes);
     if (!ok) {
+        if (status == 413 && permanentReject) *permanentReject = 1;
         LogResponseSummary("Raw upload", status, response);
     }
 done:
@@ -1640,6 +1688,9 @@ static void ProcessPath(DWORD queueId, const char *path)
 {
     char hash[32];
     U64 sizeBytes = 0;
+    U64 maxRawUploadBytes = 0;
+    int serverMaxRawUploadState = 0;
+    int permanentReject = 0;
     DWORD photoId = 0;
     DWORD start = GetTickCount();
     LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
@@ -1666,7 +1717,34 @@ static void ProcessPath(DWORD queueId, const char *path)
         CompactQueueIfNeeded();
         return;
     }
-    if (UploadFileRaw(path, hash, sizeBytes)) {
+
+    EnterCriticalSection(&g_app.lock);
+    serverMaxRawUploadState = g_app.serverMaxRawUploadState;
+    maxRawUploadBytes = g_app.serverMaxRawUploadBytes;
+    LeaveCriticalSection(&g_app.lock);
+    if (serverMaxRawUploadState == 0) {
+        char pingError[256];
+        if (!PerformPingCheck(&maxRawUploadBytes, pingError, sizeof(pingError))) {
+            LogMessage("Process could not refresh upload limit before upload: %s", pingError);
+        }
+        EnterCriticalSection(&g_app.lock);
+        serverMaxRawUploadState = g_app.serverMaxRawUploadState;
+        maxRawUploadBytes = g_app.serverMaxRawUploadBytes;
+        LeaveCriticalSection(&g_app.lock);
+    }
+    if (serverMaxRawUploadState > 0 && maxRawUploadBytes > 0 && sizeBytes > maxRawUploadBytes) {
+        InterlockedIncrement(&g_app.totalRejectedOversize);
+        LogMessage("Process rejected over upload limit: path=%s hash=%s size=%I64u max_raw_upload_bytes=%I64u",
+            path,
+            hash,
+            sizeBytes,
+            maxRawUploadBytes);
+        AppendQueueDone(queueId, "rejected_oversize");
+        CompactQueueIfNeeded();
+        return;
+    }
+
+    if (UploadFileRaw(path, hash, sizeBytes, &permanentReject)) {
         DWORD elapsed = GetTickCount() - start;
         EnterCriticalSection(&g_app.lock);
         g_app.totalUploadMillis += elapsed;
@@ -1674,6 +1752,11 @@ static void ProcessPath(DWORD queueId, const char *path)
         InterlockedIncrement(&g_app.totalUploaded);
         LogMessage("Process uploaded: path=%s hash=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
         AppendQueueDone(queueId, "uploaded");
+        CompactQueueIfNeeded();
+    } else if (permanentReject) {
+        InterlockedIncrement(&g_app.totalRejectedOversize);
+        LogMessage("Process rejected after permanent upload failure: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        AppendQueueDone(queueId, "rejected_oversize");
         CompactQueueIfNeeded();
     } else {
         InterlockedIncrement(&g_app.totalFailed);
@@ -2164,7 +2247,7 @@ static void ShowStatsWindow(void)
         rect.left = 0;
         rect.top = 0;
         rect.right = 18 + 180 + 18;
-        rect.bottom = 502;
+        rect.bottom = 540;
         AdjustWindowRect(&rect, style, FALSE);
         g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
     }
@@ -2247,6 +2330,7 @@ static void RefreshStats(void)
     char alreadyText[32];
     char pendingText[32];
     char failedText[32];
+    char rejectedOversizeText[32];
     char scannedText[32];
     char activeText[32];
     char queueText[32];
@@ -2258,6 +2342,7 @@ static void RefreshStats(void)
     LONG uploaded;
     LONG alreadyUploaded;
     LONG failed;
+    LONG rejectedOversize;
     LONG scanned;
     LONG active;
     LONG processing;
@@ -2272,6 +2357,7 @@ static void RefreshStats(void)
     uploaded = g_app.totalUploaded;
     alreadyUploaded = g_app.totalKnown + g_app.totalSkippedLocal;
     failed = g_app.totalFailed;
+    rejectedOversize = g_app.totalRejectedOversize;
     scanned = g_app.totalScannedDrives;
     active = g_app.activeScans;
     processing = g_app.processing;
@@ -2293,6 +2379,7 @@ static void RefreshStats(void)
     FormatCount(alreadyUploaded, alreadyText, sizeof(alreadyText));
     FormatCount(pending, pendingText, sizeof(pendingText));
     FormatCount(failed, failedText, sizeof(failedText));
+    FormatCount(rejectedOversize, rejectedOversizeText, sizeof(rejectedOversizeText));
     FormatCount(scanned, scannedText, sizeof(scannedText));
     FormatCount(active, activeText, sizeof(activeText));
     FormatCount(pending, queueText, sizeof(queueText));
@@ -2324,17 +2411,19 @@ static void RefreshStats(void)
     SetWindowTextA(g_app.statsLabels[8], text);
     SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
     SetWindowTextA(g_app.statsLabels[9], text);
-    SetWindowTextA(g_app.statsLabels[10], "");
+    SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedOversizeText);
+    SetWindowTextA(g_app.statsLabels[10], text);
+    SetWindowTextA(g_app.statsLabels[11], "");
     SbSnprintf(text, sizeof(text), "Drives scanned this session: %s", scannedText);
-    SetWindowTextA(g_app.statsLabels[11], text);
-    SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextA(g_app.statsLabels[12], text);
-    SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
+    SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextA(g_app.statsLabels[13], text);
-    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms per file", avg);
+    SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
     SetWindowTextA(g_app.statsLabels[14], text);
-    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms per file", avg);
     SetWindowTextA(g_app.statsLabels[15], text);
+    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SetWindowTextA(g_app.statsLabels[16], text);
 }
 
 typedef struct RegisterRequest {
@@ -2459,9 +2548,10 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case WM_REGISTER_DONE:
         EnableWindow(GetDlgItem(hwnd, ID_REGISTER_SAVE), TRUE);
         if (wp) {
-            SetStatus(hwnd, "Registered. SpiceBush is ready to upload.");
+            SetStatus(hwnd, "Registered. Checking server upload limit...");
             ShowWindow(hwnd, SW_HIDE);
             PostMessageA(g_app.mainWindow, WM_REGISTER_BALLOON, 0, 0);
+            StartPingCheck();
         } else if (lp) {
             SetStatus(hwnd, (const char *)lp);
             HeapFree(GetProcessHeap(), 0, (LPVOID)lp);
@@ -2490,7 +2580,7 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             int margin = 18;
             int scanWidth = 160;
             int pingWidth = 180;
-            int buttonY = 388;
+            int buttonY = 410;
             int clearY = buttonY + 36;
             int pingY = clearY + 36;
             int labelWidth = pingWidth;

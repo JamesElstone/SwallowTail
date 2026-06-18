@@ -128,6 +128,58 @@ static int require_registered(const SpiceBushConfig *config)
     return 1;
 }
 
+static int ping_server(SpiceBushCli *cli, int quiet)
+{
+    char url[SB_TEXT * 2];
+    char headers[SB_TEXT * 2];
+    char response[4096];
+    long status = 0;
+    int pong = 0;
+    sb_u64 max_raw_upload_bytes = 0;
+
+    if (!require_registered(&cli->config)) {
+        return 0;
+    }
+
+    snprintf(url, sizeof(url), "%s/ping.php", cli->config.api_url);
+    snprintf(
+        headers,
+        sizeof(headers),
+        "Authorization: Bearer %s\r\n"
+        "X-SwallowTail-Upload-Token: %s\r\n",
+        cli->config.upload_token,
+        cli->config.upload_token
+    );
+
+    if (!sb_http_request("GET", url, headers, NULL, 0, &status, response, sizeof(response))) {
+        if (!quiet) {
+            fprintf(stderr, "Ping request failed before an HTTP response was received.\n");
+        }
+        return 0;
+    }
+    if (status != 200 || !sb_json_bool_value(response, "pong", &pong) || !pong) {
+        if (!quiet) {
+            fprintf(stderr, "Ping failed with HTTP %ld.\n", status);
+            fprintf(stderr, "%s\n", response);
+        }
+        return 0;
+    }
+
+    if (!sb_json_u64_value(response, "max_raw_upload_bytes", &max_raw_upload_bytes) || max_raw_upload_bytes == 0) {
+        if (!quiet) {
+            fprintf(stderr, "Ping succeeded but did not report a usable max_raw_upload_bytes value.\n");
+        }
+        return 0;
+    }
+
+    cli->config.server_max_raw_upload_bytes = max_raw_upload_bytes;
+    sb_save_config(&cli->config);
+    if (!quiet) {
+        printf("Server RAW upload limit: %llu bytes\n", (unsigned long long)max_raw_upload_bytes);
+    }
+    return 1;
+}
+
 static unsigned long next_queue_id(SpiceBushConfig *config)
 {
     FILE *file;
@@ -215,7 +267,7 @@ static int register_client(SpiceBushCli *cli, const char *url, const char *usern
     }
 
     printf("Registered. API URL: %s\n", cli->config.api_url);
-    return 1;
+    return ping_server(cli, 0);
 }
 
 static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, unsigned long *photo_id)
@@ -251,7 +303,7 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     return 0;
 }
 
-static int upload_file(const SpiceBushConfig *config, const char *path, const char *hash, sb_u64 size_bytes)
+static int upload_file(const SpiceBushConfig *config, const char *path, const char *hash, sb_u64 size_bytes, int *permanent_reject)
 {
     char url[SB_TEXT * 2];
     char headers[SB_TEXT * 2];
@@ -259,6 +311,9 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
     long status = 0;
     unsigned long photo_id = 0;
     int duplicate = 0;
+    if (permanent_reject != NULL) {
+        *permanent_reject = 0;
+    }
 
     snprintf(url, sizeof(url), "%s/raw-upload.php", config->api_url);
     snprintf(
@@ -282,6 +337,9 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         sb_mark_uploaded(config, hash, size_bytes, photo_id, duplicate ? "duplicate" : "uploaded", path);
         return 1;
     }
+    if (status == 413 && permanent_reject != NULL) {
+        *permanent_reject = 1;
+    }
     fprintf(stderr, "Upload failed with HTTP %ld for %s\n%s\n", status, path, response);
     return 0;
 }
@@ -293,6 +351,7 @@ static int process_cr2(const char *path, void *context)
     sb_u64 size_bytes = 0;
     unsigned long start;
     unsigned long photo_id = 0;
+    int permanent_reject = 0;
 
     cli->stats.found++;
     printf("found: %s\n", path);
@@ -316,12 +375,28 @@ static int process_cr2(const char *path, void *context)
         return 1;
     }
 
+    if (cli->config.server_max_raw_upload_bytes == 0) {
+        ping_server(cli, 1);
+    }
+    if (cli->config.server_max_raw_upload_bytes > 0 && size_bytes > cli->config.server_max_raw_upload_bytes) {
+        cli->stats.rejected_oversize++;
+        printf(
+            "  rejected: file is over the SwallowTail upload limit (%llu > %llu bytes)\n",
+            (unsigned long long)size_bytes,
+            (unsigned long long)cli->config.server_max_raw_upload_bytes
+        );
+        return 1;
+    }
+
     start = tick_millis();
     printf("  uploading: %s bytes=%llu\n", hash, (unsigned long long)size_bytes);
-    if (upload_file(&cli->config, path, hash, size_bytes)) {
+    if (upload_file(&cli->config, path, hash, size_bytes, &permanent_reject)) {
         cli->stats.uploaded++;
         cli->stats.upload_millis += (sb_u64)(tick_millis() - start);
         printf("  uploaded\n");
+    } else if (permanent_reject) {
+        cli->stats.rejected_oversize++;
+        printf("  rejected: upload exceeded the SwallowTail upload limit\n");
     } else {
         cli->stats.failed++;
         queue_retry(&cli->config, path);
@@ -343,7 +418,9 @@ static void print_stats(const SpiceBushCli *cli)
     printf("  Already known:          %lu\n", cli->stats.known);
     printf("  Skipped local cache:    %lu\n", cli->stats.skipped_local);
     printf("  Failed or queued:       %lu\n", cli->stats.failed);
+    printf("  Rejected over limit:    %lu\n", cli->stats.rejected_oversize);
     printf("  Scanned roots:          %lu\n", cli->stats.scanned_roots);
+    printf("  Server upload limit:    %llu bytes\n", (unsigned long long)cli->config.server_max_raw_upload_bytes);
     printf("  Average upload time:    %lu ms\n", avg);
     printf("  Config:                 %s\n", cli->config.ini_path);
 }

@@ -388,6 +388,8 @@ int sb_load_config(SpiceBushConfig *config)
             sb_safe_copy(config->upload_token, sizeof(config->upload_token), value);
         } else if (strcmp(key, "device_id") == 0) {
             sb_safe_copy(config->device_id, sizeof(config->device_id), value);
+        } else if (strcmp(key, "server_max_raw_upload_bytes") == 0) {
+            config->server_max_raw_upload_bytes = (sb_u64)strtoull(value, NULL, 10);
         }
     }
     fclose(file);
@@ -405,6 +407,7 @@ int sb_save_config(const SpiceBushConfig *config)
     fprintf(file, "api_url=%s\n", config->api_url);
     fprintf(file, "upload_token=%s\n", config->upload_token);
     fprintf(file, "device_id=%s\n", config->device_id);
+    fprintf(file, "server_max_raw_upload_bytes=%llu\n", (unsigned long long)config->server_max_raw_upload_bytes);
     fclose(file);
     return 1;
 }
@@ -544,6 +547,37 @@ int sb_json_ulong_value(const char *json, const char *key, unsigned long *value)
     }
     while (isdigit((unsigned char)*p)) {
         parsed = parsed * 10UL + (unsigned long)(*p - '0');
+        p++;
+    }
+    if (value != NULL) {
+        *value = parsed;
+    }
+    return 1;
+}
+
+int sb_json_u64_value(const char *json, const char *key, sb_u64 *value)
+{
+    char needle[128];
+    const char *p;
+    sb_u64 parsed = 0;
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    p = strstr(json, needle);
+    if (p == NULL) {
+        return 0;
+    }
+    p = strchr(p + strlen(needle), ':');
+    if (p == NULL) {
+        return 0;
+    }
+    p++;
+    while (*p != '\0' && isspace((unsigned char)*p)) {
+        p++;
+    }
+    if (!isdigit((unsigned char)*p)) {
+        return 0;
+    }
+    while (isdigit((unsigned char)*p)) {
+        parsed = parsed * 10ULL + (sb_u64)(*p - '0');
         p++;
     }
     if (value != NULL) {
