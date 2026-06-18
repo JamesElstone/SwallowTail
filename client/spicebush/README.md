@@ -110,6 +110,8 @@ POST /api/register-for-token.php
 
 The server returns a bearer upload token and API URL. SpiceBush stores those in
 the INI file and uses them for quick-checksum and raw-upload API calls.
+The client sends both the bearer token and the legacy upload-token header for
+compatibility with older SwallowTail API builds.
 
 ## FreeBSD Usage
 

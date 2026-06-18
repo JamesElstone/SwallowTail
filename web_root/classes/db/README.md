@@ -1,20 +1,20 @@
 # Database Classes
 
-This folder contains the small database layer used by eelKit.
+This folder contains the small database layer inherited from eelKit and used by SwallowTail.
 
 - `InterfaceDB.php` is the public static interface used by application code.
 - `PdoDB.php` owns PDO connection setup, SQL logging, SQLite schema bootstrapping, and ODBC compatibility helpers.
 - `PdoStatementDB.php` wraps `PDOStatement` so named parameters can be rewritten for ODBC drivers that expect positional placeholders.
 
-Database settings are read from `secure/app.php` under the `db` key. For MariaDB via ODBC, use an ODBC DSN such as `odbc:wccg` and keep real credentials out of version control.
+Database settings are read from `secure/app.php` under the `db` key. For MariaDB via ODBC, use an ODBC DSN such as `odbc:swallowtail` and keep real credentials out of version control.
 
 ## FreeBSD MariaDB ODBC Setup
 
-Tested with MariaDB 11.8, MariaDB Connector/ODBC 3.2.8, PHP 8.4, unixODBC, and `PDO_ODBC`.
+Deployment documentation currently targets MariaDB 10.11.14, MariaDB Connector/ODBC, PHP 8.4, unixODBC, and `PDO_ODBC`.
 
 ### 1. MariaDB client/server
 
-Install MariaDB from packages or ports. Do not install `databases/mariadb-connector-c` when `mariadb118-client` is already installed, because both provide `mariadb_config`.
+Install MariaDB from packages or ports. Do not install `databases/mariadb-connector-c` when the installed MariaDB client package already provides `mariadb_config`.
 
 Useful checks:
 
@@ -81,13 +81,13 @@ odbcinst -j
 Create or edit `/usr/local/etc/odbc.ini`:
 
 ```ini
-[wccg]
+[swallowtail]
 Driver=MariaDB
-Description=Welcome Church Community Grocery
+Description=SwallowTail MariaDB
 SERVER=127.0.0.1
 PORT=3306
-DATABASE=CommunityGroceryWarehouse
-USER=local
+DATABASE=swallowtail
+USER=swallowtail_app
 PASSWORD=replace_with_real_password
 CHARSET=utf8mb4
 ```
@@ -98,28 +98,28 @@ Test the DSN:
 
 ```sh
 odbcinst -q -s
-isql -v wccg
-isql -v wccg local 'replace_with_real_password'
+isql -v swallowtail
+isql -v swallowtail swallowtail_app 'replace_with_real_password'
 ```
 
 ### 5. MariaDB Grants
 
-MariaDB matches both user and host, so `local` at `localhost` and `local` at `127.0.0.1` are separate accounts.
+MariaDB matches both user and host, so `swallowtail_app` at `localhost` and `swallowtail_app` at `127.0.0.1` are separate accounts.
 
 ```sql
-CREATE USER IF NOT EXISTS 'local'@'localhost'
+CREATE USER IF NOT EXISTS 'swallowtail_app'@'localhost'
 IDENTIFIED BY 'replace_with_real_password';
 
 GRANT SELECT, INSERT, UPDATE, DELETE
-ON CommunityGroceryWarehouse.*
-TO 'local'@'localhost';
+ON swallowtail.*
+TO 'swallowtail_app'@'localhost';
 
-CREATE USER IF NOT EXISTS 'local'@'127.0.0.1'
+CREATE USER IF NOT EXISTS 'swallowtail_app'@'127.0.0.1'
 IDENTIFIED BY 'replace_with_real_password';
 
 GRANT SELECT, INSERT, UPDATE, DELETE
-ON CommunityGroceryWarehouse.*
-TO 'local'@'127.0.0.1';
+ON swallowtail.*
+TO 'swallowtail_app'@'127.0.0.1';
 
 FLUSH PRIVILEGES;
 ```
@@ -128,12 +128,12 @@ For development or migrations, add schema permissions:
 
 ```sql
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP
-ON CommunityGroceryWarehouse.*
-TO 'local'@'localhost';
+ON swallowtail.*
+TO 'swallowtail_app'@'localhost';
 
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP
-ON CommunityGroceryWarehouse.*
-TO 'local'@'127.0.0.1';
+ON swallowtail.*
+TO 'swallowtail_app'@'127.0.0.1';
 
 FLUSH PRIVILEGES;
 ```
@@ -141,8 +141,8 @@ FLUSH PRIVILEGES;
 Check grants:
 
 ```sql
-SHOW GRANTS FOR 'local'@'localhost';
-SHOW GRANTS FOR 'local'@'127.0.0.1';
+SHOW GRANTS FOR 'swallowtail_app'@'localhost';
+SHOW GRANTS FOR 'swallowtail_app'@'127.0.0.1';
 ```
 
 ### 6. PHP PDO ODBC
@@ -165,15 +165,15 @@ service apache24 restart
 ### 7. PHP Connection Test
 
 ```sh
-php -r '$pdo = new PDO("odbc:wccg", "local", "replace_with_real_password"); echo "Connected\n";'
+php -r '$pdo = new PDO("odbc:swallowtail", "swallowtail_app", "replace_with_real_password"); echo "Connected\n";'
 ```
 
 Example config value:
 
 ```php
 'db' => [
-    'dsn' => 'odbc:wccg',
-    'user' => 'local',
+    'dsn' => 'odbc:swallowtail',
+    'user' => 'swallowtail_app',
     'pass' => 'replace_with_real_password',
 ],
 ```
@@ -182,7 +182,7 @@ Example config value:
 
 - If `isql` works but PHP says `could not find driver`, install or enable `php84-pdo_odbc`.
 - If PHP CLI works but the web app fails, restart `php_fpm` and `apache24`.
-- If ODBC reports access denied for `local` at `localhost`, create or fix that exact MariaDB user.
-- If using `SERVER=127.0.0.1`, ensure `local` at `127.0.0.1` exists.
+- If ODBC reports access denied for `swallowtail_app` at `localhost`, create or fix that exact MariaDB user.
+- If using `SERVER=127.0.0.1`, ensure `swallowtail_app` at `127.0.0.1` exists.
 - Do not rely on `PDO::lastInsertId()` with MariaDB through PDO ODBC in this project.
 - Do not commit real DSN passwords or production credentials.

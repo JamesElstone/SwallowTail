@@ -1,6 +1,6 @@
 # Tools
 
-The `tools` directory contains command line helpers for setting up, maintaining, and managing an eelKit installation.
+The `tools` directory contains command line helpers for setting up, maintaining, and managing the eelKit-derived SwallowTail application.
 
 ## Directory Structure
 
@@ -28,21 +28,21 @@ Linux, macOS, or Git Bash:
 
 ```sh
 tools/bin/setupDb.sh
-tools/bin/setupDb.sh --driver=mysql --host=127.0.0.1 --database=eelkit --user=root
+tools/bin/setupDb.sh --driver=mysql --host=127.0.0.1 --database=swallowtail --user=root
 ```
 
 Windows Command Prompt:
 
 ```bat
 tools\bat\setupDb.bat
-tools\bat\setupDb.bat --driver=mysql --host=127.0.0.1 --database=eelkit --user=root
+tools\bat\setupDb.bat --driver=mysql --host=127.0.0.1 --database=swallowtail --user=root
 ```
 
 Direct PHP:
 
 ```sh
 php tools/php/setupDb.php
-php tools/php/setupDb.php --driver=sqlite --sqlite-path=secure/eelkit.sqlite
+php tools/php/setupDb.php --driver=sqlite --sqlite-path=secure/swallowtail.sqlite
 ```
 
 Use `--configure-db` to update existing database settings, `--migrate-only` to skip configuration and external IP updates, or `--skip-external-ip` to skip only the final external IP step.
@@ -88,10 +88,10 @@ tools\bat\setDbConfig.bat
 Example direct PHP options:
 
 ```sh
-php tools/php/setDbConfig.php --driver=mysql --host=127.0.0.1 --database=eelkit --user=root
-php tools/php/setDbConfig.php --driver=odbc --odbc-name=eelkit
-php tools/php/setDbConfig.php --driver=sqlite --sqlite-path=secure/eelkit.sqlite
-php tools/php/setDbConfig.php --dsn="mysql:host=127.0.0.1;dbname=eelkit;charset=utf8mb4" --user=root
+php tools/php/setDbConfig.php --driver=mysql --host=127.0.0.1 --database=swallowtail --user=root
+php tools/php/setDbConfig.php --driver=odbc --odbc-name=swallowtail
+php tools/php/setDbConfig.php --driver=sqlite --sqlite-path=secure/swallowtail.sqlite
+php tools/php/setDbConfig.php --dsn="mysql:host=127.0.0.1;dbname=swallowtail;charset=utf8mb4" --user=root
 ```
 
 Use `--help` to show the available options:
@@ -122,6 +122,30 @@ Direct PHP:
 php tools/php/setExternalIP.php
 ```
 
+## storageCache
+
+Refreshes or inspects the cached SwallowTail storage snapshot and processes queued
+storage migration jobs. The `swallowtail_storage` service calls this helper, but
+it can also be run directly for diagnostics:
+
+```sh
+php tools/php/storageCache.php status
+php tools/php/storageCache.php discover
+php tools/php/storageCache.php refresh
+php tools/php/storageCache.php process-migrations 10
+```
+
+`discover` reads the live mount/ZFS state without updating the cache. `refresh`
+stores a new snapshot for PHP uploads and the storage UI.
+
+## run-all-tests
+
+Runs the PHP test index, SpiceBush client build, and Python service tests:
+
+```sh
+tools/run-all-tests.sh
+```
+
 ## resetPassword
 
 Connects to the configured database, finds a user by display name or email address, resets the user's password, and optionally resets OTP setup.
@@ -147,6 +171,10 @@ php tools/php/reset_password.php
 ## projectGit
 
 Helps create a project repository from eelKit while keeping eelKit available as an upstream remote. It can also import later eelKit changes from that upstream remote.
+
+SwallowTail is already an initialized project repository. In this checkout the
+tool is retained for the inherited eelKit workflow and for importing later
+framework updates intentionally.
 
 Initialize a project origin:
 

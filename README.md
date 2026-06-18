@@ -10,14 +10,15 @@ SwallowTail is for private event photography workflows where the original files 
 
 The central object is an event. An event is a named group of photos, and user access is granted through membership of that event. When a RAW file is uploaded, it is not part of any event by default. It must be assigned before event viewers can see it.
 
-Users with permission can:
+Users with permission can currently:
 
 - Browse an event gallery with tiled photo thumbnails.
 - Open a single-photo viewer page.
-- Download an individual JPEG.
-- Download selected photos as a ZIP file.
-- Download all photos in an event, if their event permission allows it.
-- Download all photos they have access to across events, if that permission is enabled.
+- View private generated JPEG assets through application routes after access checks.
+
+The schema and permission services already model single-JPEG, event ZIP,
+all-accessible ZIP, and RAW-original download rights. The remaining ZIP and
+RAW-original download UI/API flows are still in progress.
 
 Admins and editors can manage uploads, event assignment, permissions, duplicate detection, conversion state, and storage.
 
@@ -44,7 +45,7 @@ The intended flow is:
 5. A conversion process creates image files such as embedded, original, thumbnail, and filtered JPEGs.
 6. An admin or editor assigns the photo to one or more events.
 7. Event permissions decide which users can view and download the photo.
-8. Downloads are streamed by the application after checking access.
+8. Private generated image files are streamed by the application after checking access.
 
 Duplicate uploads should be detected by checksum rather than filename. Matching checksums can be blocked or flagged as duplicates, while matching filenames with different checksums should be treated as a warning for admin review.
 
@@ -65,33 +66,31 @@ The default should be least privilege: uploaded photos are unassigned, users see
 
 ## Main Features
 
-Planned core features:
+Current core features:
 
-- CR2 RAW image file upload support.
-- Checksum-based duplicate detection.
-- Off-web-root storage for RAW sources, JPEG image outputs, PP3 profiles, thumbnails, and generated ZIPs.
-- RAW-to-JPEG conversion pipeline.
-- Event creation and event photo assignment.
-- User-to-event permissions.
-- Tiled event gallery view.
-- Single-photo viewer page.
-- Single-photo JPEG download.
-- Selected-photo ZIP download.
-- Whole-event ZIP download.
-- "All accessible photos" ZIP download.
-- Audit logging for uploads, conversions, permission changes, and downloads.
-- Admin dashboards for unassigned photos, conversion failures, storage status, and activity.
+- CR2 RAW image upload through the web UI and device API.
+- SpiceBush desktop/CLI registration and upload-token based API access.
+- FNV-1a quick checksum preflight and SHA-256 duplicate detection during ingest.
+- Off-web-root storage for RAW sources, generated JPEGs, thumbnails, filtered previews, and PP3 profiles.
+- Dynamic storage discovery with root-partition exclusion, free-space thresholds, optional checksum round-robin selection, ZFS dataset selection, cached storage snapshots, and queued storage migrations.
+- RAW-to-JPEG conversion jobs for embedded, original, thumbnail, and filtered preview outputs.
+- FreeBSD rc.d services for conversion work and storage cache/migration work.
+- Event, photo assignment, and event-permission service tables.
+- Tiled gallery, single-photo viewer, picture editor preview flow, recent uploads, storage summary, and storage settings UI.
+- Upload token management with per-token CIDR allow lists.
+- Audit logging for uploads, duplicate detections, conversions, token use, permission changes, and storage migrations.
 
-Useful later features:
+Still in progress:
 
-- Background conversion and ZIP generation queues.
-- Configurable storage roots with active, inactive, and read-only states.
+- Full event-management UI for creating events, assigning photos, and granting viewer permissions.
+- ZIP generation and download flows for selected photos, whole events, and all accessible photos.
+- RAW-original download controls exposed through the UI.
 - Storage verification and orphan cleanup tools.
 - EXIF handling options, including stripping GPS data from generated JPEGs.
 - Event invitations.
 - Viewer favourites or selections.
 - Collections or albums inside events.
-- CLI tools for bulk import, reprocessing, checksum verification, and storage migration.
+- CLI tools for bulk import, reprocessing, checksum verification, and manual storage migration control.
 
 ## Security Model
 
@@ -121,7 +120,7 @@ Only `web_root` should be served publicly. Directories such as `secure`, `db_sch
 
 ## Current Repository State
 
-This repository currently contains the eelKit-based application shell that SwallowTail will build on:
+This repository currently contains the eelKit-based application shell plus the active SwallowTail photo workflow:
 
 - Account setup, login, MFA, sessions, roles, and audit history.
 - Page/card rendering for the admin interface.
@@ -129,7 +128,11 @@ This repository currently contains the eelKit-based application shell that Swall
 - Table rendering and export support.
 - Application activity and log views.
 - Database setup and migration tooling.
-- Styling and JavaScript foundations for upload-oriented interfaces.
+- Web and API RAW upload paths.
+- Storage discovery, storage settings, and storage migration services.
+- Conversion queue services and FreeBSD background workers.
+- Gallery, viewer, and picture-editor pages.
+- Windows and FreeBSD SpiceBush clients under `client/spicebush`.
 
 Some implementation files still carry eelKit framework names because SwallowTail is starting from eelKit rather than from a blank application.
 
@@ -141,6 +144,10 @@ Some implementation files still carry eelKit framework names because SwallowTail
 - `web_root/content/cards` - card definitions rendered inside pages.
 - `web_root/content/actions` - shared card action handlers.
 - `web_root/css` and `web_root/js` - application styling and browser behaviour.
+- `web_root/api` - device API, private photo asset serving, and preview endpoints.
+- `client/spicebush` - plain-C Windows tray and FreeBSD CLI uploader client.
+- `service` - Python background services for conversion and storage cache/migration work.
+- `FreeBSD` - local FreeBSD port files, rc.d service templates, and Apache/PHP integration files.
 - `secure` - private configuration, generated keys, and bootstrap files.
 - `db_schema` - baseline schema and incremental migrations.
 - `tools` - command line helpers for setup, migrations, password reset, and maintenance.

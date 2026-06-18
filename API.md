@@ -15,6 +15,10 @@ Device API calls use a bearer upload token:
 Authorization: Bearer <upload-token>
 ```
 
+For older SpiceBush builds, SwallowTail also accepts `X-SwallowTail-Upload-Token`
+or `X-Swallowtail-Upload-Token`. `Authorization: Bearer` is preferred for new
+clients.
+
 Create and manage upload tokens in the web UI:
 
 1. Sign in as a user with access to the `upload_tokens` settings card.
@@ -260,7 +264,8 @@ Successful response:
     "embedded": {"job_id": 456, "status": "queued"},
     "original": {"job_id": 457, "status": "processing"},
     "thumbnail": {"job_id": 458, "status": "succeeded"},
-    "filtered": {"job_id": null, "status": "not_queued"}
+    "filtered": {"job_id": null, "status": "not_queued"},
+    "profile": {"job_id": null, "status": "not_queued"}
   },
   "images": {
     "embedded": {"ready": false},
@@ -268,7 +273,7 @@ Successful response:
     "thumbnail": {
       "ready": true,
       "bytes": 12345,
-      "modified_at": 1781611200,
+      "modified_at": "2026-06-18T12:00:00+00:00",
       "sha256": "..."
     },
     "filtered": {"ready": false},
@@ -351,6 +356,8 @@ Common HTTP status codes:
 - `401` bearer token failed authentication or CIDR check
 - `404` requested photo was not found
 - `405` wrong HTTP method
+- `413` RAW upload exceeded the configured size limit
+- `429` repeated failed upload-token or registration attempts are temporarily blocked
 - `503` database migrations are missing
 
 ## ESP32 Bridge Notes
@@ -384,7 +391,7 @@ The account must have access to the `upload_tokens` settings card.
 Endpoint:
 
 ```http
-POST /api/spicebush-register.php
+POST /api/register-for-token.php
 Content-Type: application/json
 ```
 
@@ -406,6 +413,10 @@ code. If the account does not use OTP, send an empty string or omit the field.
 
 If `cidrs` is omitted, SwallowTail creates the token for the caller's detected
 IP address as `/32` for IPv4 or `/128` for IPv6.
+
+The returned API URL is built from the configured External Base Web URL, or from
+trusted reverse-proxy forwarded host and scheme headers. If neither source is
+available, registration fails closed rather than guessing a public API URL.
 
 Successful response:
 

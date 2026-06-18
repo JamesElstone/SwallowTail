@@ -1,19 +1,19 @@
 # Database Schema
 
-The `db_schema` directory contains the canonical database structure for eelKit and the incremental SQL migrations used to keep existing installations up to date.
+The `db_schema` directory contains the canonical database structure for the eelKit-derived SwallowTail application and the incremental SQL migrations used to keep existing installations up to date.
 
 ## Directory Structure
 
 ```text
 db_schema/
-  eelKit.schema.sql   Baseline schema used to hydrate a new empty database
+  eelKit.schema.sql   Baseline schema used to hydrate a new empty SwallowTail database
   migrations/         Ordered incremental SQL migrations
   README.md           This guide
 ```
 
 ## Baseline Schema
 
-`eelKit.schema.sql` is the full baseline schema for a fresh eelKit database. The migration tool uses it when the configured database has no application tables yet.
+`eelKit.schema.sql` is the full baseline schema for a fresh SwallowTail database. The file still carries the eelKit name because the project was derived from eelKit. The migration tool uses it when the configured database has no application tables yet.
 
 The baseline includes the `schema_migrations` table and marks the initial migration as applied, so a newly hydrated database does not try to replay the baseline marker migration.
 
@@ -51,14 +51,14 @@ Set up configuration, hydrate a new empty database, apply pending migrations, an
 
 ```sh
 tools/bin/setupDb.sh
-tools/bin/setupDb.sh --driver=mysql --host=127.0.0.1 --database=eelkit --user=root
+tools/bin/setupDb.sh --driver=mysql --host=127.0.0.1 --database=swallowtail --user=root
 ```
 
 Windows Command Prompt:
 
 ```bat
 tools\bat\setupDb.bat
-tools\bat\setupDb.bat --driver=mysql --host=127.0.0.1 --database=eelkit --user=root
+tools\bat\setupDb.bat --driver=mysql --host=127.0.0.1 --database=swallowtail --user=root
 ```
 
 Apply pending migrations only, without changing database settings or the stored external IP:

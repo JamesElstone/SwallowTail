@@ -18,7 +18,7 @@ and provide the photo workflow that sits on top of eelKit.
 Owns filesystem safety for private photo storage.
 
 - Keeps storage outside `web_root`.
-- Discovers already-mounted filesystems on each storage-location request.
+- Uses cached storage snapshots for normal requests and can fall back to live mounted-filesystem discovery.
 - Excludes the root partition unless `swallowtail.storage.store_on_root_partition` is enabled.
 - Appends `swallowtail-data` below each eligible base location.
 - Builds deterministic checksum paths for `source`, `original`, `embedded`, `thumbnail`, `filtered`, and `profile`.
@@ -33,8 +33,25 @@ Provides the backend surface that the storage UI uses to adjust discovered stora
 
 - Lists dynamically discovered mounted locations with current writable status.
 - Records whether a discovered base location is excluded in `storage_location_properties`.
+- Supports ZFS pool panels and selected dataset changes for pools with multiple mounted datasets.
 
 The service does not mount filesystems or create synthetic mount roots. System administrators own mounts; SwallowTail discovers and filters them.
+
+### `SwallowtailStorageCacheService`
+
+Stores the current storage snapshot in Redis so upload and UI requests do not
+need to shell out for mount/ZFS discovery on every request. If the cache is
+missing or stale, PHP falls back to live discovery.
+
+### `SwallowtailStorageMigrationService`
+
+Processes durable storage migration jobs from `storage_migration_jobs` and
+`storage_migration_job_items`.
+
+- Copies all files in a photo's checksum family to the destination location.
+- Verifies copied files with SHA-256 before updating the `photos` row.
+- Records a `storage_location_migrated` audit event.
+- Removes the old files after the database row has moved.
 
 ### `SwallowtailPhotoIngestService`
 
@@ -120,7 +137,12 @@ The RAW-to-JPEG worker lives under `service/swallowtail_conversion/src/swallowta
 
 Storage is designed for multiple already-mounted disks.
 
-The backend discovers mounted filesystems from system mount/df data each time storage candidates are requested. It does not auto mount or manipulate filesystems.
+The backend can discover mounted filesystems from system mount/df data, but normal
+requests use the Redis storage snapshot refreshed by the `swallowtail_storage`
+service. If the cache is unavailable, PHP falls back to live discovery. The
+storage service also notices mount-signature changes and refreshes early.
+
+SwallowTail does not auto mount or manipulate filesystems.
 
 The root partition is excluded by default. The storage settings card controls:
 
@@ -136,9 +158,17 @@ Each eligible base location stores files under `swallowtail-data`. Stored photos
 
 `source` uses `.cr2`, `profile` uses `.pp3`, and generated images use `.jpg`. `storage_location_properties` stores per-base metadata such as whether a location is excluded from future writes.
 
+For ZFS, `storage_location_properties` stores the selected dataset against the
+zpool name. Changing the selected dataset can enqueue storage migration jobs for
+existing photos that used the previous mountpoint.
+
 ## Related Database Tables
 
-The SwallowTail services expect the migration `2026_05_31_001_swallowtail_photo_services.sql` to have run. It creates:
+The SwallowTail services expect the photo-service migrations to have run. The
+baseline SwallowTail photo tables come from
+`2026_05_31_001_swallowtail_photo_services.sql`, with later migrations adding
+raw conversion hardening, upload-token CIDRs, dynamic storage, ZFS cache data,
+and storage migration tables. The current service set uses:
 
 - `events`
 - `storage_location_properties`
@@ -149,6 +179,8 @@ The SwallowTail services expect the migration `2026_05_31_001_swallowtail_photo_
 - `event_permissions`
 - `photo_conversion_jobs`
 - `photo_audit`
+- `storage_migration_jobs`
+- `storage_migration_job_items`
 
 ## Tests
 

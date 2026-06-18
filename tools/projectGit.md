@@ -2,6 +2,10 @@
 
 `projectGit` helps create a new project repo from eelKit while keeping eelKit available as an upstream Git remote.
 
+SwallowTail is already an initialized project repository with its own project
+remote. This helper remains in the tree because SwallowTail was derived from
+eelKit and may still intentionally import later eelKit framework updates.
+
 This is useful when:
 
 - eelKit has its own GitHub repo.
