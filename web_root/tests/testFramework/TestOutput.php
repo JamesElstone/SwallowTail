@@ -153,6 +153,7 @@ if (!function_exists('test_output_render')) {
             'all' => [
                 'result' => $state['summary']['status'] === 'healthy' ? 'pass' : 'fail',
                 'health_status' => $state['summary']['status'],
+                'local_revision' => test_output_local_revision(),
                 'summary' => $state['summary'],
                 'classes' => $classes,
                 'messages' => $state['messages'],
@@ -172,5 +173,26 @@ if (!function_exists('test_output_render')) {
         }
 
         echo $json;
+    }
+}
+
+if (!function_exists('test_output_local_revision')) {
+    function test_output_local_revision(): ?string
+    {
+        if (DIRECTORY_SEPARATOR !== '/' || !function_exists('shell_exec')) {
+            return null;
+        }
+
+        $output = @shell_exec('/usr/sbin/pkg query %v swallowtail 2>/dev/null');
+        if (!is_string($output) || trim($output) === '') {
+            $output = @shell_exec('pkg query %v swallowtail 2>/dev/null');
+        }
+
+        if (!is_string($output)) {
+            return null;
+        }
+
+        $revision = trim($output);
+        return $revision !== '' ? $revision : null;
     }
 }
