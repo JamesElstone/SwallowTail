@@ -27,6 +27,7 @@ files/swallowtail_storage.newsyslog.conf
 files/swallowtail-apache.conf.in
 files/swallowtail-php-fpm.conf.in
 '
+SERVICE_NAMES='swallowtail_conversion swallowtail_storage'
 
 case "$PORT_DIR" in
 	""|"/")
@@ -66,6 +67,22 @@ fetch_file()
 	fi
 }
 
+restart_or_start_service()
+{
+	service_name=$1
+
+	if service "$service_name" onestatus >/dev/null 2>&1; then
+		echo "==> restarting $service_name"
+		service "$service_name" onerestart
+	else
+		echo "==> starting $service_name"
+		service "$service_name" onestart || {
+			echo "==> start did not complete; restarting $service_name"
+			service "$service_name" onerestart
+		}
+	fi
+}
+
 if [ -f "$PORT_DIR/Makefile" ]; then
 	echo "==> make distclean in $PORT_DIR"
 	( cd "$PORT_DIR" && make distclean )
@@ -94,3 +111,7 @@ echo "==> make in $PORT_DIR"
 
 echo "==> make reinstall in $PORT_DIR"
 ( cd "$PORT_DIR" && make reinstall )
+
+for service_name in $SERVICE_NAMES; do
+	restart_or_start_service "$service_name"
+done
