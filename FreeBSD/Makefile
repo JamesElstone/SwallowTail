@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	6
+PORTREVISION=	7
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -119,6 +119,7 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
 	${INSTALL_PROGRAM} ${WRKDIR}/spicebush/spicebush \
 		${STAGEDIR}${PREFIX}/bin/spicebush
+	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/tmp
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root/tests/tmp
 .if ${PORT_OPTIONS:MAPACHECONF}
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
@@ -137,9 +138,11 @@ post-install:
 	${ECHO_CMD} "@group" >> ${TMPPLIST}
 	${ECHO_CMD} "@owner" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,swallowtail,2750) swallowtail/secure" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(www,www,0770) swallowtail/tmp" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,www,0770) swallowtail/web_root/tests/tmp" >> ${TMPPLIST}
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type d | ${SORT} -r | \
 		${SED} -e '/^swallowtail\/secure$$/d' \
+		-e '/^swallowtail\/tmp$$/d' \
 		-e '/^swallowtail\/web_root\/tests\/tmp$$/d' \
 		-e 's,^,@dir ,' >> ${TMPPLIST}
 

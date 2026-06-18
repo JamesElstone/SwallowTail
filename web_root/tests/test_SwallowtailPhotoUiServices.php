@@ -49,7 +49,7 @@ function swallowtail_ui_storage_tmp_root(): string
 function swallowtail_ui_test_temp_file(string $prefix): string
 {
     $root = swallowtail_ui_test_tmp_root();
-    if (!is_dir($root) && !mkdir($root, 0770, true) && !is_dir($root)) {
+    if (!is_dir($root) && !@mkdir($root, 0770, true) && !is_dir($root)) {
         throw new RuntimeException('Unable to create SwallowTail UI test temp directory.');
     }
 
@@ -83,7 +83,7 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
                 $storageRoot = swallowtail_ui_storage_tmp_root();
-                if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+                if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
                     throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
                 }
 
@@ -128,7 +128,7 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
     }
 
     $storageRoot = swallowtail_ui_storage_tmp_root();
-    if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+    if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
         throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
     }
 

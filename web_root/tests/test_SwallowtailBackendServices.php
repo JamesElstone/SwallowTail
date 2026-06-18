@@ -59,7 +59,7 @@ function swallowtail_backend_storage_tmp_root(): string
 function swallowtail_backend_test_temp_file(string $prefix): string
 {
     $root = swallowtail_backend_test_tmp_root();
-    if (!is_dir($root) && !mkdir($root, 0770, true) && !is_dir($root)) {
+    if (!is_dir($root) && !@mkdir($root, 0770, true) && !is_dir($root)) {
         throw new RuntimeException('Unable to create SwallowTail backend test temp directory.');
     }
 
@@ -93,7 +93,7 @@ $swallowtailEnableRootStorageForTests = static function (): void {
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
                 $storageRoot = swallowtail_backend_storage_tmp_root();
-                if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+                if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
                     throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
                 }
 
@@ -138,7 +138,7 @@ $swallowtailEnableRootStorageForTests = static function (): void {
     }
 
     $storageRoot = swallowtail_backend_storage_tmp_root();
-    if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+    if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
         throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
     }
 
@@ -563,7 +563,7 @@ $harness->check(SwallowtailStorageService::class, 'marks invalid storage bases u
     }
 
     $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
-    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
+    if (!is_dir($blockedBaseRoot) && !@mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
         throw new RuntimeException('Unable to create blocked storage base fixture directory.');
     }
 
@@ -655,7 +655,7 @@ $harness->check(SwallowtailStorageService::class, 'verifies active live storage 
 
 $harness->check(SwallowtailStorageService::class, 'reports storage mkdir failures without PHP warnings', function () use ($harness, $swallowtailAssertContains): void {
     $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
-    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
+    if (!is_dir($blockedBaseRoot) && !@mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
         throw new RuntimeException('Unable to create blocked storage base fixture directory.');
     }
 
@@ -713,7 +713,7 @@ $harness->check(SwallowtailStorageService::class, 'reports storage file write fa
 
         $destinationPath = $storage->imagePath($baseLocation, $checksum, 'source');
         $storage->ensureDirectoryForPath($destinationPath);
-        if (!mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
+        if (!@mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
             throw new RuntimeException('Unable to create blocked storage destination fixture.');
         }
 
@@ -2004,7 +2004,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $storage = new SwallowtailStorageService();
     $destinationPath = $storage->imagePath($blockedBase, $checksum, 'source');
     $storage->ensureDirectoryForPath($destinationPath);
-    if (!mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
+    if (!@mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
         throw new RuntimeException('Unable to create blocked storage destination fixture.');
     }
 
