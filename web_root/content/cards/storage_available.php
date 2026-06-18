@@ -189,25 +189,30 @@ final class _storage_availableCard extends CardBaseFramework
         $roundRobin = (bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false);
         $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
 
-        return '<form method="post" action="?page=settings" data-ajax="true" class="form-grid storage-settings-form">
+        return '<form method="post" action="?page=settings" data-ajax="true" class="storage-settings-form">
             ' . $this->hiddenFields($context) . '
             <input type="hidden" name="card_action" value="StorageSettings">
             <input type="hidden" name="storage_settings_action" value="update_settings">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
-            <label class="checkbox-row">
-                <input type="hidden" name="store_on_root_partition" value="0">
-                <input type="checkbox" name="store_on_root_partition" value="1"' . ($storeOnRoot ? ' checked' : '') . ' data-submit-on-change="true">
-                <span>Store on root partition</span>
-            </label>
-            <label class="checkbox-row">
-                <input type="hidden" name="round_robin_locations" value="0">
-                <input type="checkbox" name="round_robin_locations" value="1"' . ($roundRobin ? ' checked' : '') . ' data-submit-on-change="true">
-                <span>Round-Robin Storage between locations</span>
-            </label>
-            <label>
-                <span>Full threshold</span>
-                <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" data-submit-on-change="true">
-            </label>
+            <fieldset class="settings-fieldset storage-settings-fieldset">
+                <legend>Storage Settings</legend>
+                <div class="storage-settings-row">
+                    <label class="checkbox-row">
+                        <input type="hidden" name="store_on_root_partition" value="0">
+                        <input type="checkbox" name="store_on_root_partition" value="1"' . ($storeOnRoot ? ' checked' : '') . ' data-submit-on-change="true">
+                        <span>Store on root partition</span>
+                    </label>
+                    <label class="checkbox-row">
+                        <input type="hidden" name="round_robin_locations" value="0">
+                        <input type="checkbox" name="round_robin_locations" value="1"' . ($roundRobin ? ' checked' : '') . ' data-submit-on-change="true">
+                        <span>Round-Robin Storage between locations</span>
+                    </label>
+                    <label>
+                        <span>Full threshold</span>
+                        <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" data-submit-on-change="true">
+                    </label>
+                </div>
+            </fieldset>
         </form>';
     }
 

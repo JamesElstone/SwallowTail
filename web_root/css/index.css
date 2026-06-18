@@ -3205,15 +3205,22 @@ label {
 }
 
 .storage-settings-form {
+  padding-bottom: 0;
+}
+
+.storage-settings-fieldset {
+  min-width: 0;
+}
+
+.storage-settings-row {
   display: flex;
   flex-flow: row nowrap;
   align-items: center;
   gap: 16px;
   overflow-x: auto;
-  padding-bottom: 0;
 }
 
-.storage-settings-form label {
+.storage-settings-row label {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -3222,7 +3229,7 @@ label {
   white-space: nowrap;
 }
 
-.storage-settings-form input[type="number"] {
+.storage-settings-row input[type="number"] {
   width: 6.5rem;
 }
 
