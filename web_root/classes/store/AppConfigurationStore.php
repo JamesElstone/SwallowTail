@@ -10,6 +10,7 @@ declare(strict_types=1);
 final class AppConfigurationStore
 {
     private const DEFAULT_APP_STRAPLINE = 'Bookkeeping without the fog and panic';
+    private const CONFIG_FILE_MODE = 0640;
 
     private static ?array $config = null;
 
@@ -393,6 +394,10 @@ final class AppConfigurationStore
 
         if ($result === false) {
             throw new RuntimeException('Unable to write application configuration file: ' . $path);
+        }
+
+        if (DIRECTORY_SEPARATOR !== '\\' && !@chmod($path, self::CONFIG_FILE_MODE)) {
+            throw new RuntimeException('Unable to set application configuration file permissions: ' . $path);
         }
     }
 

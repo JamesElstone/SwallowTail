@@ -212,6 +212,11 @@ swallowtail_conversion
 swallowtail_storage
 ```
 
+The port creates the private `secure` directory as `www:swallowtail` with mode
+`2750`. It installs only `secure/README.md` from the source checkout, so local
+secrets such as `secure/app.php` and generated key files are not packaged by
+the port.
+
 Enable the services that should run on this host:
 
 ```sh
@@ -317,7 +322,8 @@ php tools/php/setupDb.php \
   --password=replace_with_real_password
 ```
 
-Give PHP-FPM ownership of the private app config and the `swallowtail` service
+If `setupDb.php` is run from a shell as root or a deployment user, give PHP-FPM
+ownership of the generated private app config and the `swallowtail` service
 group read access:
 
 ```sh

@@ -189,6 +189,24 @@ $harness->check(AppConfigurationStore::class, 'rejects empty configuration set p
     }
 });
 
+$harness->check(AppConfigurationStore::class, 'writes config files with private owner-group permissions', function () use ($harness): void {
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $harness->skip('POSIX file permissions are not available on Windows.');
+    }
+
+    $method = new ReflectionMethod(AppConfigurationStore::class, 'writeConfigFile');
+    $target = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'eelkit-config-permissions-' . bin2hex(random_bytes(8)) . '.php';
+
+    try {
+        $method->invoke(null, $target, ['app_name' => 'permissions test']);
+        $harness->assertSame(0640, fileperms($target) & 0777);
+    } finally {
+        if (is_file($target)) {
+            unlink($target);
+        }
+    }
+});
+
 $harness->check(AppConfigurationStore::class, 'throws without emitting warnings when config writes fail', function () use ($harness): void {
     $method = new ReflectionMethod(AppConfigurationStore::class, 'writeConfigFile');
     $targetDirectory = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'eelkit-config-write-target';
