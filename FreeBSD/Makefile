@@ -1,12 +1,10 @@
 PORTNAME=	swallowtail
-DISTVERSION=	0.1.0
+DISTVERSION=	g20260618
 CATEGORIES=	graphics www
-MASTER_SITES=
-DISTFILES=
 
 MAINTAINER=	james@elstone.net
 COMMENT=	SwallowTail photo application and background services
-WWW=		https://github.com/JamesElstone/Swallowtail
+WWW=		https://github.com/JamesElstone/SwallowTail
 
 LICENSE=	BSD3CLAUSE
 
@@ -18,6 +16,10 @@ RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVO
 		redis-server:databases/redis
 
 USES=		php:cli python:3.11
+USE_GITHUB=	yes
+GH_ACCOUNT=	JamesElstone
+GH_PROJECT=	SwallowTail
+GH_TAGNAME=	0290ba0087b3db81cd4bd103f47ffd00cc320cab
 USE_PHP=	ctype curl filter gd mbstring pdo pdo_odbc session tokenizer
 USE_RC_SUBR=	swallowtail_storage \
 		swallowtail_conversion
@@ -34,7 +36,7 @@ OPTIONS_DEFINE=	APACHECONF
 APACHECONF_DESC=	Install active Apache include as swallowtail.conf
 
 SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
-SWALLOWTAIL_SOURCE?=	${.CURDIR}/..
+SWALLOWTAIL_SOURCE?=	${WRKSRC}
 SWALLOWTAIL_SERVER_NAME?=	swallowtail.example.invalid
 SWALLOWTAIL_HTTP_PORT?=	80
 SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9001
@@ -50,10 +52,6 @@ PROJECT_FILES=	API.md \
 		LICENSE \
 		README.md \
 		eelKit_CHANGES.md
-
-.if !exists(${SWALLOWTAIL_SOURCE}/web_root)
-IGNORE=	requires SWALLOWTAIL_SOURCE to point at a SwallowTail checkout
-.endif
 
 SUB_FILES=	pkg-message \
 		swallowtail-apache.conf \
@@ -93,8 +91,6 @@ do-install:
 	done
 	${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/secure/README.md" \
 		${STAGEDIR}${SWALLOWTAIL_ROOT}/secure/README.md
-	${CHOWN} www:swallowtail ${STAGEDIR}${SWALLOWTAIL_ROOT}/secure
-	${CHMOD} 2750 ${STAGEDIR}${SWALLOWTAIL_ROOT}/secure
 	for project_file in ${PROJECT_FILES}; do \
 		if [ -f "${SWALLOWTAIL_SOURCE}/$${project_file}" ]; then \
 			${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/$${project_file}" \
@@ -119,7 +115,8 @@ do-install:
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f | ${SORT} >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(www,swallowtail,2750) swallowtail/secure" >> ${TMPPLIST}
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type d | ${SORT} -r | \
-		${SED} -e 's,^,@dir ,' >> ${TMPPLIST}
+		${SED} -e '/^swallowtail\/secure$$/d' -e 's,^,@dir ,' >> ${TMPPLIST}
 
 .include <bsd.port.mk>
