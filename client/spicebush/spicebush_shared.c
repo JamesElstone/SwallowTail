@@ -14,6 +14,8 @@
 #include <unistd.h>
 #endif
 
+static void sb_trim(char *text);
+
 void sb_safe_copy(char *dst, size_t dst_size, const char *src)
 {
     if (dst_size == 0) {
