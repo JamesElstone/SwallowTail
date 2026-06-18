@@ -629,7 +629,7 @@ final class SwallowtailStorageService
             return [
                 'can_write' => false,
                 'checked_path' => $dataRootPath,
-                'error' => 'SwallowTail storage data root is not writable by PHP.',
+                'error' => 'SwallowTail storage data root is not writable by ' . $this->phpProcessUserLabel() . '.',
             ];
         }
 
@@ -646,7 +646,7 @@ final class SwallowtailStorageService
             return [
                 'can_write' => false,
                 'checked_path' => $parent,
-                'error' => 'SwallowTail storage data root cannot be created because the parent directory is not writable by PHP.',
+                'error' => 'SwallowTail storage data root cannot be created because the parent directory is not writable by ' . $this->phpProcessUserLabel() . '.',
             ];
         }
 
@@ -655,6 +655,19 @@ final class SwallowtailStorageService
             'checked_path' => $parent,
             'error' => null,
         ];
+    }
+
+    private function phpProcessUserLabel(): string
+    {
+        if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+            $user = posix_getpwuid(posix_geteuid());
+            $name = is_array($user) ? trim((string)($user['name'] ?? '')) : '';
+            if ($name !== '') {
+                return "the '" . $name . "' user";
+            }
+        }
+
+        return 'the PHP process user';
     }
 
     private function nearestExistingDirectory(string $path): ?string

@@ -273,12 +273,12 @@ $harness->check(_storage_availableCard::class, 'shows PHP permission failures be
         'can_write' => true,
         'permission_can_write' => false,
         'permission_checked_path' => '/storage/1',
-        'permission_error' => 'SwallowTail storage data root cannot be created because the parent directory is not writable by PHP.',
+        'permission_error' => "SwallowTail storage data root cannot be created because the parent directory is not writable by the 'swallowtail' user.",
     ], $context);
 
     $harness->assertTrue(str_contains($locationHtml, 'Not writable'));
     $harness->assertTrue(!str_contains($locationHtml, '>Writable<'));
-    $harness->assertTrue(str_contains($locationHtml, 'parent directory is not writable by PHP'));
+    $harness->assertTrue(str_contains($locationHtml, "parent directory is not writable by the 'swallowtail' user"));
     $harness->assertTrue(str_contains($locationHtml, 'Checked: /storage/1'));
 });
 

@@ -27,10 +27,11 @@ final class RequestFramework
 
     public static function fromGlobals(): self
     {
-        $headers = self::headersFromServer($_SERVER);
+        $headers = [];
         if (function_exists('getallheaders')) {
-            $headers = array_merge($headers, self::normaliseHeaders((array)getallheaders()));
+            $headers = self::normaliseHeaders((array)getallheaders());
         }
+        $headers = array_merge($headers, self::headersFromServer($_SERVER));
 
         $rawBody = $GLOBALS['__request_framework_raw_body'] ?? file_get_contents('php://input');
 

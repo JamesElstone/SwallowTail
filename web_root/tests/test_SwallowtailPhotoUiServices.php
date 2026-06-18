@@ -526,8 +526,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
 $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized private image assets', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
     $storage = new SwallowtailStorageService();
-    $locations = $storage->storageLocations();
-    $baseLocation = (string)($locations[0]['storage_base_location'] ?? '');
+    $baseLocation = swallowtail_ui_storage_tmp_root();
     $sha256 = str_repeat('d', 64);
     $absolute = $storage->imagePath($baseLocation, $sha256, 'thumbnail');
     $storage->ensureDirectoryForPath($absolute);

@@ -615,36 +615,49 @@ $harness->check(SwallowtailStorageService::class, 'verifies active live storage 
         (new SwallowtailStorageCacheService())->clear();
 
         $locations = (new SwallowtailStorageService())->liveStorageLocations();
-        $active = array_values(array_filter($locations, static function (array $location): bool {
+        $nonExcluded = array_values(array_filter($locations, static function (array $location): bool {
             $baseLocation = rtrim((string)($location['storage_base_location'] ?? ''), DIRECTORY_SEPARATOR);
 
             return $baseLocation !== ''
                 && is_dir($baseLocation)
-                && empty($location['is_excluded'])
-                && empty($location['is_full'])
-                && (empty($location['is_zfs']) || !empty($location['is_selected_zfs_dataset']));
+                && empty($location['is_excluded']);
         }));
 
-        if ($active === []) {
-            $harness->skip('No active live storage locations exist on this development machine.');
+        if ($nonExcluded === []) {
+            $harness->skip('No non-excluded live storage locations exist on this development machine.');
         }
 
-        foreach ($active as $location) {
+        $failures = [];
+        foreach ($nonExcluded as $location) {
+            $baseLocation = (string)($location['storage_base_location'] ?? '');
             if (empty($location['permission_can_write'])) {
-                throw new RuntimeException(sprintf(
-                    'Active live storage location is not writable by PHP: base=%s checked_path=%s error=%s',
-                    (string)($location['storage_base_location'] ?? ''),
-                    (string)($location['permission_checked_path'] ?? ''),
-                    (string)($location['permission_error'] ?? '')
-                ));
+                if (!empty($location['can_write'])) {
+                    $failures[] = sprintf(
+                        'base=%s failed permission checks but was marked writable',
+                        $baseLocation
+                    );
+                }
+                if (trim((string)($location['permission_error'] ?? '')) === '') {
+                    $failures[] = sprintf(
+                        'base=%s failed permission checks without a permission error',
+                        $baseLocation
+                    );
+                }
+                continue;
             }
 
-            if (empty($location['can_write'])) {
-                throw new RuntimeException(sprintf(
-                    'Active live storage location passed permission checks but was not marked writable: base=%s',
-                    (string)($location['storage_base_location'] ?? '')
-                ));
+            $shouldBeWritable = empty($location['is_full'])
+                && (empty($location['is_zfs']) || !empty($location['is_selected_zfs_dataset']));
+            if ($shouldBeWritable && empty($location['can_write'])) {
+                $failures[] = sprintf(
+                    'base=%s passed permission checks but was not marked writable',
+                    $baseLocation
+                );
             }
+        }
+
+        if ($failures !== []) {
+            throw new RuntimeException('Live storage location permission checks failed: ' . implode('; ', $failures));
         }
     } finally {
         file_put_contents($configPath, $originalConfig, LOCK_EX);
