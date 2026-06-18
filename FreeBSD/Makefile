@@ -1,5 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
+PORTREVISION=	1
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -15,7 +16,7 @@ RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVO
 		rawtherapee-cli:graphics/rawtherapee \
 		redis-server:databases/redis
 
-USES=		php:cli python:3.11
+USES=		php:cli python:3.11 ssl
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
 GH_PROJECT=	SwallowTail
@@ -25,9 +26,6 @@ USE_RC_SUBR=	swallowtail_storage \
 		swallowtail_conversion
 
 CONFLICTS_INSTALL=	swallowtail-raw-conversion
-
-NO_ARCH=	yes
-NO_BUILD=	yes
 
 OPTIONS_DEFINE=	APACHECONF
 APACHECONF_DESC=	Install active Apache include as swallowtail.conf
@@ -69,13 +67,22 @@ PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
 		etc/newsyslog.conf.d/swallowtail_conversion.conf \
 		etc/php/ext-30-pdo_odbc.ini \
 		etc/php-fpm.d/swallowtail.conf \
-		etc/apache24/Includes/swallowtail.conf.sample
+		etc/apache24/Includes/swallowtail.conf.sample \
+		bin/spicebush
 
 .if ${PORT_OPTIONS:MAPACHECONF}
 PLIST_FILES+=	etc/apache24/Includes/swallowtail.conf
 .endif
 
+do-build:
+	${MAKE_CMD} -C ${WRKSRC}/client/spicebush -f Makefile.freebsd \
+		CC="${CC}" \
+		CFLAGS="${CFLAGS} -Wall -Wextra -std=c99 -I${OPENSSLINC}" \
+		LDFLAGS="${LDFLAGS} -L${OPENSSLLIB}" \
+		WORKDIR="${WRKDIR}/spicebush"
+
 do-install:
+	${MKDIR} ${STAGEDIR}${PREFIX}/bin
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php-fpm.d
@@ -106,6 +113,8 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf.sample
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-php-fpm.conf \
 		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
+	${INSTALL_PROGRAM} ${WRKDIR}/spicebush/spicebush \
+		${STAGEDIR}${PREFIX}/bin/spicebush
 .if ${PORT_OPTIONS:MAPACHECONF}
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf

@@ -13,6 +13,10 @@ services you want on this host:
   service swallowtail_conversion start
   service swallowtail_storage start
 
+The FreeBSD SpiceBush CLI is installed under the package prefix as:
+
+  bin/spicebush
+
 Service defaults are embedded in the rc.d scripts. Override them in
 the system rc configuration using sysrc(8) with swallowtail_conversion_* and
 swallowtail_storage_* variables.
