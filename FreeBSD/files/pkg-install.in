@@ -2,12 +2,12 @@
 
 case "$2" in
 PRE-INSTALL)
-	if ! /usr/sbin/pw groupshow swallowtail >/dev/null 2>&1; then
-		/usr/sbin/pw groupadd swallowtail
+	if ! pw groupshow swallowtail >/dev/null 2>&1; then
+		pw groupadd swallowtail
 	fi
 
-	if ! /usr/sbin/pw usershow swallowtail >/dev/null 2>&1; then
-		/usr/sbin/pw useradd swallowtail \
+	if ! pw usershow swallowtail >/dev/null 2>&1; then
+		pw useradd swallowtail \
 			-g swallowtail \
 			-c "SwallowTail service account" \
 			-d /nonexistent \
