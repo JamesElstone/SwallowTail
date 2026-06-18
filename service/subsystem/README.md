@@ -16,19 +16,19 @@ Run the repo-provided installer from the checked-out project:
 sh service/subsystem/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
-Review the generated configuration:
+The installer creates the rc.d script, worker wrapper, log file, and newsyslog
+rotation config. Service defaults are embedded in the rc.d script and can be
+overridden in `/etc/rc.conf`:
 
 ```sh
-ee /usr/local/etc/swallowtail/raw-conversion.ini
+sysrc swallowtail_subsystem_database_dsn=swallowtail
+sysrc swallowtail_subsystem_database_user=swallowtail_worker
+sysrc swallowtail_subsystem_poll_interval_seconds=5
 ```
-
-The installer creates the rc.d script, worker wrapper, log file, and newsyslog
-rotation config.
 
 ## Operations
 
 ```sh
-python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --health
 service swallowtail_subsystem start
 service swallowtail_subsystem status
 service swallowtail_subsystem migrate
@@ -42,13 +42,13 @@ project root, and starts the worker again if it was running before.
 The service command is:
 
 ```sh
-python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini
+python3.11 -m raw_conversion
 ```
 
 For one-shot testing:
 
 ```sh
-python3.11 -m raw_conversion --config /usr/local/etc/swallowtail/raw-conversion.ini --once
+python3.11 -m raw_conversion --once
 ```
 
 For one-shot host verification, upload a test CR2 through the normal API and run

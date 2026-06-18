@@ -1,0 +1,82 @@
+#!/bin/sh
+
+# PROVIDE: swallowtail_storage
+# REQUIRE: LOGIN redis
+# KEYWORD: shutdown
+#
+# Add these lines to /etc/rc.conf.local or /etc/rc.conf to enable this service:
+#
+# swallowtail_storage_enable="YES"
+#
+# Service defaults can be overridden with swallowtail_storage_* variables.
+
+. /etc/rc.subr
+
+name="swallowtail_storage"
+rcvar="swallowtail_storage_enable"
+
+load_rc_config "$name"
+
+: ${swallowtail_storage_enable:="NO"}
+: ${swallowtail_storage_project_root:="%%SWALLOWTAIL_ROOT%%"}
+: ${swallowtail_storage_php:="%%PHP_CMD%%"}
+: ${swallowtail_storage_runner:="%%PREFIX%%/libexec/swallowtail_storage_worker"}
+: ${swallowtail_storage_worker_user:="swallowtail"}
+: ${swallowtail_storage_worker_group:="swallowtail"}
+: ${swallowtail_storage_interval_seconds:="300"}
+: ${swallowtail_storage_migration_limit:="10"}
+: ${swallowtail_storage_log:="/var/log/swallowtail_storage.log"}
+: ${swallowtail_storage_log_level:="INFO"}
+
+pidfile="/var/run/swallowtail/storage.pid"
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_runner}"
+required_dirs="${swallowtail_storage_project_root}/service/storage"
+extra_commands="onestatus"
+start_precmd="swallowtail_storage_precmd"
+status_cmd="swallowtail_storage_status"
+
+swallowtail_storage_export_env()
+{
+	export SWALLOWTAIL_STORAGE_PROJECT_ROOT="${swallowtail_storage_project_root}"
+	export SWALLOWTAIL_STORAGE_PHP="${swallowtail_storage_php}"
+	export SWALLOWTAIL_STORAGE_INTERVAL_SECONDS="${swallowtail_storage_interval_seconds}"
+	export SWALLOWTAIL_STORAGE_MIGRATION_LIMIT="${swallowtail_storage_migration_limit}"
+	export SWALLOWTAIL_STORAGE_LOG_FILE="${swallowtail_storage_log}"
+	export SWALLOWTAIL_STORAGE_LOG_LEVEL="${swallowtail_storage_log_level}"
+}
+
+swallowtail_storage_precmd()
+{
+	install -d -o "${swallowtail_storage_worker_user}" \
+		-g "${swallowtail_storage_worker_group}" -m 0750 \
+		/var/run/swallowtail
+
+	if [ ! -f "${swallowtail_storage_log}" ]; then
+		install -o "${swallowtail_storage_worker_user}" \
+			-g "${swallowtail_storage_worker_group}" -m 0640 \
+			/dev/null "${swallowtail_storage_log}"
+	fi
+
+	swallowtail_storage_export_env
+	${swallowtail_storage_runner} --health
+}
+
+swallowtail_storage_status()
+{
+	if [ -f "${pidfile}" ]; then
+		pid=$(cat "${pidfile}" 2>/dev/null || true)
+		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+			echo "${name} is running as pid ${pid}"
+		else
+			echo "${name} is not running"
+		fi
+	else
+		echo "${name} is not running"
+	fi
+
+	swallowtail_storage_export_env
+	${swallowtail_storage_runner} --status
+}
+
+run_rc_command "$1"

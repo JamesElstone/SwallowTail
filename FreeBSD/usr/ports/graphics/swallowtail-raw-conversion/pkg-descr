@@ -1,6 +1,6 @@
-SwallowTail RAW conversion is a FreeBSD rc.d service that consumes photo
-conversion jobs from SwallowTail, waits on Redis for quick wakeups, and renders
-CR2 RAW image files to JPEG derivatives with rawtherapee-cli.
+SwallowTail is a FreeBSD-hosted photo application with packaged background
+services for RAW conversion and storage maintenance.
 
-This port installs the service integration for an existing SwallowTail checkout.
-By default the checkout is expected at /usr/local/swallowtail.
+This port installs the SwallowTail application under /usr/local/swallowtail,
+plus rc.d integration, worker wrappers, sample configuration, and newsyslog
+configuration for all SwallowTail services required by this host.

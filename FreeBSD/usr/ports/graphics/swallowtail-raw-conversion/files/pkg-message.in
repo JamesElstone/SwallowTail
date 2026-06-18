@@ -1,18 +1,20 @@
 [
 { type: install
   message: <<EOM
-Before starting the worker, make sure the SwallowTail checkout exists at:
+SwallowTail has been installed at:
 
   %%SWALLOWTAIL_ROOT%%
 
-Review the configuration file:
-
-  %%PREFIX%%/etc/swallowtail/raw-conversion.ini
-
-Then enable and start the service:
+This port contains all SwallowTail service integrations. Enable and start the
+services you want on this host:
 
   sysrc swallowtail_subsystem_enable=YES
+  sysrc swallowtail_storage_enable=YES
   service swallowtail_subsystem start
+  service swallowtail_storage start
+
+Service defaults are embedded in the rc.d scripts. Override them in
+/etc/rc.conf using swallowtail_subsystem_* and swallowtail_storage_* variables.
 EOM
 }
 ]

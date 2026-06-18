@@ -1,6 +1,5 @@
 #!/bin/sh
-: ${swallowtail_subsystem_config:="%%PREFIX%%/etc/swallowtail/raw-conversion.ini"}
-: ${swallowtail_subsystem_project_root:="%%SWALLOWTAIL_ROOT%%"}
-export PYTHONPATH="${swallowtail_subsystem_project_root}/service/subsystem"
+: ${SWALLOWTAIL_SUBSYSTEM_PROJECT_ROOT:="%%SWALLOWTAIL_ROOT%%"}
+export PYTHONPATH="${SWALLOWTAIL_SUBSYSTEM_PROJECT_ROOT}/service/subsystem"
 export PYTHONDONTWRITEBYTECODE=1
-exec "%%PYTHON_CMD%%" -m raw_conversion --config "${swallowtail_subsystem_config}"
+exec "%%PYTHON_CMD%%" -m raw_conversion "$@"

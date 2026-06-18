@@ -4,6 +4,8 @@ import shutil
 import sys
 import unittest
 import uuid
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from storage_service.config import StorageConfig
@@ -69,6 +71,30 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertTrue(status["success"])
         self.assertEqual("running", status["service"]["state"])
         self.assertEqual(str(self.root), status["service"]["project_root"])
+
+    def test_cli_accepts_rc_conf_style_arguments(self) -> None:
+        from storage_service.__main__ import main
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "storage_service",
+                "--project-root",
+                str(self.root),
+                "--php",
+                sys.executable,
+                "--interval-seconds",
+                "300",
+                "--migration-limit",
+                "5",
+                "--log-file",
+                str(self.log_file),
+                "--status",
+            ]
+
+            with redirect_stdout(StringIO()):
+                self.assertEqual(0, main())
+        finally:
+            sys.argv = original_argv
 
 
 if __name__ == "__main__":

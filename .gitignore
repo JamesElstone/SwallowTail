@@ -6,6 +6,7 @@
 !/uploads/README.md
 /sqldump
 /web_root/tests/tmp
+/service/storage/tests/.tmp/
 /notes
 /example_data
 /web_root/tryit

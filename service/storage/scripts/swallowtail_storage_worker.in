@@ -1,4 +1,4 @@
 #!/bin/sh
 export PYTHONPATH="__PROJECT_ROOT__/service/storage"
 export PYTHONDONTWRITEBYTECODE=1
-exec "__PYTHON__" -m storage_service --config "__CONFIG__" "$@"
+exec "__PYTHON__" -m storage_service "$@"
