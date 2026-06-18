@@ -4,6 +4,11 @@
 
 set -eu
 
+if [ "$(id -u)" -ne 0 ]; then
+	echo "This script must be run as root." >&2
+	exit 1
+fi
+
 PORT_DIR=${SWALLOWTAIL_FREEBSD_PORT_DIR:-/usr/ports/graphics/SwallowTail}
 PORTS_TREE_DIR=${SWALLOWTAIL_FREEBSD_PORTS_TREE_DIR:-/usr/ports}
 BLOB_BASE_URL=${SWALLOWTAIL_FREEBSD_BLOB_BASE_URL:-https://github.com/JamesElstone/SwallowTail/blob/main/FreeBSD}
