@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	9
+PORTREVISION=	10
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -31,8 +31,12 @@ USE_RC_SUBR=	swallowtail_storage \
 
 CONFLICTS_INSTALL=	swallowtail-raw-conversion
 
-OPTIONS_DEFINE=	APACHECONF
+OPTIONS_DEFINE=	APACHECONF SUDOERS
+OPTIONS_DEFAULT=	SUDOERS
 APACHECONF_DESC=	Install active Apache include as swallowtail.conf
+SUDOERS_DESC=	Install sudoers rule for storage permission repair
+
+SUDOERS_RUN_DEPENDS=	sudo:security/sudo
 
 SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
 SWALLOWTAIL_SOURCE?=	${WRKSRC}
@@ -55,6 +59,7 @@ PROJECT_FILES=	API.md \
 SUB_FILES=	pkg-install \
 		pkg-message \
 		swallowtail-apache.conf \
+		swallowtail-fix-storage-permissions \
 		swallowtail-php-fpm.conf
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
@@ -72,10 +77,16 @@ PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
 		etc/php/ext-30-pdo_odbc.ini \
 		etc/php-fpm.d/swallowtail.conf \
 		etc/apache24/Includes/swallowtail.conf.sample \
-		bin/spicebush
+		bin/spicebush \
+		sbin/swallowtail-fix-storage-permissions
 
 .if ${PORT_OPTIONS:MAPACHECONF}
 PLIST_FILES+=	etc/apache24/Includes/swallowtail.conf
+.endif
+
+.if ${PORT_OPTIONS:MSUDOERS}
+SUB_FILES+=	swallowtail-sudoers
+PLIST_FILES+=	etc/sudoers.d/swallowtail.conf
 .endif
 
 do-build:
@@ -87,6 +98,7 @@ do-build:
 
 do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/bin
+	${MKDIR} ${STAGEDIR}${PREFIX}/sbin
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php-fpm.d
@@ -123,11 +135,18 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
 	${INSTALL_PROGRAM} ${WRKDIR}/spicebush/spicebush \
 		${STAGEDIR}${PREFIX}/bin/spicebush
+	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail-fix-storage-permissions \
+		${STAGEDIR}${PREFIX}/sbin/swallowtail-fix-storage-permissions
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/tmp
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root/tests/tmp
 .if ${PORT_OPTIONS:MAPACHECONF}
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf
+.endif
+.if ${PORT_OPTIONS:MSUDOERS}
+	${MKDIR} ${STAGEDIR}${PREFIX}/etc/sudoers.d
+	${INSTALL} -m 0440 ${WRKDIR}/swallowtail-sudoers \
+		${STAGEDIR}${PREFIX}/etc/sudoers.d/swallowtail.conf
 .endif
 
 post-install:

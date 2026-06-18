@@ -1,0 +1,261 @@
+#!/bin/sh
+
+set -u
+
+OWNER="www"
+GROUP="swallowtail"
+DATA_DIRECTORY="swallowtail-data"
+DIRECTORY_MODE="2770"
+FILE_MODE="0660"
+PROTECTED_ROOT="%%SWALLOWTAIL_ROOT%%"
+DRY_RUN=0
+BASE_ARG=""
+
+log()
+{
+	printf '%s\n' "$*"
+}
+
+fail()
+{
+	log "ERROR: $*" >&2
+	exit 1
+}
+
+usage()
+{
+	cat <<EOF
+Usage: swallowtail-fix-storage-permissions --base <mounted-storage-path> [--dry-run]
+
+Repairs ownership and permissions for one SwallowTail storage data directory.
+
+The command is intentionally narrow:
+  * the base path must be an existing absolute directory
+  * the base path must be a filesystem mount point
+  * the base path must not be /
+  * the base path must not be inside %%SWALLOWTAIL_ROOT%%
+  * only <base>/swallowtail-data is created or modified
+  * symlinks are never followed or modified
+
+Default changes:
+  * directories: ${OWNER}:${GROUP} mode ${DIRECTORY_MODE}
+  * files:       ${OWNER}:${GROUP} mode ${FILE_MODE}
+
+Use --dry-run to print the checks and planned changes without modifying files.
+The --help output is available to every user; all other modes must run as root.
+EOF
+}
+
+canonical_dir()
+{
+	path=$1
+	[ -d "$path" ] || return 1
+	(cd -P "$path" 2>/dev/null && pwd -P)
+}
+
+count_find_type()
+{
+	root=$1
+	type=$2
+	find "$root" -xdev -type "$type" -print 2>/dev/null | wc -l | tr -d ' '
+}
+
+count_find_other()
+{
+	root=$1
+	find "$root" -xdev ! -type d ! -type f ! -type l -print 2>/dev/null | wc -l | tr -d ' '
+}
+
+run_cmd()
+{
+	log "  command: $*"
+	if [ "$DRY_RUN" -eq 1 ]; then
+		return 0
+	fi
+
+	"$@"
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	--base)
+		shift
+		[ "$#" -gt 0 ] || fail "--base requires a path argument."
+		BASE_ARG=$1
+		;;
+	--dry-run|-n)
+		DRY_RUN=1
+		;;
+	--help|-h)
+		usage
+		exit 0
+		;;
+	*)
+		fail "Unexpected argument: $1"
+		;;
+	esac
+	shift
+done
+
+log "SwallowTail storage permission repair"
+log "======================================="
+log "This tool repairs only the ${DATA_DIRECTORY} directory below one mounted storage base."
+log "It does not alter the mount point itself or any sibling directories."
+log ""
+
+if [ "$(id -u)" -ne 0 ]; then
+	fail "This command must be run as root. Re-run it with sudo, or use --help to read the usage notes without root access."
+fi
+
+[ -n "$BASE_ARG" ] || fail "No storage base was supplied. Use --base <path>."
+
+case "$BASE_ARG" in
+/*)
+	;;
+*)
+	fail "Storage base must be an absolute path: $BASE_ARG"
+	;;
+esac
+
+while [ "$BASE_ARG" != "/" ] && [ "${BASE_ARG%/}" != "$BASE_ARG" ]; do
+	BASE_ARG=${BASE_ARG%/}
+done
+
+case "$BASE_ARG/" in
+*/../*|*/./*|*"//"*)
+	fail "Storage base must not contain '.', '..', or repeated slash components: $BASE_ARG"
+	;;
+esac
+
+if [ "$BASE_ARG" = "/" ]; then
+	fail "Refusing to operate on the root filesystem path /."
+fi
+
+if [ -L "$BASE_ARG" ]; then
+	fail "Storage base must not be a symbolic link: $BASE_ARG"
+fi
+
+if [ ! -d "$BASE_ARG" ]; then
+	fail "Storage base does not exist or is not a directory: $BASE_ARG"
+fi
+
+BASE=$(canonical_dir "$BASE_ARG") || fail "Unable to resolve storage base: $BASE_ARG"
+log "Step 1: resolved storage base"
+log "  supplied: $BASE_ARG"
+log "  resolved: $BASE"
+
+if [ "$BASE" = "/" ]; then
+	fail "Refusing to operate on the root filesystem path /."
+fi
+
+PROTECTED_CANONICAL=""
+if [ -d "$PROTECTED_ROOT" ]; then
+	PROTECTED_CANONICAL=$(canonical_dir "$PROTECTED_ROOT" || printf '')
+fi
+
+if [ -n "$PROTECTED_CANONICAL" ]; then
+	case "$BASE/" in
+	"$PROTECTED_CANONICAL"/*)
+		fail "Refusing to repair storage below the installed SwallowTail application root: $PROTECTED_CANONICAL"
+		;;
+	esac
+fi
+
+if ! id -u "$OWNER" >/dev/null 2>&1; then
+	fail "Required owner account does not exist: $OWNER"
+fi
+
+if ! pw groupshow "$GROUP" >/dev/null 2>&1; then
+	fail "Required group does not exist: $GROUP"
+fi
+
+log ""
+log "Step 2: confirming that the base is a mounted filesystem"
+MOUNT_POINT=$(df -P "$BASE" 2>/dev/null | awk 'NR == 2 {print $NF}')
+[ -n "$MOUNT_POINT" ] || fail "Unable to determine filesystem mount point for: $BASE"
+MOUNT_CANONICAL=$(canonical_dir "$MOUNT_POINT") || fail "Unable to resolve reported mount point: $MOUNT_POINT"
+log "  reported mount point: $MOUNT_POINT"
+log "  resolved mount point: $MOUNT_CANONICAL"
+
+if [ "$MOUNT_CANONICAL" != "$BASE" ]; then
+	fail "The supplied base is not the filesystem mount point. Supply the mounted storage root, not a subdirectory. base=$BASE mount=$MOUNT_CANONICAL"
+fi
+
+DATA_ROOT="${BASE}/${DATA_DIRECTORY}"
+log ""
+log "Step 3: checking SwallowTail data directory"
+log "  target data directory: $DATA_ROOT"
+
+if [ -L "$DATA_ROOT" ]; then
+	fail "Refusing to use a symbolic link as the SwallowTail data directory: $DATA_ROOT"
+fi
+
+if [ -e "$DATA_ROOT" ] && [ ! -d "$DATA_ROOT" ]; then
+	fail "Refusing to replace a non-directory SwallowTail data path: $DATA_ROOT"
+fi
+
+if [ ! -d "$DATA_ROOT" ]; then
+	log "  data directory is missing and will be created."
+	run_cmd mkdir -p "$DATA_ROOT" || fail "Unable to create data directory: $DATA_ROOT"
+else
+	log "  data directory already exists."
+fi
+
+if [ "$DRY_RUN" -eq 1 ] && [ ! -d "$DATA_ROOT" ]; then
+	log ""
+	log "Dry run complete."
+	log "The directory does not exist yet, so no recursive scan was performed."
+	log "A real run would create it and apply ${OWNER}:${GROUP} ${DIRECTORY_MODE} to that directory."
+	exit 0
+fi
+
+[ -d "$DATA_ROOT" ] || fail "Data directory was not created: $DATA_ROOT"
+
+if [ -L "$DATA_ROOT" ]; then
+	fail "Data directory became a symbolic link during setup: $DATA_ROOT"
+fi
+
+log ""
+log "Step 4: scanning existing contents without crossing filesystem boundaries"
+DIRECTORY_COUNT=$(count_find_type "$DATA_ROOT" d)
+FILE_COUNT=$(count_find_type "$DATA_ROOT" f)
+SYMLINK_COUNT=$(count_find_type "$DATA_ROOT" l)
+OTHER_COUNT=$(count_find_other "$DATA_ROOT")
+log "  directories to repair: $DIRECTORY_COUNT"
+log "  regular files to repair: $FILE_COUNT"
+log "  symlinks left unchanged: $SYMLINK_COUNT"
+log "  other filesystem entries left unchanged: $OTHER_COUNT"
+
+log ""
+log "Step 5: applying ownership and permission policy"
+log "  directories: ${OWNER}:${GROUP} mode ${DIRECTORY_MODE}"
+log "  files:       ${OWNER}:${GROUP} mode ${FILE_MODE}"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+	log "  dry-run: would repair directory ownership."
+	log "  command: find $DATA_ROOT -xdev -type d -exec chown ${OWNER}:${GROUP} {} +"
+	log "  dry-run: would repair directory permissions."
+	log "  command: find $DATA_ROOT -xdev -type d -exec chmod ${DIRECTORY_MODE} {} +"
+	log "  dry-run: would repair regular file ownership."
+	log "  command: find $DATA_ROOT -xdev -type f -exec chown ${OWNER}:${GROUP} {} +"
+	log "  dry-run: would repair regular file permissions."
+	log "  command: find $DATA_ROOT -xdev -type f -exec chmod ${FILE_MODE} {} +"
+else
+	find "$DATA_ROOT" -xdev -type d -exec chown "${OWNER}:${GROUP}" {} + || fail "Unable to repair directory ownership."
+	find "$DATA_ROOT" -xdev -type d -exec chmod "$DIRECTORY_MODE" {} + || fail "Unable to repair directory permissions."
+	find "$DATA_ROOT" -xdev -type f -exec chown "${OWNER}:${GROUP}" {} + || fail "Unable to repair regular file ownership."
+	find "$DATA_ROOT" -xdev -type f -exec chmod "$FILE_MODE" {} + || fail "Unable to repair regular file permissions."
+fi
+
+log ""
+log "Step 6: final permission check"
+if [ "$DRY_RUN" -eq 1 ]; then
+	log "  dry-run: final writable check skipped."
+else
+	[ -d "$DATA_ROOT" ] || fail "Data directory is missing after repair: $DATA_ROOT"
+	log "  permission policy was applied to: $DATA_ROOT"
+	log "  the SwallowTail web UI will re-check writability as the PHP process user."
+fi
+
+log ""
+log "SwallowTail storage permission repair completed successfully."

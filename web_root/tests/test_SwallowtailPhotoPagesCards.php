@@ -205,8 +205,62 @@ $harness->check(_storage_availableCard::class, 'renders zpool dataset select and
     ], $context);
 
     $harness->assertTrue(str_contains($locationHtml, 'Migrate Files from this Location'));
+    $harness->assertTrue(str_contains($locationHtml, 'Fix Permission Issues'));
     $harness->assertTrue(str_contains($locationHtml, 'data-chicken-check="true"'));
+    $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
+});
+
+$harness->check(SwallowtailStoragePermissionRepairService::class, 'runs sudo permission helper only for known storage locations', function () use ($harness): void {
+    $capturedArgv = [];
+    $service = new SwallowtailStoragePermissionRepairService(
+        static function (array $argv) use (&$capturedArgv): array {
+            $capturedArgv = $argv;
+
+            return [
+                'exit_code' => 0,
+                'output' => "repair completed\n",
+            ];
+        },
+        static fn(): array => [
+            ['storage_base_location' => '/storage/1'],
+        ]
+    );
+
+    $result = $service->repair('/storage/1/');
+
+    $harness->assertSame('/storage/1', (string)$result['base']);
+    $harness->assertSame('/usr/local/bin/sudo', (string)($capturedArgv[0] ?? ''));
+    $harness->assertSame('-n', (string)($capturedArgv[1] ?? ''));
+    $harness->assertSame('/usr/local/sbin/swallowtail-fix-storage-permissions', (string)($capturedArgv[2] ?? ''));
+    $harness->assertSame('--base', (string)($capturedArgv[3] ?? ''));
+    $harness->assertSame('/storage/1', (string)($capturedArgv[4] ?? ''));
+});
+
+$harness->check(SwallowtailStoragePermissionRepairService::class, 'rejects unknown storage locations before sudo', function () use ($harness): void {
+    $ranCommand = false;
+    $service = new SwallowtailStoragePermissionRepairService(
+        static function () use (&$ranCommand): array {
+            $ranCommand = true;
+
+            return [
+                'exit_code' => 0,
+                'output' => '',
+            ];
+        },
+        static fn(): array => [
+            ['storage_base_location' => '/storage/known'],
+        ]
+    );
+
+    try {
+        $service->repair('/storage/other');
+        throw new RuntimeException('Expected unknown storage location to be rejected.');
+    } catch (InvalidArgumentException $exception) {
+        $harness->assertTrue(str_contains($exception->getMessage(), 'not currently recognised'));
+    }
+
+    $harness->assertSame(false, $ranCommand);
 });
 
 

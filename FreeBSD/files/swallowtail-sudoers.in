@@ -1,0 +1,6 @@
+# Installed by the SwallowTail FreeBSD port.
+#
+# This permits the dedicated PHP-FPM account to run only the SwallowTail
+# storage-permission repair helper as root. The helper performs its own path
+# validation and only modifies <storage-base>/swallowtail-data.
+www ALL=(root) NOPASSWD: %%PREFIX%%/sbin/swallowtail-fix-storage-permissions --base *

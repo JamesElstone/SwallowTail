@@ -53,6 +53,10 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             return $this->requestMigrateLocation($request, $session);
         }
 
+        if ($storageAction === 'fix_permissions') {
+            return $this->fixPermissions($request);
+        }
+
         AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', $this->checkboxValue($request, 'store_on_root_partition'));
         AppConfigurationStore::set('swallowtail.storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
         AppConfigurationStore::set(
@@ -156,6 +160,31 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             'message' => $jobId === null
                 ? 'No photos currently use that storage location.'
                 : 'Storage migration queued. Files will be moved by the storage service.',
+        ]]);
+    }
+
+    private function fixPermissions(RequestFramework $request): ActionResultFramework
+    {
+        $storageBaseLocation = trim((string)$request->input('storage_base_location', ''));
+        if ($storageBaseLocation === '') {
+            return new ActionResultFramework(false, ['storage.available'], [[
+                'type' => 'error',
+                'message' => 'Storage location was not supplied.',
+            ]]);
+        }
+
+        try {
+            $repair = (new SwallowtailStoragePermissionRepairService())->repair($storageBaseLocation);
+        } catch (Throwable $exception) {
+            return new ActionResultFramework(false, ['storage.available'], [[
+                'type' => 'error',
+                'message' => $exception->getMessage(),
+            ]]);
+        }
+
+        return ActionResultFramework::success(['storage.available', 'cr2.upload'], [[
+            'type' => 'success',
+            'message' => 'Storage permission repair completed for ' . (string)$repair['base'] . '.',
         ]]);
     }
 
