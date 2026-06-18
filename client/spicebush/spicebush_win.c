@@ -35,6 +35,7 @@
 
 #define ID_STATS_SCAN 3001
 #define ID_STATS_PING 3002
+#define ID_STATS_CLEAR_HISTORY 3003
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
 #define STATS_LABEL_COUNT 16
@@ -125,6 +126,7 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize);
 static void UpdateTrayTooltip(HWND hwnd);
 static void MigrateUploadedCache(void);
 static void CompactQueueIfNeeded(void);
+static DWORD ClearUploadedHistoryCache(void);
 
 static HICON AppIcon(void)
 {
@@ -703,6 +705,47 @@ static void MarkUploadedStatus(const char *hash, U64 sizeBytes, DWORD photoId, c
     SbSnprintf(line, sizeof(line), "%s\t%I64u\t%lu\t%s\t%s\r\n", hash, sizeBytes, (unsigned long)photoId, status, path);
     AppendLine(bucket, line);
     LogMessage("Marked uploaded bucket: hash=%s size=%I64u photo_id=%lu status=%s path=%s", hash, sizeBytes, (unsigned long)photoId, status, path);
+}
+
+static DWORD ClearUploadedHistoryCache(void)
+{
+    char pattern[MAX_PATH];
+    char path[MAX_PATH];
+    WIN32_FIND_DATAA data;
+    HANDLE find;
+    DWORD deleted = 0;
+    DWORD failed = 0;
+
+    CreateDirectoryA(g_app.uploadedDir, NULL);
+    PathJoin(pattern, sizeof(pattern), g_app.uploadedDir, "*.tsv");
+    find = FindFirstFileA(pattern, &data);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            PathJoin(path, sizeof(path), g_app.uploadedDir, data.cFileName);
+            if (DeleteFileA(path)) {
+                deleted++;
+                LogMessage("Deleted local uploaded history file: path=%s", path);
+            } else {
+                failed++;
+                LogMessage("Could not delete local uploaded history file: path=%s error=%lu", path, GetLastError());
+            }
+        } while (FindNextFileA(find, &data));
+        FindClose(find);
+    }
+
+    if (GetFileAttributesA(g_app.uploadedPath) != INVALID_FILE_ATTRIBUTES) {
+        if (DeleteFileA(g_app.uploadedPath)) {
+            deleted++;
+            LogMessage("Deleted legacy local uploaded history file: path=%s", g_app.uploadedPath);
+        } else {
+            failed++;
+            LogMessage("Could not delete legacy local uploaded history file: path=%s error=%lu", g_app.uploadedPath, GetLastError());
+        }
+    }
+
+    LogMessage("Local uploaded history cache clear complete: deleted=%lu failed=%lu", (unsigned long)deleted, (unsigned long)failed);
+    return deleted;
 }
 
 static void MigrateUploadedCache(void)
@@ -2020,7 +2063,7 @@ static void ShowStatsWindow(void)
         rect.left = 0;
         rect.top = 0;
         rect.right = 18 + 180 + 18;
-        rect.bottom = 466;
+        rect.bottom = 502;
         AdjustWindowRect(&rect, style, FALSE);
         g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
     }
@@ -2316,12 +2359,14 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             int scanWidth = 160;
             int pingWidth = 180;
             int buttonY = 388;
-            int pingY = buttonY + 36;
+            int clearY = buttonY + 36;
+            int pingY = clearY + 36;
             int labelWidth = pingWidth;
             for (i = 0; i < STATS_LABEL_COUNT; i++) {
                 g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
             }
             Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", margin, buttonY, scanWidth, 28, 0);
+            Button(hwnd, ID_STATS_CLEAR_HISTORY, "Clear local history cache", margin, clearY, pingWidth, 28, 0);
             g_app.statsPingButton = Button(hwnd, ID_STATS_PING, "Test Server Connectivity", margin, pingY, pingWidth, 28, BS_OWNERDRAW);
         }
         SetTimer(hwnd, 1, 1000, NULL);
@@ -2335,6 +2380,15 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == ID_STATS_SCAN) ScanExistingDrives(1);
+        else if (LOWORD(wp) == ID_STATS_CLEAR_HISTORY) {
+            DWORD deleted = ClearUploadedHistoryCache();
+            char message[128];
+            SbSnprintf(message, sizeof(message), "Local history cache cleared: %lu file%s deleted.",
+                (unsigned long)deleted,
+                deleted == 1 ? "" : "s");
+            ShowTrayBalloon(g_app.mainWindow, APP_NAME, message, 10000);
+            RefreshStats();
+        }
         else if (LOWORD(wp) == ID_STATS_PING) {
             if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
                 SetStatsPingState(-1);
