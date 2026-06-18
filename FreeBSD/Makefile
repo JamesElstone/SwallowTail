@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	1
+PORTREVISION=	2
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -94,6 +94,10 @@ do-install:
 				${STAGEDIR}${SWALLOWTAIL_ROOT}; \
 		fi; \
 	done
+	if [ -d "${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root" ]; then \
+		${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root -type f \
+			-name '*.md' -delete; \
+	fi
 	${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/secure/README.md" \
 		${STAGEDIR}${SWALLOWTAIL_ROOT}/secure/README.md
 	for project_file in ${PROJECT_FILES}; do \
@@ -115,15 +119,28 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
 	${INSTALL_PROGRAM} ${WRKDIR}/spicebush/spicebush \
 		${STAGEDIR}${PREFIX}/bin/spicebush
+	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root/tests/tmp
 .if ${PORT_OPTIONS:MAPACHECONF}
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf
 .endif
 
 post-install:
-	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f | ${SORT} >> ${TMPPLIST}
+	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f \
+		! -path 'swallowtail/web_root/tests/fixtures/config/app.php' | \
+		${SORT} >> ${TMPPLIST}
+	${ECHO_CMD} "@owner www" >> ${TMPPLIST}
+	${ECHO_CMD} "@group www" >> ${TMPPLIST}
+	${ECHO_CMD} "@mode 0640" >> ${TMPPLIST}
+	${ECHO_CMD} "swallowtail/web_root/tests/fixtures/config/app.php" >> ${TMPPLIST}
+	${ECHO_CMD} "@mode" >> ${TMPPLIST}
+	${ECHO_CMD} "@group" >> ${TMPPLIST}
+	${ECHO_CMD} "@owner" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,swallowtail,2750) swallowtail/secure" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(www,www,0770) swallowtail/web_root/tests/tmp" >> ${TMPPLIST}
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type d | ${SORT} -r | \
-		${SED} -e '/^swallowtail\/secure$$/d' -e 's,^,@dir ,' >> ${TMPPLIST}
+		${SED} -e '/^swallowtail\/secure$$/d' \
+		-e '/^swallowtail\/web_root\/tests\/tmp$$/d' \
+		-e 's,^,@dir ,' >> ${TMPPLIST}
 
 .include <bsd.port.mk>
