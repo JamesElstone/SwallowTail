@@ -189,7 +189,7 @@ final class _storage_availableCard extends CardBaseFramework
         $roundRobin = (bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false);
         $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
 
-        return '<form method="post" action="?page=settings" data-ajax="true" class="form-grid">
+        return '<form method="post" action="?page=settings" data-ajax="true" class="form-grid storage-settings-form">
             ' . $this->hiddenFields($context) . '
             <input type="hidden" name="card_action" value="StorageSettings">
             <input type="hidden" name="storage_settings_action" value="update_settings">

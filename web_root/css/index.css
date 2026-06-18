@@ -3204,6 +3204,28 @@ label {
   gap: 12px;
 }
 
+.storage-settings-form {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 0;
+}
+
+.storage-settings-form label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.storage-settings-form input[type="number"] {
+  width: 6.5rem;
+}
+
 .storage-location-card {
   display: grid;
   gap: 12px;
