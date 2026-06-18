@@ -843,7 +843,7 @@ $harness->check(SwallowtailPingApiService::class, 'keeps token diagnostics out o
     $harness->assertTrue(is_array($successPayload));
     $harness->assertTrue(!empty($successPayload['success']));
     $harness->assertTrue(!empty($successPayload['pong']));
-    $harness->assertSame(67108864, (int)($successPayload['max_raw_upload_bytes'] ?? 0));
+    $harness->assertSame(8388608, (int)($successPayload['max_raw_upload_bytes'] ?? 0));
 
     $failureRequest = new RequestFramework(
         [],

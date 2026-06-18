@@ -37,7 +37,9 @@ SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
 SWALLOWTAIL_SOURCE?=	${.CURDIR}/..
 SWALLOWTAIL_SERVER_NAME?=	swallowtail.example.invalid
 SWALLOWTAIL_HTTP_PORT?=	80
-SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9000
+SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9001
+SWALLOWTAIL_UPLOAD_MAX_FILESIZE?=	128M
+SWALLOWTAIL_POST_MAX_SIZE?=	128M
 
 PROJECT_DIRS=	db_schema \
 		services \
@@ -54,19 +56,23 @@ IGNORE=	requires SWALLOWTAIL_SOURCE to point at a SwallowTail checkout
 .endif
 
 SUB_FILES=	pkg-message \
-		swallowtail-apache.conf
+		swallowtail-apache.conf \
+		swallowtail-php-fpm.conf
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
 		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT} \
 		SWALLOWTAIL_SERVER_NAME=${SWALLOWTAIL_SERVER_NAME} \
 		SWALLOWTAIL_HTTP_PORT=${SWALLOWTAIL_HTTP_PORT} \
-		SWALLOWTAIL_PHP_FPM_LISTEN=${SWALLOWTAIL_PHP_FPM_LISTEN}
+		SWALLOWTAIL_PHP_FPM_LISTEN=${SWALLOWTAIL_PHP_FPM_LISTEN} \
+		SWALLOWTAIL_UPLOAD_MAX_FILESIZE=${SWALLOWTAIL_UPLOAD_MAX_FILESIZE} \
+		SWALLOWTAIL_POST_MAX_SIZE=${SWALLOWTAIL_POST_MAX_SIZE}
 
 .include <bsd.port.options.mk>
 
 PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
 		etc/newsyslog.conf.d/swallowtail_conversion.conf \
 		etc/php/ext-30-pdo_odbc.ini \
+		etc/php-fpm.d/swallowtail.conf \
 		etc/apache24/Includes/swallowtail.conf.sample
 
 .if ${PORT_OPTIONS:MAPACHECONF}
@@ -76,6 +82,7 @@ PLIST_FILES+=	etc/apache24/Includes/swallowtail.conf
 do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes
+	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php-fpm.d
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/secure
 	for dir in ${PROJECT_DIRS}; do \
@@ -103,6 +110,8 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/php/ext-30-pdo_odbc.ini
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf.sample
+	${INSTALL_DATA} ${WRKDIR}/swallowtail-php-fpm.conf \
+		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
 .if ${PORT_OPTIONS:MAPACHECONF}
 	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
 		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf

@@ -75,7 +75,7 @@ final class SwallowtailPingApiService
         return ResponseFramework::json([
             'success' => true,
             'pong' => true,
-            'max_raw_upload_bytes' => $this->photoIngestService->maxRawBodyBytes(),
+            'max_raw_upload_bytes' => $this->photoIngestService->maxRawBytes(),
         ]);
     }
 

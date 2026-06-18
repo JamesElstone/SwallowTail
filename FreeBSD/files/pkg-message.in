@@ -20,12 +20,18 @@ An Apache include sample is installed as:
 
   %%PREFIX%%/etc/apache24/Includes/swallowtail.conf.sample
 
+A dedicated PHP-FPM pool is installed as:
+
+  %%PREFIX%%/etc/php-fpm.d/swallowtail.conf
+
 Enable the APACHECONF port option to install the active Apache include as:
 
   %%PREFIX%%/etc/apache24/Includes/swallowtail.conf
 
 Without APACHECONF, copy the sample to that path when you are ready. Review the
-ServerName and PHP-FPM listener before enabling apache24.
+ServerName and PHP-FPM listener before enabling apache24. The bundled Apache
+sample points at the dedicated SwallowTail PHP-FPM pool. Restart php_fpm and
+apache24 after changing the active listener or pool settings.
 EOM
 }
 ]

@@ -1,0 +1,14 @@
+[swallowtail]
+user = www
+group = www
+listen = %%SWALLOWTAIL_PHP_FPM_LISTEN%%
+listen.allowed_clients = 127.0.0.1
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+
+php_admin_value[upload_max_filesize] = %%SWALLOWTAIL_UPLOAD_MAX_FILESIZE%%
+php_admin_value[post_max_size] = %%SWALLOWTAIL_POST_MAX_SIZE%%

@@ -244,18 +244,50 @@ Enable PHP-FPM:
 sysrc php_fpm_enable=YES
 ```
 
-The default listener is suitable:
+The bundled FreeBSD port installs a dedicated SwallowTail PHP-FPM pool:
+
+```text
+/usr/local/etc/php-fpm.d/swallowtail.conf
+```
+
+By default, that pool uses a separate listener and sets RAW upload limits for
+SwallowTail:
 
 ```ini
+[swallowtail]
 user = www
 group = www
-listen = 127.0.0.1:9000
+listen = 127.0.0.1:9001
+listen.allowed_clients = 127.0.0.1
+php_admin_value[upload_max_filesize] = 128M
+php_admin_value[post_max_size] = 128M
+```
+
+For a manual, non-port installation, create the same pool file:
+
+```sh
+cat > /usr/local/etc/php-fpm.d/swallowtail.conf <<'EOF'
+[swallowtail]
+user = www
+group = www
+listen = 127.0.0.1:9001
+listen.allowed_clients = 127.0.0.1
+
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+
+php_admin_value[upload_max_filesize] = 128M
+php_admin_value[post_max_size] = 128M
+EOF
 ```
 
 Check it with:
 
 ```sh
-grep -n '^listen' /usr/local/etc/php-fpm.d/www.conf
+grep -nE '^\[|^listen|upload_max_filesize|post_max_size' /usr/local/etc/php-fpm.d/swallowtail.conf
 ```
 
 ## Configure Apache
@@ -297,7 +329,7 @@ ServerName swallowtail.example.invalid:80
     </Directory>
 
     <FilesMatch "\.php$">
-        SetHandler "proxy:fcgi://127.0.0.1:9000"
+        SetHandler "proxy:fcgi://127.0.0.1:9001"
     </FilesMatch>
 
     ErrorLog "/var/log/httpd-swallowtail-error.log"
