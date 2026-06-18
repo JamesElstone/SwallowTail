@@ -5,6 +5,7 @@
 set -eu
 
 PORT_DIR=${SWALLOWTAIL_FREEBSD_PORT_DIR:-/usr/ports/graphics/SwallowTail}
+PORTS_TREE_DIR=${SWALLOWTAIL_FREEBSD_PORTS_TREE_DIR:-/usr/ports}
 BLOB_BASE_URL=${SWALLOWTAIL_FREEBSD_BLOB_BASE_URL:-https://github.com/JamesElstone/SwallowTail/blob/main/FreeBSD}
 RAW_BASE_URL=${SWALLOWTAIL_FREEBSD_RAW_BASE_URL:-https://raw.githubusercontent.com/JamesElstone/SwallowTail/main/FreeBSD}
 PORT_FILES='
@@ -64,6 +65,9 @@ if [ -f "$PORT_DIR/Makefile" ]; then
 	echo "==> make distclean in $PORT_DIR"
 	( cd "$PORT_DIR" && make distclean )
 fi
+
+echo "==> git pull --ff-only in $PORTS_TREE_DIR"
+( cd "$PORTS_TREE_DIR" && git pull --ff-only )
 
 for port_file in $PORT_FILES; do
 	fetch_file "$port_file"
