@@ -15,6 +15,10 @@ service swallowtail_storage start
 service swallowtail_storage status
 ```
 
+`status` reports the daemon pid and runs Python `--health`, which validates the
+PHP storage status command and confirms Redis is reachable through the storage
+cache service.
+
 The installer writes rc.conf defaults and bakes the checkout path into the
 installed rc.d script. Override these with `sysrc` if needed:
 

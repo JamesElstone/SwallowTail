@@ -36,6 +36,10 @@ service swallowtail_conversion status
 service swallowtail_conversion migrate
 ```
 
+`status` reports the daemon pid and runs the same Python `--health` checks used
+before startup, including database, Redis, RawTherapee, work directory, and log
+file checks.
+
 `migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration
 lock, remembers whether the worker was running, stops it so current conversion
 work can drain cleanly, runs `php tools/php/setupDb.php --migrate-only` from the

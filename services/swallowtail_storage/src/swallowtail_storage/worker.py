@@ -57,6 +57,40 @@ class StorageWorker:
         }
         return payload
 
+    def health_checks(self) -> tuple[bool, list[str]]:
+        results: list[str] = []
+        healthy = True
+        status_payload: dict | None = None
+
+        def check(label: str, callback) -> None:
+            nonlocal healthy
+            try:
+                callback()
+                results.append(f"OK {label}")
+            except Exception as exc:
+                healthy = False
+                results.append(f"FAIL {label}: {exc}")
+
+        def storage_status() -> dict:
+            nonlocal status_payload
+            if status_payload is None:
+                status_payload = self.php_json("status")
+                if not status_payload.get("success"):
+                    errors = status_payload.get("errors")
+                    if isinstance(errors, list) and errors:
+                        raise RuntimeError("; ".join(str(error) for error in errors))
+                    raise RuntimeError("storage status command failed")
+            return status_payload
+
+        def redis_status() -> None:
+            cache = storage_status().get("cache")
+            if not isinstance(cache, dict) or not cache.get("redis_available"):
+                raise RuntimeError("Redis ping failed")
+
+        check("storage status", storage_status)
+        check("redis", redis_status)
+        return healthy, results
+
     def mount_signature(self) -> str:
         commands = [["/bin/df", "-Pk"], ["/sbin/mount", "-p"]]
         parts: list[str] = []

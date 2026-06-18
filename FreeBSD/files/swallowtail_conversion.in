@@ -28,7 +28,6 @@ load_rc_config "$name"
 : ${swallowtail_conversion_log:="/var/log/swallowtail_conversion.log"}
 : ${swallowtail_conversion_redis_host:="127.0.0.1"}
 : ${swallowtail_conversion_redis_port:="6379"}
-: ${swallowtail_conversion_redis_service:="redis"}
 : ${swallowtail_conversion_redis_urgent_queue:="swallowtail:conversion:urgent"}
 : ${swallowtail_conversion_redis_normal_queue:="swallowtail:conversion:normal"}
 : ${swallowtail_conversion_redis_timeout_seconds:="5"}
@@ -123,20 +122,10 @@ swallowtail_conversion_process_status()
 	return 1
 }
 
-swallowtail_conversion_redis_status()
+swallowtail_conversion_health_status()
 {
-	redis_output=$(/usr/sbin/service "${swallowtail_conversion_redis_service}" onestatus 2>&1)
-	redis_status=$?
-
-	if [ -n "${redis_output}" ]; then
-		echo "redis: ${redis_output}"
-	elif [ "${redis_status}" -eq 0 ]; then
-		echo "redis: ${swallowtail_conversion_redis_service} is running"
-	else
-		echo "redis: ${swallowtail_conversion_redis_service} is not running"
-	fi
-
-	return "${redis_status}"
+	swallowtail_conversion_export_env
+	${swallowtail_conversion_python} -m swallowtail_conversion --health
 }
 
 swallowtail_conversion_status()
@@ -144,7 +133,7 @@ swallowtail_conversion_status()
 	status=0
 
 	swallowtail_conversion_process_status || status=$?
-	swallowtail_conversion_redis_status || status=$?
+	swallowtail_conversion_health_status || status=$?
 
 	return "${status}"
 }

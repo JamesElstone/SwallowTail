@@ -27,8 +27,6 @@ load_rc_config "$name"
 : ${swallowtail_storage_migration_limit:="10"}
 : ${swallowtail_storage_log:="/var/log/swallowtail_storage.log"}
 : ${swallowtail_storage_log_level:="INFO"}
-: ${swallowtail_storage_redis_service:="redis"}
-
 pidfile="/var/run/swallowtail/storage.pid"
 procname="${swallowtail_storage_python}"
 command="/usr/sbin/daemon"
@@ -67,44 +65,34 @@ swallowtail_storage_precmd()
 	${swallowtail_storage_python} -m swallowtail_storage --health
 }
 
-swallowtail_storage_status()
+swallowtail_storage_process_status()
 {
-	status=0
-
 	if [ -f "${pidfile}" ]; then
 		pid=$(cat "${pidfile}" 2>/dev/null || true)
 		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
 			echo "${name} is running as pid ${pid}"
-		else
-			echo "${name} is not running"
-			status=1
+			return 0
 		fi
-	else
-		echo "${name} is not running"
-		status=1
 	fi
 
-	swallowtail_storage_redis_status || status=$?
-	swallowtail_storage_export_env
-	${swallowtail_storage_python} -m swallowtail_storage --status || status=$?
-
-	return "${status}"
+	echo "${name} is not running"
+	return 1
 }
 
-swallowtail_storage_redis_status()
+swallowtail_storage_health_status()
 {
-	redis_output=$(/usr/sbin/service "${swallowtail_storage_redis_service}" onestatus 2>&1)
-	redis_status=$?
+	swallowtail_storage_export_env
+	${swallowtail_storage_python} -m swallowtail_storage --health
+}
 
-	if [ -n "${redis_output}" ]; then
-		echo "redis: ${redis_output}"
-	elif [ "${redis_status}" -eq 0 ]; then
-		echo "redis: ${swallowtail_storage_redis_service} is running"
-	else
-		echo "redis: ${swallowtail_storage_redis_service} is not running"
-	fi
+swallowtail_storage_status()
+{
+	status=0
 
-	return "${redis_status}"
+	swallowtail_storage_process_status || status=$?
+	swallowtail_storage_health_status || status=$?
+
+	return "${status}"
 }
 
 run_rc_command "$1"

@@ -47,7 +47,10 @@ def main() -> int:
         return 0
 
     if args.health:
-        return 0 if worker.run_php("status") else 1
+        ok, lines = worker.health_checks()
+        for line in lines:
+            print(line)
+        return 0 if ok else 1
 
     if args.once:
         return 0 if worker.run_once() else 1

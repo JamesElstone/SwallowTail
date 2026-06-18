@@ -31,7 +31,8 @@ class StorageWorkerTest(unittest.TestCase):
                     "elif cmd == 'process-migrations':",
                     "    print(json.dumps({'success': True, 'processed': 1}))",
                     "elif cmd == 'status':",
-                    "    print(json.dumps({'success': True, 'cache': {'snapshot': {'mount_signature': 'abc'}}}))",
+                    "    redis_available = '--redis-down' not in sys.argv",
+                    "    print(json.dumps({'success': True, 'cache': {'redis_available': redis_available, 'snapshot': {'mount_signature': 'abc'}}}))",
                     "else:",
                     "    print(json.dumps({'success': False}))",
                     "    raise SystemExit(1)",
@@ -72,6 +73,38 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertEqual("running", status["service"]["state"])
         self.assertEqual(str(self.root), status["service"]["project_root"])
 
+    def test_health_checks_validate_storage_status_and_redis(self) -> None:
+        worker = StorageWorker(self.config())
+
+        ok, lines = worker.health_checks()
+
+        self.assertTrue(ok)
+        self.assertEqual(["OK storage status", "OK redis"], lines)
+
+    def test_health_checks_fail_when_redis_is_unavailable(self) -> None:
+        config = self.config()
+        worker = StorageWorker(
+            StorageConfig(
+                php=config.php,
+                project_root=config.project_root,
+                interval_seconds=config.interval_seconds,
+                migration_limit=config.migration_limit,
+                log_file=config.log_file,
+                log_level=config.log_level,
+            )
+        )
+        original_php_json = worker.php_json
+        worker.php_json = lambda *args: {
+            **original_php_json(*args),
+            "cache": {"redis_available": False},
+        }
+
+        ok, lines = worker.health_checks()
+
+        self.assertFalse(ok)
+        self.assertEqual("OK storage status", lines[0])
+        self.assertEqual("FAIL redis: Redis ping failed", lines[1])
+
     def test_cli_accepts_rc_conf_style_arguments(self) -> None:
         from swallowtail_storage.__main__ import main
         original_argv = sys.argv
@@ -93,6 +126,28 @@ class StorageWorkerTest(unittest.TestCase):
 
             with redirect_stdout(StringIO()):
                 self.assertEqual(0, main())
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_health_prints_internal_checks(self) -> None:
+        from swallowtail_storage.__main__ import main
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "swallowtail_storage",
+                "--project-root",
+                str(self.root),
+                "--php",
+                sys.executable,
+                "--log-file",
+                str(self.log_file),
+                "--health",
+            ]
+
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main())
+            self.assertEqual("OK storage status\nOK redis\n", output.getvalue())
         finally:
             sys.argv = original_argv
 
