@@ -20,6 +20,8 @@ pkg-descr
 files/ext-30-pdo_odbc.ini
 files/pkg-install.in
 files/pkg-message.in
+files/swallowtail-fix-storage-permissions.in
+files/swallowtail-sudoers.in
 files/swallowtail_conversion.in
 files/swallowtail_conversion.newsyslog.conf
 files/swallowtail_storage.in
