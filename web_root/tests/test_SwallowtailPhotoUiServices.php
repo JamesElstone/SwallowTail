@@ -78,6 +78,8 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
 
     foreach ([
         'photo_audit',
+        'storage_migration_job_items',
+        'storage_migration_jobs',
         'photo_conversion_jobs',
         'event_permissions',
         'event_photos',
@@ -186,6 +188,8 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         storage_base_location TEXT NOT NULL UNIQUE,
         is_excluded INTEGER NOT NULL DEFAULT 0,
+        is_zfs INTEGER NOT NULL DEFAULT 0,
+        dataset_name TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
@@ -271,6 +275,37 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         ip_address TEXT NULL,
         user_agent TEXT NULL,
         occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE storage_migration_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_base_location TEXT NOT NULL,
+        destination_base_location TEXT NULL,
+        zpool_name TEXT NULL,
+        dataset_name TEXT NULL,
+        requested_by_user_id INTEGER NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        total_photos INTEGER NOT NULL DEFAULT 0,
+        moved_photos INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        started_at TEXT NULL,
+        completed_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE storage_migration_job_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL,
+        photo_id INTEGER NOT NULL,
+        source_base_location TEXT NOT NULL,
+        destination_base_location TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        file_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        completed_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 };
 

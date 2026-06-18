@@ -1048,6 +1048,12 @@ body.sidebar-collapsed .sidebar-hide-collapsed-link-initials .nav-link-short {
   color: #fff;
 }
 
+.button.warn {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
 .button:disabled {
   background: #e5e7eb;
   border-color: #d1d5db;

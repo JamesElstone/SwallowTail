@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# PROVIDE: swallowtail_storage
+# REQUIRE: LOGIN redis
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="swallowtail_storage"
+rcvar="swallowtail_storage_enable"
+
+load_rc_config "$name"
+
+: ${swallowtail_storage_enable:="NO"}
+: ${swallowtail_storage_project_root:="__PROJECT_ROOT__"}
+: ${swallowtail_storage_config:="/usr/local/etc/swallowtail/storage.ini"}
+: ${swallowtail_storage_python:="/usr/local/bin/python3.11"}
+: ${swallowtail_storage_runner:="/usr/local/libexec/swallowtail_storage_worker"}
+: ${swallowtail_storage_worker_user:="swallowtail"}
+: ${swallowtail_storage_log:="/var/log/swallowtail_storage.log"}
+
+pidfile="/var/run/swallowtail/storage.pid"
+procname="${swallowtail_storage_python}"
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_runner}"
+required_files="${swallowtail_storage_config}"
+extra_commands="onestatus"
+start_precmd="swallowtail_storage_precmd"
+status_cmd="swallowtail_storage_status"
+
+swallowtail_storage_precmd()
+{
+  export PYTHONPATH="${swallowtail_storage_project_root}/service/storage"
+  export PYTHONDONTWRITEBYTECODE=1
+  ${swallowtail_storage_python} -m storage_service --config "${swallowtail_storage_config}" --health
+}
+
+swallowtail_storage_status()
+{
+  if [ -f "${pidfile}" ]; then
+    pid=$(cat "${pidfile}" 2>/dev/null || true)
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      echo "${name} is running as pid ${pid}"
+    else
+      echo "${name} is not running"
+    fi
+  else
+    echo "${name} is not running"
+  fi
+
+  export PYTHONPATH="${swallowtail_storage_project_root}/service/storage"
+  export PYTHONDONTWRITEBYTECODE=1
+  ${swallowtail_storage_python} -m storage_service --config "${swallowtail_storage_config}" --status
+}
+
+run_rc_command "$1"

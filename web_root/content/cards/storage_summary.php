@@ -89,6 +89,9 @@ final class _storage_summaryCard extends CardBaseFramework
             if (!is_array($location) || !empty($location['is_excluded'])) {
                 continue;
             }
+            if (!empty($location['is_zfs']) && empty($location['is_selected_zfs_dataset'])) {
+                continue;
+            }
 
             $included++;
             if (!empty($location['can_write'])) {

@@ -48,11 +48,14 @@ CREATE TABLE IF NOT EXISTS storage_location_properties (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   storage_base_location varchar(1000) NOT NULL,
   is_excluded tinyint(1) NOT NULL DEFAULT 0,
+  is_zfs tinyint(1) NOT NULL DEFAULT 0,
+  dataset_name varchar(1000) DEFAULT NULL,
   created_at datetime NOT NULL DEFAULT current_timestamp(),
   updated_at datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (id),
   UNIQUE KEY uq_storage_location_properties_base (storage_base_location),
   KEY idx_storage_location_properties_excluded (is_excluded),
+  KEY idx_storage_location_properties_zfs (is_zfs, storage_base_location(191)),
   CONSTRAINT chk_storage_location_properties_base_not_blank CHECK (storage_base_location <> '')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

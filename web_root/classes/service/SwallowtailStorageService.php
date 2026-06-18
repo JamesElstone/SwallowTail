@@ -14,22 +14,79 @@ final class SwallowtailStorageService
 
     public function storageLocations(int $requiredBytes = 0, ?string $checksum = null): array
     {
+        $snapshot = (new SwallowtailStorageCacheService())->snapshot();
+        $locations = is_array($snapshot) && isset($snapshot['locations']) && is_array($snapshot['locations'])
+            ? $snapshot['locations']
+            : $this->liveStorageLocations();
+
+        return $this->prepareLocationsForRequest($locations, $requiredBytes, $checksum);
+    }
+
+    public function storageSnapshot(bool $allowStale = false): array
+    {
+        $snapshot = (new SwallowtailStorageCacheService())->snapshot($allowStale);
+        if (is_array($snapshot)) {
+            $snapshot['locations'] = $this->prepareLocationsForRequest((array)($snapshot['locations'] ?? []), 0, null);
+
+            return $snapshot;
+        }
+
+        return $this->liveStorageSnapshot();
+    }
+
+    public function refreshStorageSnapshot(): array
+    {
+        $snapshot = $this->liveStorageSnapshot();
+        (new SwallowtailStorageCacheService())->store($snapshot);
+
+        return $snapshot;
+    }
+
+    public function liveStorageSnapshot(): array
+    {
+        $locations = $this->liveStorageLocations();
+        $zpools = $this->zpoolPanels($locations);
+
+        return [
+            'version' => 1,
+            'generated_at' => time(),
+            'generated_at_iso' => gmdate('c'),
+            'locations' => $locations,
+            'zpools' => $zpools,
+            'mount_signature' => $this->mountSignature($locations),
+        ];
+    }
+
+    public function liveStorageLocations(): array
+    {
         $locations = [];
-        $excluded = $this->excludedLocations();
+        $properties = $this->locationProperties();
         $threshold = $this->fullThresholdPercent();
+        $zfsDatasetsByMount = $this->zfsDatasetsByMountpoint();
+        $selectedDatasets = $this->selectedZfsDatasets($zfsDatasetsByMount, $properties);
 
         foreach ($this->mountedBaseLocations() as $baseLocation) {
             $dataRoot = $this->dataRoot($baseLocation);
             $totalBytes = $this->totalBytes($baseLocation);
             $availableBytes = $this->availableBytes($baseLocation);
             $freePercent = $this->freePercent($availableBytes, $totalBytes);
-            $isExcluded = in_array($baseLocation, $excluded, true);
+            $dataset = $zfsDatasetsByMount[$baseLocation] ?? null;
+            $isZfs = is_array($dataset);
+            $zpoolName = $isZfs ? (string)($dataset['zpool_name'] ?? '') : '';
+            $datasetName = $isZfs ? (string)($dataset['dataset_name'] ?? '') : '';
+            $propertyKey = $isZfs && $zpoolName !== '' ? $zpoolName : $baseLocation;
+            $property = (array)($properties[$propertyKey] ?? []);
+            $isExcluded = !empty($property['is_excluded']);
             $isRoot = $this->isRootLocation($baseLocation);
             $belowThreshold = $freePercent !== null && $freePercent < $threshold;
+            $isSelectedZfsDataset = $isZfs
+                && $zpoolName !== ''
+                && $datasetName !== ''
+                && (string)($selectedDatasets[$zpoolName]['dataset_name'] ?? '') === $datasetName;
 
             $locations[] = [
                 'storage_base_location' => $baseLocation,
-                'label' => $baseLocation,
+                'label' => $isZfs && $datasetName !== '' ? $datasetName : $baseLocation,
                 'root_path' => $dataRoot,
                 'data_root' => $dataRoot,
                 'total_bytes' => $totalBytes,
@@ -38,13 +95,110 @@ final class SwallowtailStorageService
                 'full_threshold_percent' => $threshold,
                 'is_excluded' => $isExcluded,
                 'is_root_partition' => $isRoot,
+                'is_zfs' => $isZfs,
+                'is_zpool_panel' => false,
+                'zpool_name' => $zpoolName,
+                'dataset_name' => $datasetName,
+                'is_selected_zfs_dataset' => $isSelectedZfsDataset,
                 'is_full' => $belowThreshold,
                 'can_write' => !$isExcluded
                     && !$belowThreshold
-                    && ($availableBytes === null || $availableBytes >= $requiredBytes),
+                    && (!$isZfs || $isSelectedZfsDataset)
+                    && ($availableBytes === null || $availableBytes >= 0),
             ];
         }
 
+        usort($locations, static fn(array $a, array $b): int => strcmp((string)$a['storage_base_location'], (string)$b['storage_base_location']));
+
+        return $locations;
+    }
+
+    public function writableLocationForChecksumExcluding(string $checksum, int $requiredBytes = 0, array $excludedBaseLocations = []): array
+    {
+        $excluded = array_map(fn(string $path): string => $this->normaliseAbsoluteDirectory($path), $excludedBaseLocations);
+        $locations = array_values(array_filter(
+            $this->storageLocations($requiredBytes),
+            static fn(array $location): bool => !in_array((string)($location['storage_base_location'] ?? ''), $excluded, true)
+        ));
+        $location = $this->chooseWritableLocation($checksum, $requiredBytes, $locations);
+        if ($location === null) {
+            throw new RuntimeException('No writable SwallowTail storage location has enough free space.');
+        }
+
+        return $location;
+    }
+
+    public function setZpoolDataset(string $zpoolName, string $datasetName): void
+    {
+        if (!InterfaceDB::tableExists('storage_location_properties')) {
+            throw new RuntimeException('Storage location properties table is not available. Run the database migrations.');
+        }
+
+        $zpoolName = trim($zpoolName);
+        $datasetName = trim($datasetName);
+        if ($zpoolName === '' || $datasetName === '') {
+            throw new InvalidArgumentException('Zpool and dataset names must not be empty.');
+        }
+
+        $existingId = InterfaceDB::fetchColumn(
+            'SELECT id FROM storage_location_properties WHERE storage_base_location = :storage_base_location AND is_zfs = 1 LIMIT 1',
+            ['storage_base_location' => $zpoolName]
+        );
+
+        if ($existingId !== false && $existingId !== null) {
+            InterfaceDB::prepareExecute(
+                "UPDATE storage_location_properties
+                 SET dataset_name = :dataset_name,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = :id",
+                [
+                    'id' => (int)$existingId,
+                    'dataset_name' => $datasetName,
+                ]
+            );
+        } else {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO storage_location_properties (
+                    storage_base_location,
+                    is_excluded,
+                    is_zfs,
+                    dataset_name
+                ) VALUES (
+                    :storage_base_location,
+                    0,
+                    1,
+                    :dataset_name
+                )",
+                [
+                    'storage_base_location' => $zpoolName,
+                    'dataset_name' => $datasetName,
+                ]
+            );
+        }
+
+        (new SwallowtailStorageCacheService())->clear();
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $locations
+     */
+    private function prepareLocationsForRequest(array $locations, int $requiredBytes, ?string $checksum): array
+    {
+        foreach ($locations as &$location) {
+            if (!is_array($location)) {
+                $location = [];
+                continue;
+            }
+
+            $availableBytes = is_numeric($location['available_bytes'] ?? null) ? (int)$location['available_bytes'] : null;
+            $location['can_write'] = empty($location['is_excluded'])
+                && empty($location['is_full'])
+                && (empty($location['is_zfs']) || !empty($location['is_selected_zfs_dataset']))
+                && ($availableBytes === null || $availableBytes >= $requiredBytes);
+        }
+        unset($location);
+
+        $locations = array_values(array_filter($locations, static fn(array $location): bool => $location !== []));
         usort($locations, static fn(array $a, array $b): int => strcmp((string)$a['storage_base_location'], (string)$b['storage_base_location']));
 
         if ($checksum !== null && $checksum !== '') {
@@ -178,22 +332,27 @@ final class SwallowtailStorageService
                     'is_excluded' => $isExcluded ? 1 : 0,
                 ]
             );
+            (new SwallowtailStorageCacheService())->clear();
             return;
         }
 
         InterfaceDB::prepareExecute(
             "INSERT INTO storage_location_properties (
                 storage_base_location,
-                is_excluded
+                is_excluded,
+                is_zfs
             ) VALUES (
                 :storage_base_location,
-                :is_excluded
+                :is_excluded,
+                0
             )",
             [
                 'storage_base_location' => $storageBaseLocation,
                 'is_excluded' => $isExcluded ? 1 : 0,
             ]
         );
+
+        (new SwallowtailStorageCacheService())->clear();
     }
 
     public function normaliseChecksum(string $checksum): string
@@ -277,6 +436,192 @@ final class SwallowtailStorageService
         return $output !== [] ? $output : [dirname(PROJECT_ROOT)];
     }
 
+    /**
+     * @param array<int, array<string, mixed>> $locations
+     * @return array<int, array<string, mixed>>
+     */
+    private function zpoolPanels(array $locations): array
+    {
+        $pools = $this->zpoolList();
+        $datasetsByPool = [];
+        foreach ($locations as $location) {
+            if (empty($location['is_zfs']) || empty($location['zpool_name']) || empty($location['dataset_name'])) {
+                continue;
+            }
+            $zpoolName = (string)$location['zpool_name'];
+            $datasetsByPool[$zpoolName][] = [
+                'dataset_name' => (string)$location['dataset_name'],
+                'mountpoint' => (string)$location['storage_base_location'],
+                'selected' => !empty($location['is_selected_zfs_dataset']),
+                'available_bytes' => $location['available_bytes'] ?? null,
+                'total_bytes' => $location['total_bytes'] ?? null,
+                'free_percent' => $location['free_percent'] ?? null,
+            ];
+        }
+
+        $zpools = [];
+        foreach ($datasetsByPool as $zpoolName => $datasets) {
+            usort($datasets, static fn(array $a, array $b): int => strcmp((string)$a['dataset_name'], (string)$b['dataset_name']));
+            $selected = null;
+            foreach ($datasets as $dataset) {
+                if (!empty($dataset['selected'])) {
+                    $selected = $dataset;
+                    break;
+                }
+            }
+            $selected ??= $datasets[0] ?? [];
+            $pool = (array)($pools[$zpoolName] ?? []);
+            $totalBytes = $pool['total_bytes'] ?? ($selected['total_bytes'] ?? null);
+            $availableBytes = $pool['available_bytes'] ?? ($selected['available_bytes'] ?? null);
+
+            $zpools[] = [
+                'storage_base_location' => $zpoolName,
+                'label' => $zpoolName,
+                'is_zfs' => true,
+                'is_zpool_panel' => true,
+                'zpool_name' => $zpoolName,
+                'datasets' => $datasets,
+                'selected_dataset_name' => (string)($selected['dataset_name'] ?? ''),
+                'selected_mountpoint' => (string)($selected['mountpoint'] ?? ''),
+                'total_bytes' => $totalBytes,
+                'available_bytes' => $availableBytes,
+                'free_percent' => $this->freePercent(
+                    is_numeric($availableBytes) ? (int)$availableBytes : null,
+                    is_numeric($totalBytes) ? (int)$totalBytes : null
+                ),
+            ];
+        }
+
+        usort($zpools, static fn(array $a, array $b): int => strcmp((string)$a['zpool_name'], (string)$b['zpool_name']));
+
+        return $zpools;
+    }
+
+    private function mountSignature(array $locations): string
+    {
+        $parts = [];
+        foreach ($locations as $location) {
+            $parts[] = implode('|', [
+                (string)($location['storage_base_location'] ?? ''),
+                (string)($location['dataset_name'] ?? ''),
+                (string)($location['zpool_name'] ?? ''),
+            ]);
+        }
+
+        sort($parts, SORT_STRING);
+
+        return hash('sha256', implode("\n", $parts));
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function zfsDatasetsByMountpoint(): array
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return [];
+        }
+
+        $result = @shell_exec('zfs list -H -p -o name,mountpoint 2>/dev/null');
+        if (!is_string($result) || trim($result) === '') {
+            return [];
+        }
+
+        $datasets = [];
+        foreach (preg_split('/\r?\n/', trim($result)) ?: [] as $line) {
+            $columns = preg_split('/\s+/', trim($line), 2);
+            if (!is_array($columns) || count($columns) < 2) {
+                continue;
+            }
+            $datasetName = trim((string)$columns[0]);
+            $mountpoint = trim((string)$columns[1]);
+            if ($datasetName === '' || $mountpoint === '' || in_array($mountpoint, ['-', 'none', 'legacy'], true)) {
+                continue;
+            }
+            $normalisedMount = $this->normaliseAbsoluteDirectory($mountpoint);
+            $zpoolName = explode('/', $datasetName, 2)[0];
+            $datasets[$normalisedMount] = [
+                'dataset_name' => $datasetName,
+                'zpool_name' => $zpoolName,
+                'mountpoint' => $normalisedMount,
+            ];
+        }
+
+        return $datasets;
+    }
+
+    /**
+     * @return array<string, array<string, int|null>>
+     */
+    private function zpoolList(): array
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return [];
+        }
+
+        $result = @shell_exec('zpool list -H -p -o name,size,alloc,free 2>/dev/null');
+        if (!is_string($result) || trim($result) === '') {
+            return [];
+        }
+
+        $pools = [];
+        foreach (preg_split('/\r?\n/', trim($result)) ?: [] as $line) {
+            $columns = preg_split('/\s+/', trim($line));
+            if (!is_array($columns) || count($columns) < 4) {
+                continue;
+            }
+            $name = trim((string)$columns[0]);
+            if ($name === '') {
+                continue;
+            }
+            $pools[$name] = [
+                'total_bytes' => is_numeric($columns[1]) ? (int)$columns[1] : null,
+                'used_bytes' => is_numeric($columns[2]) ? (int)$columns[2] : null,
+                'available_bytes' => is_numeric($columns[3]) ? (int)$columns[3] : null,
+            ];
+        }
+
+        return $pools;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $zfsDatasetsByMount
+     * @param array<string, array<string, mixed>> $properties
+     * @return array<string, array<string, string>>
+     */
+    private function selectedZfsDatasets(array $zfsDatasetsByMount, array $properties): array
+    {
+        $datasetsByPool = [];
+        foreach ($zfsDatasetsByMount as $dataset) {
+            $zpoolName = (string)($dataset['zpool_name'] ?? '');
+            if ($zpoolName === '') {
+                continue;
+            }
+            $datasetsByPool[$zpoolName][] = $dataset;
+        }
+
+        $selected = [];
+        foreach ($datasetsByPool as $zpoolName => $datasets) {
+            usort($datasets, static fn(array $a, array $b): int => strcmp((string)$a['dataset_name'], (string)$b['dataset_name']));
+            $configuredDataset = trim((string)(($properties[$zpoolName] ?? [])['dataset_name'] ?? ''));
+            $chosen = $datasets[0] ?? [];
+            foreach ($datasets as $dataset) {
+                if ($configuredDataset !== '' && (string)$dataset['dataset_name'] === $configuredDataset) {
+                    $chosen = $dataset;
+                    break;
+                }
+            }
+            if ($chosen !== []) {
+                $selected[$zpoolName] = [
+                    'dataset_name' => (string)$chosen['dataset_name'],
+                    'mountpoint' => (string)$chosen['mountpoint'],
+                ];
+            }
+        }
+
+        return $selected;
+    }
+
     private function windowsMountedBaseLocations(): array
     {
         $drive = preg_match('/^[A-Za-z]:[\\\\\\/]/', PROJECT_ROOT) === 1 ? substr(PROJECT_ROOT, 0, 3) : '';
@@ -284,16 +629,33 @@ final class SwallowtailStorageService
         return $drive !== '' ? [$drive] : [PROJECT_ROOT];
     }
 
-    private function excludedLocations(): array
+    private function locationProperties(): array
     {
-        if (!InterfaceDB::tableExists('storage_location_properties')) {
+        try {
+            if (!InterfaceDB::tableExists('storage_location_properties')) {
+                return [];
+            }
+        } catch (Throwable) {
             return [];
         }
 
-        return array_map(
-            fn(array $row): string => $this->normaliseAbsoluteDirectory((string)$row['storage_base_location']),
-            InterfaceDB::fetchAll('SELECT storage_base_location FROM storage_location_properties WHERE is_excluded = 1')
-        );
+        $properties = [];
+        foreach (InterfaceDB::fetchAll('SELECT storage_base_location, is_excluded, is_zfs, dataset_name FROM storage_location_properties') as $row) {
+            $isZfs = !empty($row['is_zfs']);
+            $key = $isZfs
+                ? trim((string)$row['storage_base_location'])
+                : $this->normaliseAbsoluteDirectory((string)$row['storage_base_location']);
+            if ($key === '') {
+                continue;
+            }
+            $properties[$key] = [
+                'is_excluded' => !empty($row['is_excluded']),
+                'is_zfs' => $isZfs,
+                'dataset_name' => (string)($row['dataset_name'] ?? ''),
+            ];
+        }
+
+        return $properties;
     }
 
     private function dataRoot(string $baseLocation): string

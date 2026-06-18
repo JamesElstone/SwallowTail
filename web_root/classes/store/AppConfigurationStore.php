@@ -294,6 +294,12 @@ final class AppConfigurationStore
                 'raw_conversion' => [
                     'thumbnail_max_pixels' => 512,
                 ],
+                'redis' => [
+                    'host' => '127.0.0.1',
+                    'port' => 6379,
+                    'urgent_queue' => 'swallowtail:conversion:urgent',
+                    'normal_queue' => 'swallowtail:conversion:normal',
+                ],
             ],
             'site_context' => [
                 'service' => '',

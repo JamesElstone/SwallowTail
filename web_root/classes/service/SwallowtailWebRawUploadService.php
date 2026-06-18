@@ -94,12 +94,20 @@ final class SwallowtailWebRawUploadService
             ];
         }
 
-        $result = $this->photoIngestService->ingestLocalRawFile($tmpName, $filename, [
-            'move_source' => false,
-            'uploaded_via' => 'web',
-            'uploaded_by_user_id' => $userId,
-            'request_metadata' => $requestMetadata,
-        ]);
+        try {
+            $result = $this->photoIngestService->ingestLocalRawFile($tmpName, $filename, [
+                'move_source' => false,
+                'uploaded_via' => 'web',
+                'uploaded_by_user_id' => $userId,
+                'request_metadata' => $requestMetadata,
+            ]);
+        } catch (RuntimeException $exception) {
+            return [
+                'success' => false,
+                'filename' => $filename,
+                'errors' => [$filename . ': ' . $this->publicStorageError($exception)],
+            ];
+        }
 
         return array_merge(
             [
@@ -108,6 +116,13 @@ final class SwallowtailWebRawUploadService
             ],
             $result
         );
+    }
+
+    private function publicStorageError(RuntimeException $exception): string
+    {
+        return str_contains($exception->getMessage(), 'No writable SwallowTail storage location')
+            ? 'No upload storage locations are currently available.'
+            : 'The CR2 upload failed while storing the file.';
     }
 
     private function normaliseUploads(array $input): array

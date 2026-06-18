@@ -88,6 +88,8 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
 
     foreach ([
         'photo_audit',
+        'storage_migration_job_items',
+        'storage_migration_jobs',
         'photo_conversion_jobs',
         'event_permissions',
         'event_photos',
@@ -151,6 +153,8 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         storage_base_location TEXT NOT NULL UNIQUE,
         is_excluded INTEGER NOT NULL DEFAULT 0,
+        is_zfs INTEGER NOT NULL DEFAULT 0,
+        dataset_name TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
@@ -237,6 +241,37 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         ip_address TEXT NULL,
         user_agent TEXT NULL,
         occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE storage_migration_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_base_location TEXT NOT NULL,
+        destination_base_location TEXT NULL,
+        zpool_name TEXT NULL,
+        dataset_name TEXT NULL,
+        requested_by_user_id INTEGER NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        total_photos INTEGER NOT NULL DEFAULT 0,
+        moved_photos INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        started_at TEXT NULL,
+        completed_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE storage_migration_job_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL,
+        photo_id INTEGER NOT NULL,
+        source_base_location TEXT NOT NULL,
+        destination_base_location TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        file_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NULL,
+        completed_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
 };
 
@@ -380,6 +415,78 @@ $harness->check(SwallowtailStorageService::class, 'builds deterministic image pa
         $harness->assertTrue(str_ends_with($filteredPath, $sha256 . '_filtered.jpg'));
         $harness->assertTrue(!str_starts_with($sourcePath, APP_ROOT));
     });
+});
+
+$harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file families after SHA-256 verification', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $storage = new SwallowtailStorageService();
+    $root = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'swallowtail-migrate-' . bin2hex(random_bytes(4));
+    $sourceBase = $root . DIRECTORY_SEPARATOR . 'source';
+    $destinationBase = $root . DIRECTORY_SEPARATOR . 'destination';
+    $sha256 = str_repeat('e', 64);
+
+    try {
+        $sourcePath = $storage->imagePath($sourceBase, $sha256, 'source');
+        $thumbnailPath = $storage->imagePath($sourceBase, $sha256, 'thumbnail');
+        $storage->ensureDirectoryForPath($sourcePath);
+        file_put_contents($sourcePath, 'source-bytes', LOCK_EX);
+        file_put_contents($thumbnailPath, 'thumbnail-bytes', LOCK_EX);
+
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location
+            ) VALUES (
+                'IMG_MOVE.CR2',
+                'cr2',
+                12,
+                :sha256,
+                :storage_base_location
+            )",
+            [
+                'sha256' => $sha256,
+                'storage_base_location' => rtrim($sourceBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR,
+            ]
+        );
+        $photoId = (int)InterfaceDB::fetchColumn('SELECT MAX(id) FROM photos');
+
+        $jobId = (new SwallowtailStorageMigrationService())->enqueue($sourceBase, $destinationBase, null, null, null);
+        $harness->assertTrue((int)$jobId > 0);
+        $processed = (new SwallowtailStorageMigrationService())->processPending(1);
+
+        $harness->assertSame(1, $processed);
+        $row = InterfaceDB::fetchOne('SELECT storage_base_location FROM photos WHERE id = :id', ['id' => $photoId]);
+        $harness->assertSame(rtrim($destinationBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR, (string)($row['storage_base_location'] ?? ''));
+        $harness->assertTrue(is_file($storage->imagePath($destinationBase, $sha256, 'source')));
+        $harness->assertTrue(is_file($storage->imagePath($destinationBase, $sha256, 'thumbnail')));
+        $harness->assertTrue(!is_file($sourcePath));
+        $harness->assertTrue(!is_file($thumbnailPath));
+        $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', [
+            'photo_id' => $photoId,
+            'action_type' => 'storage_location_migrated',
+        ]));
+    } finally {
+        foreach ([$sourceBase, $destinationBase] as $base) {
+            foreach (SwallowtailStorageService::IMAGE_TYPES as $imageType) {
+                try {
+                    @unlink($storage->imagePath($base, $sha256, $imageType));
+                } catch (Throwable) {
+                }
+            }
+            try {
+                $folder = dirname($storage->imagePath($base, $sha256, 'source'));
+                @rmdir($folder);
+                @rmdir(dirname($folder));
+                @rmdir($base . DIRECTORY_SEPARATOR . SwallowtailStorageService::DATA_DIRECTORY);
+                @rmdir($base);
+            } catch (Throwable) {
+            }
+        }
+        @rmdir($root);
+    }
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to PHP upload limits', function () use ($harness, $swallowtailWriteRawFixture): void {
@@ -1883,6 +1990,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $durationPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_003_raw_conversion_duration.sql';
     $embeddedPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_004_raw_conversion_embedded.sql';
     $quickHashPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_005_raw_quick_hash.sql';
+    $storageMigrationPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_17_002_zfs_storage_cache_and_migrations.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -1890,22 +1998,27 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $durationSql = file_get_contents($durationPath);
     $embeddedSql = file_get_contents($embeddedPath);
     $quickHashSql = file_get_contents($quickHashPath);
+    $storageMigrationSql = file_get_contents($storageMigrationPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
         'CREATE TABLE IF NOT EXISTS storage_location_properties',
+        'CREATE TABLE IF NOT EXISTS storage_migration_jobs',
+        'CREATE TABLE IF NOT EXISTS storage_migration_job_items',
         'CREATE TABLE IF NOT EXISTS photos',
         'CREATE TABLE IF NOT EXISTS event_permissions',
         'CREATE TABLE IF NOT EXISTS api_upload_tokens',
         'CREATE TABLE IF NOT EXISTS api_upload_token_cidrs',
         'CREATE TABLE IF NOT EXISTS photo_conversion_jobs',
         'storage_base_location',
+        'is_zfs',
+        'dataset_name',
         'image_type enum',
         'profile_path',
         'output_width',

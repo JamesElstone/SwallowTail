@@ -62,6 +62,15 @@ $harness->check(_storage_summaryCard::class, 'summarises included storage capaci
             'can_write' => false,
         ],
         [
+            'storage_base_location' => '/zfs/a',
+            'total_bytes' => 5000,
+            'available_bytes' => 5000,
+            'is_excluded' => false,
+            'is_zfs' => true,
+            'is_selected_zfs_dataset' => false,
+            'can_write' => true,
+        ],
+        [
             'storage_base_location' => '/storage/3',
             'total_bytes' => 9000,
             'available_bytes' => 9000,
@@ -83,6 +92,55 @@ $harness->check(_storage_summaryCard::class, 'summarises included storage capaci
 
     $harness->assertTrue(str_contains($chartHtml, 'chart-pie-slice'));
     $harness->assertTrue(str_contains($chartHtml, 'Included storage capacity'));
+});
+
+$harness->check(_storage_availableCard::class, 'renders zpool dataset select and non-zfs migration controls', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ];
+
+    $zpoolCard = new ReflectionMethod($card, 'zpoolCard');
+    $zpoolCard->setAccessible(true);
+    $zpoolHtml = (string)$zpoolCard->invoke($card, [
+        'zpool_name' => 'tank',
+        'selected_dataset_name' => 'tank/photos',
+        'selected_mountpoint' => '/storage/photos',
+        'available_bytes' => 1000,
+        'total_bytes' => 2000,
+        'free_percent' => 50,
+        'datasets' => [
+            ['dataset_name' => 'tank/archive', 'mountpoint' => '/storage/archive'],
+            ['dataset_name' => 'tank/photos', 'mountpoint' => '/storage/photos', 'selected' => true],
+        ],
+    ], $context);
+
+    $harness->assertTrue(str_contains($zpoolHtml, 'name="storage_settings_action" value="set_zpool_dataset"'));
+    $harness->assertTrue(str_contains($zpoolHtml, 'name="zpool_name" value="tank"'));
+    $harness->assertTrue(str_contains($zpoolHtml, '<select name="dataset_name" data-submit-on-change="true">'));
+    $harness->assertTrue(str_contains($zpoolHtml, 'value="tank/photos" selected'));
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => false,
+        'can_write' => true,
+    ], $context);
+
+    $harness->assertTrue(str_contains($locationHtml, 'Migrate Files from this Location'));
+    $harness->assertTrue(str_contains($locationHtml, 'data-chicken-check="true"'));
+    $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
 });
 
 

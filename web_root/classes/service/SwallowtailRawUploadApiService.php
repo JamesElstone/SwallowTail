@@ -101,21 +101,28 @@ final class SwallowtailRawUploadApiService
                 ], 400);
             }
 
-            $result = $this->photoIngestService->ingestLocalRawFile(
-                (string)$upload['tmp_name'],
-                (string)($upload['name'] ?? $this->filenameFromRequest($request)),
-                [
-                    'move_source' => $temporaryFile !== null,
-                    'uploaded_via' => 'api',
-                    'upload_token_id' => (int)$uploadToken['id'],
-                    'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
-                    'request_metadata' => [
-                        'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
-                        'ip_address' => (string)$request->remoteAddress(),
-                        'user_agent' => (string)$request->header('User-Agent', ''),
-                    ],
-                ]
-            );
+            try {
+                $result = $this->photoIngestService->ingestLocalRawFile(
+                    (string)$upload['tmp_name'],
+                    (string)($upload['name'] ?? $this->filenameFromRequest($request)),
+                    [
+                        'move_source' => $temporaryFile !== null,
+                        'uploaded_via' => 'api',
+                        'upload_token_id' => (int)$uploadToken['id'],
+                        'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
+                        'request_metadata' => [
+                            'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
+                            'ip_address' => (string)$request->remoteAddress(),
+                            'user_agent' => (string)$request->header('User-Agent', ''),
+                        ],
+                    ]
+                );
+            } catch (RuntimeException $exception) {
+                return ResponseFramework::json([
+                    'success' => false,
+                    'errors' => [$this->publicStorageError($exception)],
+                ], 503);
+            }
 
             if (empty($result['success'])) {
                 return ResponseFramework::json($result, 400);
@@ -164,6 +171,13 @@ final class SwallowtailRawUploadApiService
         }
 
         return $result;
+    }
+
+    private function publicStorageError(RuntimeException $exception): string
+    {
+        return str_contains($exception->getMessage(), 'No writable SwallowTail storage location')
+            ? 'No upload storage locations are currently available.'
+            : 'RAW upload failed while storing the file.';
     }
 
     private function filenameFromRequest(RequestFramework $request): string
