@@ -1280,6 +1280,36 @@ static int JsonFirstArrayStringValue(const char *json, const char *key, char *ou
     return i > 0;
 }
 
+static void LogResponseSummary(const char *label, DWORD status, const char *response)
+{
+    char errorText[512];
+    char preview[512];
+    DWORD i = 0;
+    DWORD j = 0;
+    int previousSpace = 0;
+
+    if (JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+        LogMessage("%s failed response: status=%lu error=%s", label, status, errorText);
+        return;
+    }
+
+    while (response && response[i] && j + 1 < sizeof(preview)) {
+        unsigned char ch = (unsigned char)response[i++];
+        if (ch < 32 || ch == 127) {
+            if (!previousSpace && j > 0) {
+                preview[j++] = ' ';
+                previousSpace = 1;
+            }
+            continue;
+        }
+        preview[j++] = (char)ch;
+        previousSpace = ch == ' ' || ch == '\t';
+    }
+    preview[j] = '\0';
+
+    LogMessage("%s failed response: status=%lu preview=%s", label, status, preview[0] ? preview : "(empty)");
+}
+
 static int JsonBoolValue(const char *json, const char *key, int *value)
 {
     char needle[128];
@@ -1467,6 +1497,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     INTERNET_BUFFERSA buffers;
     DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
     DWORD got, wrote, status = 0, statusSize = sizeof(DWORD), used = 0;
+    BOOL readOk;
     BYTE buf[65536];
     int ok = 0;
     int duplicate = 0;
@@ -1475,14 +1506,18 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
     SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
-    if (!ParseUrl(url, &parsed)) return 0;
+    if (!ParseUrl(url, &parsed)) {
+        LogMessage("Raw upload failed before send: could not parse url=%s", url);
+        return 0;
+    }
     if (parsed.secure) flags |= INTERNET_FLAG_SECURE;
     SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
         "X-SwallowTail-Upload-Token: %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
-        "X-Swallowtail-Device-ID: %s\r\n",
+        "X-Swallowtail-Device-ID: %s\r\n"
+        "X-Requested-With: XMLHttpRequest\r\n",
         g_app.uploadToken, g_app.uploadToken, filename, g_app.deviceId);
     headers[sizeof(headers) - 1] = '\0';
     LogMessage("Raw upload request prepared: url=%s filename=%s token_present=%s token_length=%u auth_header=yes fallback_header=yes",
@@ -1492,23 +1527,51 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         (unsigned)lstrlenA(g_app.uploadToken));
 
     file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    if (file == INVALID_HANDLE_VALUE) goto done;
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMessage("Raw upload failed before send: could not open file path=%s error=%lu", path, GetLastError());
+        goto done;
+    }
     internet = InternetOpenA("SpiceBush/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!internet) goto done;
+    if (!internet) {
+        LogMessage("Raw upload failed before send: InternetOpen error=%lu", GetLastError());
+        goto done;
+    }
     connect = InternetConnectA(internet, parsed.host, parsed.port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    if (!connect) goto done;
+    if (!connect) {
+        LogMessage("Raw upload failed before send: InternetConnect host=%s port=%u error=%lu", parsed.host, (unsigned)parsed.port, GetLastError());
+        goto done;
+    }
     request = HttpOpenRequestA(connect, "POST", parsed.path, "HTTP/1.1", NULL, NULL, flags, 0);
-    if (!request) goto done;
+    if (!request) {
+        LogMessage("Raw upload failed before send: HttpOpenRequest path=%s error=%lu", parsed.path, GetLastError());
+        goto done;
+    }
     ZeroMemory(&buffers, sizeof(buffers));
     buffers.dwStructSize = sizeof(buffers);
     buffers.lpcszHeader = headers;
     buffers.dwHeadersLength = lstrlenA(headers);
     buffers.dwBufferTotal = (DWORD)sizeBytes;
-    if (!HttpSendRequestExA(request, &buffers, NULL, 0, 0)) goto done;
-    while (ReadFile(file, buf, sizeof(buf), &got, NULL) && got > 0) {
-        if (!InternetWriteFile(request, buf, got, &wrote) || wrote != got) goto done;
+    if (!HttpSendRequestExA(request, &buffers, NULL, 0, 0)) {
+        LogMessage("Raw upload failed before body send: HttpSendRequestEx error=%lu header_length=%u total_bytes=%I64u",
+            GetLastError(),
+            (unsigned)buffers.dwHeadersLength,
+            sizeBytes);
+        goto done;
     }
-    if (!HttpEndRequestA(request, NULL, 0, 0)) goto done;
+    while ((readOk = ReadFile(file, buf, sizeof(buf), &got, NULL)) && got > 0) {
+        if (!InternetWriteFile(request, buf, got, &wrote) || wrote != got) {
+            LogMessage("Raw upload failed during body send: wrote=%lu expected=%lu error=%lu", wrote, got, GetLastError());
+            goto done;
+        }
+    }
+    if (!readOk) {
+        LogMessage("Raw upload failed during file read: path=%s error=%lu", path, GetLastError());
+        goto done;
+    }
+    if (!HttpEndRequestA(request, NULL, 0, 0)) {
+        LogMessage("Raw upload failed after body send: HttpEndRequest error=%lu", GetLastError());
+        goto done;
+    }
     HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &statusSize, NULL);
     while (used + 1 < sizeof(response) && InternetReadFile(request, response + used, sizeof(response) - used - 1, &got) && got > 0) {
         used += got;
@@ -1526,6 +1589,9 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         path,
         hash,
         sizeBytes);
+    if (!ok) {
+        LogResponseSummary("Raw upload", status, response);
+    }
 done:
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
     if (request) InternetCloseHandle(request);
