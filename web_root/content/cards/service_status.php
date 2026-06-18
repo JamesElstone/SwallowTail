@@ -50,7 +50,9 @@ final class _service_statusCard extends CardBaseFramework
             $rows .= $this->statusRow((array)$check);
         }
 
-        return '<div class="service-status-list">' . $rows . '</div>';
+        return '<div class="panel-soft service-status-panel">
+            <div class="service-status-list">' . $rows . '</div>
+        </div>';
     }
 
     private function statusRow(array $check): string

@@ -3300,6 +3300,10 @@ label {
   gap: 0;
 }
 
+.service-status-panel {
+  margin-bottom: 0;
+}
+
 .service-status-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
