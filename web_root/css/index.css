@@ -3209,6 +3209,7 @@ label {
 }
 
 .storage-settings-fieldset {
+  margin-bottom: 10px;
   min-width: 0;
 }
 
@@ -3217,7 +3218,9 @@ label {
   flex-flow: row nowrap;
   align-items: center;
   gap: 16px;
+  justify-content: space-between;
   overflow-x: auto;
+  width: 100%;
 }
 
 .storage-settings-row label {
