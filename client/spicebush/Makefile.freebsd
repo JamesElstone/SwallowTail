@@ -12,8 +12,17 @@ all: $(TARGET)
 $(WORKDIR):
 	mkdir -p $(WORKDIR)
 
-$(WORKDIR)/%.o: %.c | $(WORKDIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+$(WORKDIR)/spicebush_freebsd.o: spicebush_freebsd.c spicebush_shared.h spicebush_http.h
+	mkdir -p $(WORKDIR)
+	$(CC) $(CFLAGS) -c spicebush_freebsd.c -o $@
+
+$(WORKDIR)/spicebush_shared.o: spicebush_shared.c spicebush_shared.h
+	mkdir -p $(WORKDIR)
+	$(CC) $(CFLAGS) -c spicebush_shared.c -o $@
+
+$(WORKDIR)/spicebush_http_freebsd.o: spicebush_http_freebsd.c spicebush_http.h spicebush_shared.h
+	mkdir -p $(WORKDIR)
+	$(CC) $(CFLAGS) -c spicebush_http_freebsd.c -o $@
 
 $(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
