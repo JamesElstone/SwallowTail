@@ -146,7 +146,7 @@ Some implementation files still carry eelKit framework names because SwallowTail
 - `web_root/css` and `web_root/js` - application styling and browser behaviour.
 - `web_root/api` - device API, private photo asset serving, and preview endpoints.
 - `client/spicebush` - plain-C Windows tray and FreeBSD CLI uploader client.
-- `service` - Python background services for conversion and storage cache/migration work.
+- `services` - Python background services for conversion and storage cache/migration work.
 - `FreeBSD` - local FreeBSD port files, rc.d service templates, and Apache/PHP integration files.
 - `secure` - private configuration, generated keys, and bootstrap files.
 - `db_schema` - baseline schema and incremental migrations.

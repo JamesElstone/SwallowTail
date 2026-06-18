@@ -24,7 +24,7 @@ Use this layout unless the host has a specific reason to differ:
 ```
 
 Only `web_root` should be served publicly. Do not expose `secure`, `db_schema`,
-`tools`, `service`, `debug/logs`, uploaded photo storage roots, conversion
+`tools`, `services`, `debug/logs`, uploaded photo storage roots, conversion
 caches, or generated ZIP directories.
 
 ## Install Base Packages

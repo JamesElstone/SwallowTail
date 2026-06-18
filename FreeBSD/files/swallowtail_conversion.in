@@ -56,7 +56,7 @@ procname="${swallowtail_conversion_python}"
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -u ${swallowtail_conversion_worker_user} -o ${swallowtail_conversion_log} ${swallowtail_conversion_python} -m swallowtail_conversion"
 required_files="${swallowtail_conversion_python}"
-required_dirs="${swallowtail_conversion_project_root}/service/swallowtail_conversion/src"
+required_dirs="${swallowtail_conversion_project_root}/services/swallowtail_conversion/src"
 extra_commands="reload onestatus migrate"
 start_precmd="swallowtail_conversion_precmd"
 status_cmd="swallowtail_conversion_status"
@@ -91,7 +91,7 @@ swallowtail_conversion_export_env()
 	export SWALLOWTAIL_CONVERSION_TEMP_RETENTION_HOURS="${swallowtail_conversion_temp_retention_hours}"
 	export SWALLOWTAIL_CONVERSION_LOG_FILE="${swallowtail_conversion_log}"
 	export SWALLOWTAIL_CONVERSION_LOG_LEVEL="${swallowtail_conversion_log_level}"
-	export PYTHONPATH="${swallowtail_conversion_project_root}/service/swallowtail_conversion/src"
+	export PYTHONPATH="${swallowtail_conversion_project_root}/services/swallowtail_conversion/src"
 	export PYTHONDONTWRITEBYTECODE=1
 }
 

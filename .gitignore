@@ -3,7 +3,7 @@
 /debug/logs/*
 !/debug/logs/README.md
 /web_root/tests/tmp
-/service/swallowtail_storage/tests/.tmp/
+/services/swallowtail_storage/tests/.tmp/
 tmp/
 .tmp/
 temp/

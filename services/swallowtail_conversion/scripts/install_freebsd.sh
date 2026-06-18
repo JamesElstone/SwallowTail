@@ -11,7 +11,7 @@ LOG_FILE="/var/log/swallowtail_conversion.log"
 NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_conversion.conf"
 TEMPLATE_DIR="${PROJECT_ROOT}/FreeBSD/files"
 
-if [ ! -d "${PROJECT_ROOT}/service/swallowtail_conversion" ]; then
+if [ ! -d "${PROJECT_ROOT}/services/swallowtail_conversion" ]; then
   echo "Conversion service was not found under ${PROJECT_ROOT}" >&2
   exit 1
 fi

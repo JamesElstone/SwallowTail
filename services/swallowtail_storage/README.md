@@ -10,7 +10,7 @@ interval, refreshes early when the host mount signature changes, and runs
 ## Install On FreeBSD
 
 ```sh
-sh service/swallowtail_storage/scripts/install_freebsd.sh /usr/local/swallowtail
+sh services/swallowtail_storage/scripts/install_freebsd.sh /usr/local/swallowtail
 service swallowtail_storage start
 service swallowtail_storage status
 ```

@@ -40,7 +40,7 @@ SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9000
 
 PROJECT_DIRS=	db_schema \
 		secure \
-		service \
+		services \
 		tools \
 		web_root
 PROJECT_FILES=	API.md \

@@ -166,8 +166,8 @@ if [ -z "$PYTHON_BIN" ]; then
 	echo "not ok - Python executable not found; set PYTHON=/path/to/python" >&2
 	FAILURES=$((FAILURES + 1))
 else
-	run_python_service service/swallowtail_conversion swallowtail_conversion "swallowtail_conversion"
-	run_python_service service/swallowtail_storage swallowtail_storage "swallowtail_storage"
+	run_python_service services/swallowtail_conversion swallowtail_conversion "swallowtail_conversion"
+	run_python_service services/swallowtail_storage swallowtail_storage "swallowtail_storage"
 fi
 
 if [ "$FAILURES" -eq 0 ]; then

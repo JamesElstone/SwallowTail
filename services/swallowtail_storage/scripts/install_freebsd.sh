@@ -10,7 +10,7 @@ LOG_FILE="/var/log/swallowtail_storage.log"
 NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_storage.conf"
 TEMPLATE_DIR="${PROJECT_ROOT}/FreeBSD/files"
 
-if [ ! -d "${PROJECT_ROOT}/service/swallowtail_storage" ]; then
+if [ ! -d "${PROJECT_ROOT}/services/swallowtail_storage" ]; then
   echo "Storage service was not found under ${PROJECT_ROOT}" >&2
   exit 1
 fi

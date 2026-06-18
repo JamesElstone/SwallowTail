@@ -13,7 +13,7 @@ defined on the job.
 Run the repo-provided installer from the checked-out project:
 
 ```sh
-sh service/swallowtail_conversion/scripts/install_freebsd.sh /usr/local/swallowtail
+sh services/swallowtail_conversion/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
 The installer creates the rc.d script, worker wrapper, log file, and newsyslog
