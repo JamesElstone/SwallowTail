@@ -58,7 +58,10 @@ final class _storage_availableCard extends CardBaseFramework
 
     private function locationCard(array $location, array $context): string
     {
-        $canWrite = !empty($location['can_write']);
+        $permissionCanWrite = array_key_exists('permission_can_write', $location)
+            ? !empty($location['permission_can_write'])
+            : null;
+        $canWrite = !empty($location['can_write']) && $permissionCanWrite !== false;
         $isExcluded = !empty($location['is_excluded']);
         $isFull = !empty($location['is_full']);
         $isZfs = !empty($location['is_zfs']);
@@ -68,8 +71,16 @@ final class _storage_availableCard extends CardBaseFramework
         $totalBytes = $location['total_bytes'] ?? null;
         $freePercent = $location['free_percent'] ?? null;
         $threshold = (float)($location['full_threshold_percent'] ?? 5);
+        $permissionError = trim((string)($location['permission_error'] ?? ''));
+        $permissionCheckedPath = trim((string)($location['permission_checked_path'] ?? ''));
         $statusClass = $canWrite ? 'success' : 'warning';
-        $statusLabel = $canWrite ? 'Writable' : ($isZfs ? 'ZFS dataset' : ($isExcluded ? 'Excluded' : ($isFull ? 'Below threshold' : 'Unavailable')));
+        $statusLabel = $this->locationStatusLabel($canWrite, $permissionCanWrite, $isZfs, $isExcluded, $isFull);
+        $permissionDetail = $permissionCanWrite === false
+            ? '<p class="storage-location-path storage-location-warning">'
+                . HelperFramework::escape($permissionError !== '' ? $permissionError : 'PHP cannot write to this storage location.')
+                . ($permissionCheckedPath !== '' ? '<br><span>Checked: ' . HelperFramework::escape($permissionCheckedPath) . '</span>' : '')
+                . '</p>'
+            : '';
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $actions = $isZfs ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
@@ -117,8 +128,34 @@ final class _storage_availableCard extends CardBaseFramework
                 </div>
             </dl>
             <p class="storage-location-path">' . HelperFramework::escape((string)($location['root_path'] ?? '')) . '</p>
+            ' . $permissionDetail . '
             ' . $actions . '
         </article>';
+    }
+
+    private function locationStatusLabel(bool $canWrite, ?bool $permissionCanWrite, bool $isZfs, bool $isExcluded, bool $isFull): string
+    {
+        if ($canWrite) {
+            return 'Writable';
+        }
+
+        if ($permissionCanWrite === false) {
+            return 'Not writable';
+        }
+
+        if ($isZfs) {
+            return 'ZFS dataset';
+        }
+
+        if ($isExcluded) {
+            return 'Excluded';
+        }
+
+        if ($isFull) {
+            return 'Below threshold';
+        }
+
+        return 'Unavailable';
     }
 
     private function zpoolCard(array $zpool, array $context): string

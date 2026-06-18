@@ -225,12 +225,12 @@ final class SwallowtailStorageService
 
     public function writableLocationForChecksum(string $checksum, int $requiredBytes = 0): array
     {
-        $location = $this->chooseWritableLocation($checksum, $requiredBytes, $this->storageLocations($requiredBytes));
-        if ($location === null) {
+        $locations = $this->writableLocationsForChecksum($checksum, $this->storageLocations($requiredBytes));
+        if ($locations === []) {
             throw new RuntimeException('No writable SwallowTail storage location has enough free space.');
         }
 
-        return $location;
+        return $locations[0];
     }
 
     public function imagePath(string $storageBaseLocation, string $checksum, string $imageType): string
@@ -282,48 +282,60 @@ final class SwallowtailStorageService
         }
 
         $sourceBytes = (int)filesize($sourcePath);
-        $location = $this->writableLocationForChecksum($checksum, $sourceBytes);
-        $destinationPath = $this->imagePath((string)$location['storage_base_location'], $checksum, 'source');
-        $this->ensureDirectoryForPath($destinationPath);
+        $locations = $this->writableLocationsForChecksum($checksum, $this->storageLocations($sourceBytes));
+        if ($locations === []) {
+            throw new RuntimeException('No writable SwallowTail storage location available.');
+        }
 
-        if (!is_file($destinationPath)) {
+        foreach ($locations as $location) {
+            $destinationPath = $this->imagePath((string)$location['storage_base_location'], $checksum, 'source');
             try {
-                $stored = $this->storeFileToStorage($sourcePath, $destinationPath, $move);
-            } catch (Throwable $exception) {
-                throw new RuntimeException(sprintf(
-                    'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
-                    $sourcePath,
-                    $destinationPath,
-                    (string)$location['storage_base_location'],
-                    $sourceBytes,
-                    $move ? 'yes' : 'no',
-                    $this->filesystemFailureSuffix(null, $exception)
-                ), 0, $exception);
-            }
+                $this->ensureDirectoryForPath($destinationPath);
 
-            if (!$stored['success']) {
-                throw new RuntimeException(sprintf(
-                    'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
-                    $sourcePath,
-                    $destinationPath,
-                    (string)$location['storage_base_location'],
-                    $sourceBytes,
-                    $move ? 'yes' : 'no',
-                    $this->filesystemFailureSuffix($stored['warning'])
-                ));
-            }
+                if (!is_file($destinationPath)) {
+                    try {
+                        $stored = $this->storeFileToStorage($sourcePath, $destinationPath, $move);
+                    } catch (Throwable $exception) {
+                        throw new RuntimeException(sprintf(
+                            'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
+                            $sourcePath,
+                            $destinationPath,
+                            (string)$location['storage_base_location'],
+                            $sourceBytes,
+                            $move ? 'yes' : 'no',
+                            $this->filesystemFailureSuffix(null, $exception)
+                        ), 0, $exception);
+                    }
 
-            try {
-                $this->filesystemOperation(static fn(): bool => chmod($destinationPath, 0660));
-            } catch (Throwable) {
+                    if (!$stored['success']) {
+                        throw new RuntimeException(sprintf(
+                            'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
+                            $sourcePath,
+                            $destinationPath,
+                            (string)$location['storage_base_location'],
+                            $sourceBytes,
+                            $move ? 'yes' : 'no',
+                            $this->filesystemFailureSuffix($stored['warning'])
+                        ));
+                    }
+
+                    try {
+                        $this->filesystemOperation(static fn(): bool => chmod($destinationPath, 0660));
+                    } catch (Throwable) {
+                    }
+                }
+
+                return [
+                    'bytes' => (int)filesize($destinationPath),
+                    'storage_base_location' => (string)$location['storage_base_location'],
+                    'absolute_path' => $destinationPath,
+                ];
+            } catch (RuntimeException) {
+                continue;
             }
         }
 
-        return [
-            'bytes' => (int)filesize($destinationPath),
-            'storage_base_location' => (string)$location['storage_base_location'],
-            'absolute_path' => $destinationPath,
-        ];
+        throw new RuntimeException('No writable SwallowTail storage location available.');
     }
 
     /**
@@ -459,24 +471,38 @@ final class SwallowtailStorageService
 
     private function chooseWritableLocation(string $checksum, int $requiredBytes, array $locations): ?array
     {
+        $writable = $this->writableLocationsForChecksum($checksum, $locations);
+
+        if ($writable === []) {
+            return null;
+        }
+
+        return $writable[0];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $locations
+     * @return array<int, array<string, mixed>>
+     */
+    private function writableLocationsForChecksum(string $checksum, array $locations): array
+    {
         $this->normaliseChecksum($checksum);
         $writable = array_values(array_filter(
             $locations,
             static fn(array $location): bool => !empty($location['can_write'])
         ));
-
         if ($writable === []) {
-            return null;
+            return [];
         }
 
         if ((bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false)) {
             $lastDigit = substr(strtolower($checksum), -1);
             $index = hexdec($lastDigit) % count($writable);
 
-            return $writable[$index];
+            return array_merge(array_slice($writable, $index), array_slice($writable, 0, $index));
         }
 
-        return $writable[0];
+        return $writable;
     }
 
     /**

@@ -249,6 +249,39 @@ $harness->check(_storage_availableCard::class, 'renders ajax settings and per-lo
     $harness->assertTrue(str_contains($locationHtml, 'Exclude from new writes'));
 });
 
+$harness->check(_storage_availableCard::class, 'shows PHP permission failures before writable status', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ];
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => false,
+        'can_write' => true,
+        'permission_can_write' => false,
+        'permission_checked_path' => '/storage/1',
+        'permission_error' => 'SwallowTail storage data root cannot be created because the parent directory is not writable by PHP.',
+    ], $context);
+
+    $harness->assertTrue(str_contains($locationHtml, 'Not writable'));
+    $harness->assertTrue(!str_contains($locationHtml, '>Writable<'));
+    $harness->assertTrue(str_contains($locationHtml, 'parent directory is not writable by PHP'));
+    $harness->assertTrue(str_contains($locationHtml, 'Checked: /storage/1'));
+});
+
 $harness->check(StorageSettingsAction::class, 'returns flash messages for ajax storage settings failures', function () use ($harness): void {
     $request = new RequestFramework(
         ['page' => 'settings'],

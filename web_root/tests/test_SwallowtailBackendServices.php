@@ -725,9 +725,7 @@ $harness->check(SwallowtailStorageService::class, 'reports storage file write fa
                 throw new RuntimeException('Expected storage file write failure.');
             } catch (RuntimeException $exception) {
                 $message = $exception->getMessage();
-                $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', $message, 'storage write failure');
-                $swallowtailAssertContains('destination=' . $destinationPath, $message, 'storage write failure');
-                $swallowtailAssertContains('php_error=', $message, 'storage write failure');
+                $swallowtailAssertContains('No writable SwallowTail storage location available', $message, 'storage write failure');
             }
 
             $output = (string)ob_get_clean();
@@ -2042,13 +2040,13 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $harness->assertSame(503, $response['status']);
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
-    $harness->assertSame('RAW upload failed while storing the file.', (string)(($payload['errors'] ?? [])[0] ?? ''));
-    $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', ($payload['diagnostics'] ?? [])['storage_error'] ?? '', 'RAW upload diagnostics.storage_error');
+    $harness->assertSame('No writable storage locations available.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    $swallowtailAssertContains('No writable SwallowTail storage location available', ($payload['diagnostics'] ?? [])['storage_error'] ?? '', 'RAW upload diagnostics.storage_error');
     $harness->assertSame('upload_token_raw_upload_failed', (string)($auditRows[0]['action_type'] ?? ''));
-    $harness->assertSame('RAW upload failed while storing the file.', (string)($auditRows[0]['reason'] ?? ''));
+    $harness->assertSame('No writable storage locations available.', (string)($auditRows[0]['reason'] ?? ''));
     $harness->assertTrue(is_array($details));
     $harness->assertSame('TEST.CR2', (string)($details['original_filename'] ?? ''));
-    $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', $details['storage_error'] ?? '', 'account audit storage_error detail');
+    $swallowtailAssertContains('No writable SwallowTail storage location available', $details['storage_error'] ?? '', 'account audit storage_error detail');
     $harness->assertSame('DESKTOP-C6R0CCD', (string)($auditRows[0]['device_id'] ?? ''));
     $harness->assertCount(1, $activityRows);
     $harness->assertSame(44, (int)($activityRows[0]['user_id'] ?? 0));
@@ -2056,13 +2054,13 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $harness->assertSame('raw upload failed', (string)($activityRows[0]['action_name'] ?? ''));
     $harness->assertSame('SpiceBush storage test', (string)($activityRows[0]['card_action_name'] ?? ''));
     $harness->assertSame('error', (string)($activityRows[0]['message_type'] ?? ''));
-    $harness->assertSame('RAW upload failed while storing the file.', (string)($activityRows[0]['message_text'] ?? ''));
+    $harness->assertSame('No writable storage locations available.', (string)($activityRows[0]['message_text'] ?? ''));
     $harness->assertSame('POST', (string)($activityRows[0]['request_method'] ?? ''));
     $harness->assertSame('/api/raw-upload.php', (string)($activityRows[0]['request_uri'] ?? ''));
     $harness->assertSame('DESKTOP-C6R0CCD', (string)($activityRows[0]['device_id'] ?? ''));
     $harness->assertCount(1, $logsRows);
     $harness->assertSame('Token Account', (string)($logsRows[0]['user_display_name'] ?? ''));
-    $harness->assertSame('RAW upload failed while storing the file.', (string)($logsRows[0]['message_text'] ?? ''));
+    $harness->assertSame('No writable storage locations available.', (string)($logsRows[0]['message_text'] ?? ''));
 
     AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
     (new SwallowtailStorageCacheService())->clear();
@@ -2522,6 +2520,34 @@ $harness->check(SwallowtailStorageService::class, 'selects writable locations by
         $expected = $locations[hexdec('8') % count($locations)];
         $harness->assertSame((string)$expected['storage_base_location'], (string)$chosen['storage_base_location']);
     });
+});
+
+$harness->check(SwallowtailStorageService::class, 'keeps fallback writable locations after checksum selection', function () use ($harness): void {
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', true);
+
+        $storage = new SwallowtailStorageService();
+        $method = new ReflectionMethod($storage, 'writableLocationsForChecksum');
+        $method->setAccessible(true);
+        $ordered = $method->invoke($storage, str_repeat('a', 63) . '1', [
+            ['storage_base_location' => '/storage/a', 'can_write' => true],
+            ['storage_base_location' => '/storage/b', 'can_write' => true],
+            ['storage_base_location' => '/storage/c', 'can_write' => true],
+        ]);
+
+        $harness->assertSame('/storage/b', (string)($ordered[0]['storage_base_location'] ?? ''));
+        $harness->assertSame('/storage/c', (string)($ordered[1]['storage_base_location'] ?? ''));
+        $harness->assertSame('/storage/a', (string)($ordered[2]['storage_base_location'] ?? ''));
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+    }
 });
 
 $harness->check('SwallowTail migration', 'defines the photo backend tables', function () use ($harness): void {

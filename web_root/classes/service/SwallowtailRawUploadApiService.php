@@ -213,7 +213,7 @@ final class SwallowtailRawUploadApiService
     private function publicStorageError(RuntimeException $exception): string
     {
         return str_contains($exception->getMessage(), 'No writable SwallowTail storage location')
-            ? 'No upload storage locations are currently available.'
+            ? 'No writable storage locations available.'
             : 'RAW upload failed while storing the file.';
     }
 
