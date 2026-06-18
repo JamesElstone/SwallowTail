@@ -29,6 +29,11 @@ A dedicated PHP-FPM pool is installed under the package prefix as:
 
   etc/php-fpm.d/swallowtail.conf
 
+The browser test runner under web_root/tests is disabled unless developer
+options are enabled in secure/app.php. When enabled, its scratch directory and
+fixture configuration are installed writable by the dedicated PHP-FPM user so
+the tests can mutate only their own fixtures.
+
 Enable the APACHECONF port option to install the active Apache include as:
 
   etc/apache24/Includes/swallowtail.conf

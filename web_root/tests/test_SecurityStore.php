@@ -75,6 +75,10 @@ $harness->check(SecurityStore::class, 'loads and preserves generated security fa
         $harness->assertSame($first, $second);
         $harness->assertSame($first, SecurityStore::loadFact('PEPPER', $path));
         $harness->assertSame(64, strlen($first));
+
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            $harness->assertSame(0600, fileperms($path) & 0777);
+        }
     } finally {
         if (is_file($path)) {
             unlink($path);
