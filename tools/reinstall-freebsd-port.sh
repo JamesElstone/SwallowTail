@@ -4,7 +4,7 @@
 
 set -eu
 
-PORT_DIR=${SWALLOWTAIL_FREEBSD_PORT_DIR:-/usr/local/graphics/SwallowTail}
+PORT_DIR=${SWALLOWTAIL_FREEBSD_PORT_DIR:-/usr/ports/graphics/SwallowTail}
 BLOB_BASE_URL=${SWALLOWTAIL_FREEBSD_BLOB_BASE_URL:-https://github.com/JamesElstone/SwallowTail/blob/main/FreeBSD}
 RAW_BASE_URL=${SWALLOWTAIL_FREEBSD_RAW_BASE_URL:-https://raw.githubusercontent.com/JamesElstone/SwallowTail/main/FreeBSD}
 PORT_FILES='
@@ -76,6 +76,9 @@ find "$PORT_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
 echo "==> make clean in $PORT_DIR"
 ( cd "$PORT_DIR" && make clean )
+
+echo "==> make makesum in $PORT_DIR"
+( cd "$PORT_DIR" && make makesum )
 
 echo "==> make in $PORT_DIR"
 ( cd "$PORT_DIR" && make )
