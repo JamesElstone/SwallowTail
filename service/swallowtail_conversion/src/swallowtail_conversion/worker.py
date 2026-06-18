@@ -18,7 +18,7 @@ from .redis_queue import RedisQueue
 class ConversionWorker:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.log = logging.getLogger("raw_conversion.worker")
+        self.log = logging.getLogger("swallowtail_conversion.worker")
         self.db = ConversionDatabase(config.database, config.worker)
         self.redis = RedisQueue(config.redis)
         self.runner = RawTherapeeRunner(config.rawtherapee)

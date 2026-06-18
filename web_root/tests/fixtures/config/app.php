@@ -49,6 +49,7 @@ return array (
       'store_on_root_partition' => false,
       'round_robin_locations' => false,
       'full_threshold_percent' => 5,
+      'test_base_location' => '',
     ),
   ),
 );

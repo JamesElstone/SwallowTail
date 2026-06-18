@@ -102,7 +102,7 @@ Provides a small database-backed queue facade for image generation.
 - Avoids creating duplicate queued or processing jobs for the same photo.
 - Lists queued jobs ordered by priority and age.
 
-The RAW-to-JPEG worker lives under `service/image_engine/raw_conversion`.
+The RAW-to-JPEG worker lives under `service/swallowtail_conversion/src/swallowtail_conversion`.
 
 ## Upload Flow
 

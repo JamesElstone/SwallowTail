@@ -1,4 +1,4 @@
-# SwallowTail Image Engine Service
+# SwallowTail Conversion Service
 
 This service consumes SwallowTail conversion jobs from MariaDB, wakes quickly via
 Redis, and renders `.CR2` RAW image files with `rawtherapee-cli`.
@@ -13,7 +13,7 @@ defined on the job.
 Run the repo-provided installer from the checked-out project:
 
 ```sh
-sh service/image_engine/scripts/install_freebsd.sh /usr/local/swallowtail
+sh service/swallowtail_conversion/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
 The installer creates the rc.d script, worker wrapper, log file, and newsyslog
@@ -21,17 +21,17 @@ rotation config. Service defaults are embedded in the rc.d script and can be
 overridden in `/etc/rc.conf`:
 
 ```sh
-sysrc swallowtail_image_engine_database_dsn=swallowtail
-sysrc swallowtail_image_engine_database_user=swallowtail_worker
-sysrc swallowtail_image_engine_poll_interval_seconds=5
+sysrc swallowtail_conversion_database_dsn=swallowtail
+sysrc swallowtail_conversion_database_user=swallowtail_worker
+sysrc swallowtail_conversion_poll_interval_seconds=5
 ```
 
 ## Operations
 
 ```sh
-service swallowtail_image_engine start
-service swallowtail_image_engine status
-service swallowtail_image_engine migrate
+service swallowtail_conversion start
+service swallowtail_conversion status
+service swallowtail_conversion migrate
 ```
 
 `migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration
@@ -42,13 +42,13 @@ project root, and starts the worker again if it was running before.
 The service command is:
 
 ```sh
-python3.11 -m raw_conversion
+python3.11 -m swallowtail_conversion
 ```
 
 For one-shot testing:
 
 ```sh
-python3.11 -m raw_conversion --once
+python3.11 -m swallowtail_conversion --once
 ```
 
 For one-shot host verification, upload a test CR2 through the normal API and run

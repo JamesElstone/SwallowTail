@@ -13,6 +13,59 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->run(SwallowtailPhotoUiService::class);
 $harness->run(SwallowtailWebRawUploadService::class);
 
+function swallowtail_ui_remove_tree(string $path): void
+{
+    if (!is_dir($path)) {
+        return;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isDir()) {
+            @rmdir($item->getPathname());
+            continue;
+        }
+
+        @unlink($item->getPathname());
+    }
+
+    @rmdir($path);
+}
+
+function swallowtail_ui_test_tmp_root(): string
+{
+    return APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'swallowtail-ui';
+}
+
+function swallowtail_ui_storage_tmp_root(): string
+{
+    return PROJECT_ROOT . 'tmp' . DIRECTORY_SEPARATOR . 'swallowtail-storage' . DIRECTORY_SEPARATOR . 'ui';
+}
+
+function swallowtail_ui_test_temp_file(string $prefix): string
+{
+    $root = swallowtail_ui_test_tmp_root();
+    if (!is_dir($root) && !mkdir($root, 0770, true) && !is_dir($root)) {
+        throw new RuntimeException('Unable to create SwallowTail UI test temp directory.');
+    }
+
+    $path = tempnam($root, $prefix);
+    if (!is_string($path)) {
+        throw new RuntimeException('Unable to create SwallowTail UI test temp file.');
+    }
+
+    return $path;
+}
+
+register_shutdown_function(static function (): void {
+    swallowtail_ui_remove_tree(swallowtail_ui_test_tmp_root());
+    swallowtail_ui_remove_tree(swallowtail_ui_storage_tmp_root());
+});
+
 $swallowtailUiEnableRootStorageForTests = static function (): void {
     static $originalConfig = null;
     static $restoreRegistered = false;
@@ -29,7 +82,8 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
         $restoreRegistered = true;
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
-                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+                AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_ui_storage_tmp_root());
+                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
                 AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
                 $checksums = [
@@ -64,10 +118,12 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
             AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
             AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
             AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 5);
+            AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
         });
     }
 
-    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_ui_storage_tmp_root());
+    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
     AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
     AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
 };
@@ -327,8 +383,7 @@ $swallowtailUiUploadFile = static function (string $path, string $name = 'IMG_90
 
 $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 web uploads and records web ownership', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture, $swallowtailUiUploadFile): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-upload';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
+    $source = swallowtail_ui_test_temp_file('swallowtail-ui-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create upload fixture.');
     }
@@ -348,8 +403,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 we
 
 $harness->check(SwallowtailWebRawUploadService::class, 'rejects invalid CR2 web upload inputs', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-invalid';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
+    $source = swallowtail_ui_test_temp_file('swallowtail-ui-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create upload fixture.');
     }
@@ -383,8 +437,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'rejects invalid CR2 web 
 
 $harness->check(SwallowtailWebRawUploadService::class, 'reports duplicate CR2 uploads without duplicate photo rows', function () use ($harness, $swallowtailUiCreateSchema, $swallowtailUiWriteCr2Fixture, $swallowtailUiUploadFile): void {
     $swallowtailUiCreateSchema();
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-ui-duplicate';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-ui-');
+    $source = swallowtail_ui_test_temp_file('swallowtail-ui-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create upload fixture.');
     }

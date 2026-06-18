@@ -105,7 +105,7 @@ enabled. The OTP field may be left empty for accounts without OTP. The client
 calls:
 
 ```text
-POST /api/spicebush-register.php
+POST /api/register-for-token.php
 ```
 
 The server returns a bearer upload token and API URL. SpiceBush stores those in

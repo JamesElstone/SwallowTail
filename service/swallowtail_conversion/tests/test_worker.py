@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
-from raw_conversion.config import (
+from swallowtail_conversion.config import (
     AppConfig,
     DatabaseConfig,
     LoggingConfig,
@@ -17,11 +17,11 @@ from raw_conversion.config import (
     RedisConfig,
     WorkerConfig,
 )
-from raw_conversion.embedded import EmbeddedJpegExtractor
-from raw_conversion.health import _check_directory_writable, _check_log_writable
-from raw_conversion.jobs import ConversionJob
-from raw_conversion.rawtherapee import RawTherapeeRunner
-from raw_conversion.worker import ConversionWorker
+from swallowtail_conversion.embedded import EmbeddedJpegExtractor
+from swallowtail_conversion.health import _check_directory_writable, _check_log_writable
+from swallowtail_conversion.jobs import ConversionJob
+from swallowtail_conversion.rawtherapee import RawTherapeeRunner
+from swallowtail_conversion.worker import ConversionWorker
 
 
 def job(root: Path, **overrides) -> ConversionJob:
@@ -81,11 +81,19 @@ def app_config(root: Path, rawtherapee_binary: str) -> AppConfig:
 
 
 def test_root(prefix: str) -> Path:
-    base = Path.cwd() / "tmp-tests"
+    base = Path(__file__).parent / ".tmp"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{prefix}{uuid.uuid4().hex}"
     path.mkdir(parents=True)
     return path
+
+
+def remove_test_root(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
 
 
 def display_jpeg(width: int, height: int, payload: bytes) -> bytes:
@@ -118,7 +126,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.fake = Path(__file__).parent / "fixtures" / "fake_rawtherapee.py"
 
     def tearDown(self) -> None:
-        shutil.rmtree(self.root, ignore_errors=True)
+        remove_test_root(self.root)
 
     def test_runner_writes_output_with_fake_binary(self) -> None:
         result = RawTherapeeRunner(
@@ -237,7 +245,7 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.fake = Path(__file__).parent / "fixtures" / "fake_rawtherapee.py"
 
     def tearDown(self) -> None:
-        shutil.rmtree(self.root, ignore_errors=True)
+        remove_test_root(self.root)
 
     def test_redis_unavailable_falls_back_to_database_polling(self) -> None:
         class FakeRedis:

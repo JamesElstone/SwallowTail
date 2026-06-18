@@ -18,9 +18,8 @@ Use this layout unless the host has a specific reason to differ:
 /usr/local/swallowtail          SwallowTail checkout and application files
 /usr/local/swallowtail/web_root Apache document root
 /usr/local/etc/rc.d             SwallowTail rc.d service scripts
-/usr/local/libexec              SwallowTail service worker wrappers
-/var/db/swallowtail-raw-conversion
-/var/tmp/swallowtail-raw-conversion
+/var/db/swallowtail_conversion
+/var/tmp/swallowtail_conversion
 /var/run/swallowtail
 ```
 
@@ -194,7 +193,7 @@ Replace `deploy` with the account used for deployments on the host.
 ## Install The SwallowTail Port
 
 The bundled FreeBSD port lives in `FreeBSD/` and installs the application files,
-worker wrappers, rc.d scripts, service user, and newsyslog configuration.
+rc.d scripts, service user, and newsyslog configuration.
 
 From the checkout:
 
@@ -209,28 +208,28 @@ make install \
 The port installs these services:
 
 ```text
-swallowtail_image_engine
+swallowtail_conversion
 swallowtail_storage
 ```
 
 Enable the services that should run on this host:
 
 ```sh
-sysrc swallowtail_image_engine_enable=YES
+sysrc swallowtail_conversion_enable=YES
 sysrc swallowtail_storage_enable=YES
 ```
 
 Useful service tunables can be set in `/etc/rc.conf`:
 
 ```sh
-sysrc swallowtail_image_engine_database_dsn=swallowtail
-sysrc swallowtail_image_engine_database_user=swallowtail_worker
-sysrc swallowtail_image_engine_database_password=replace_with_real_password
-sysrc swallowtail_image_engine_poll_interval_seconds=5
+sysrc swallowtail_conversion_database_dsn=swallowtail
+sysrc swallowtail_conversion_database_user=swallowtail_worker
+sysrc swallowtail_conversion_database_password=replace_with_real_password
+sysrc swallowtail_conversion_poll_interval_seconds=5
 sysrc swallowtail_storage_interval_seconds=300
 ```
 
-Use `swallowtail_image_engine_*` for RAW conversion worker settings and
+Use `swallowtail_conversion_*` for RAW conversion worker settings and
 `swallowtail_storage_*` for storage service settings.
 
 ## Configure PHP-FPM
@@ -257,7 +256,21 @@ grep -n '^listen' /usr/local/etc/php-fpm.d/www.conf
 
 ## Configure Apache
 
-Create an Apache include for SwallowTail:
+The bundled FreeBSD port installs an Apache include sample at:
+
+```text
+/usr/local/etc/apache24/Includes/swallowtail.conf.sample
+```
+
+Enable the `APACHECONF` port option to also install the active Apache include at:
+
+```text
+/usr/local/etc/apache24/Includes/swallowtail.conf
+```
+
+Review the `ServerName` and PHP-FPM listener before enabling Apache.
+
+For a manual, non-port installation, create an Apache include for SwallowTail:
 
 ```sh
 cat > /usr/local/etc/apache24/Includes/swallowtail.conf <<'EOF'
@@ -315,7 +328,7 @@ When the RAW conversion service is installed, prefer the service migration
 command so the worker drains cleanly:
 
 ```sh
-service swallowtail_image_engine migrate
+service swallowtail_conversion migrate
 ```
 
 ## Start Services
@@ -327,7 +340,7 @@ sysrc redis_enable=YES
 service redis start
 service php_fpm start
 service apache24 start
-service swallowtail_image_engine start
+service swallowtail_conversion start
 service swallowtail_storage start
 ```
 
@@ -341,7 +354,7 @@ service apache24 restart
 After SwallowTail code or database migrations:
 
 ```sh
-service swallowtail_image_engine restart
+service swallowtail_conversion restart
 service swallowtail_storage restart
 ```
 
@@ -355,7 +368,7 @@ php -i | grep 'ODBC Connection Pooling'
 service apache24 status
 service php_fpm status
 service redis status
-service swallowtail_image_engine status
+service swallowtail_conversion status
 service swallowtail_storage status
 ```
 
@@ -370,4 +383,4 @@ Confirm:
 - `developer_options` is set to `false` in `secure/app.php`.
 - SQL logging is disabled unless actively diagnosing an issue.
 - Photo storage roots and generated ZIP directories are outside `web_root`.
-- `swallowtail_image_engine` and `swallowtail_storage` are healthy if enabled.
+- `swallowtail_conversion` and `swallowtail_storage` are healthy if enabled.

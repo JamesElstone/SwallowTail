@@ -8,15 +8,15 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from storage_service.config import StorageConfig
-from storage_service.worker import StorageWorker
+from swallowtail_storage.config import StorageConfig
+from swallowtail_storage.worker import StorageWorker
 
 
 class StorageWorkerTest(unittest.TestCase):
     def setUp(self) -> None:
         temp_parent = Path(__file__).resolve().parent / ".tmp"
         temp_parent.mkdir(exist_ok=True)
-        self.root = temp_parent / f"swallowtail-storage-worker-{uuid.uuid4().hex}"
+        self.root = temp_parent / f"swallowtail_storage_worker_{uuid.uuid4().hex}"
         self.root.mkdir()
         script_dir = self.root / "tools" / "php"
         script_dir.mkdir(parents=True)
@@ -73,11 +73,11 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertEqual(str(self.root), status["service"]["project_root"])
 
     def test_cli_accepts_rc_conf_style_arguments(self) -> None:
-        from storage_service.__main__ import main
+        from swallowtail_storage.__main__ import main
         original_argv = sys.argv
         try:
             sys.argv = [
-                "storage_service",
+                "swallowtail_storage",
                 "--project-root",
                 str(self.root),
                 "--php",

@@ -23,6 +23,59 @@ $harness->run(SwallowtailStorageLocationService::class);
 $harness->run(SwallowtailImageServeService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
 
+function swallowtail_backend_remove_tree(string $path): void
+{
+    if (!is_dir($path)) {
+        return;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isDir()) {
+            @rmdir($item->getPathname());
+            continue;
+        }
+
+        @unlink($item->getPathname());
+    }
+
+    @rmdir($path);
+}
+
+function swallowtail_backend_test_tmp_root(): string
+{
+    return APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . 'swallowtail-backend';
+}
+
+function swallowtail_backend_storage_tmp_root(): string
+{
+    return PROJECT_ROOT . 'tmp' . DIRECTORY_SEPARATOR . 'swallowtail-storage' . DIRECTORY_SEPARATOR . 'backend';
+}
+
+function swallowtail_backend_test_temp_file(string $prefix): string
+{
+    $root = swallowtail_backend_test_tmp_root();
+    if (!is_dir($root) && !mkdir($root, 0770, true) && !is_dir($root)) {
+        throw new RuntimeException('Unable to create SwallowTail backend test temp directory.');
+    }
+
+    $path = tempnam($root, $prefix);
+    if (!is_string($path)) {
+        throw new RuntimeException('Unable to create SwallowTail backend test temp file.');
+    }
+
+    return $path;
+}
+
+register_shutdown_function(static function (): void {
+    swallowtail_backend_remove_tree(swallowtail_backend_test_tmp_root());
+    swallowtail_backend_remove_tree(swallowtail_backend_storage_tmp_root());
+});
+
 $swallowtailEnableRootStorageForTests = static function (): void {
     static $originalConfig = null;
     static $restoreRegistered = false;
@@ -39,7 +92,8 @@ $swallowtailEnableRootStorageForTests = static function (): void {
         $restoreRegistered = true;
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
-                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+                AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_backend_storage_tmp_root());
+                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
                 AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
                 $checksums = [
@@ -74,10 +128,12 @@ $swallowtailEnableRootStorageForTests = static function (): void {
             AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
             AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
             AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 5);
+            AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
         });
     }
 
-    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_backend_storage_tmp_root());
+    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
     AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
     AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
 };
@@ -513,7 +569,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to 
     $harness->assertSame(52428800, $postLimited->maxRawBytes());
     $harness->assertSame($appLimit, $unlimited->maxRawBytes());
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-limit-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-limit-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW limit fixture.');
     }
@@ -536,7 +592,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to 
 $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unassigned photos and queues conversion', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -592,8 +648,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-cr3-rejected';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -616,9 +671,8 @@ $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while c
 $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW uploads by checksum', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-duplicates';
-    $first = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
-    $second = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $first = swallowtail_backend_test_temp_file('swallowtail-test-');
+    $second = swallowtail_backend_test_temp_file('swallowtail-test-');
 
     if (!is_string($first) || !is_string($second)) {
         throw new RuntimeException('Unable to create RAW fixtures.');
@@ -652,8 +706,7 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Checksum token', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-checksum';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -1379,8 +1432,7 @@ $harness->check(SwallowtailSpiceBushRegistrationApiService::class, 'rejects vali
 $harness->check(SwallowtailEventAccessService::class, 'keeps event access least privilege until granted', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-access';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -1414,7 +1466,7 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
 $harness->check(SwallowtailImageServeService::class, 'resolves only authorised private image files', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -1480,7 +1532,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -1550,8 +1602,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
 
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1601,7 +1652,6 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-content-length';
 
     $request = new RequestFramework(
         [],
@@ -1643,8 +1693,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-stream-limit';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-stream-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-stream-test-');
 
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1698,8 +1747,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-raw-body';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-body-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-body-test-');
 
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1748,8 +1796,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects multipart RAW up
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-multipart-limit';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-multipart-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-multipart-test-');
 
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1800,8 +1847,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'rejects upload tokens ou
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('ESP32 test rig', null, null, ['198.51.100.0/24']);
-    $root = PROJECT_ROOT . 'debug' . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'tests' . DIRECTORY_SEPARATOR . 'swallowtail-api-cidr';
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
 
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
@@ -1885,7 +1931,7 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
 
     $library = new SwallowtailPhotoLibraryService();
     $token = $library->createUploadToken('Status token', null, null, ['203.0.113.0/24']);
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -2044,7 +2090,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
 $harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }
@@ -2075,7 +2121,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jo
 $harness->check(SwallowtailConversionQueueService::class, 'does not require Redis for durable image enqueue', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
-    $source = tempnam(sys_get_temp_dir(), 'swallowtail-test-');
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
     if (!is_string($source)) {
         throw new RuntimeException('Unable to create RAW fixture.');
     }

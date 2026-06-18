@@ -80,7 +80,7 @@ def default_config() -> AppConfig:
         rawtherapee=RawTherapeeConfig(
             binary="/usr/local/bin/rawtherapee-cli",
             maximum_threads=1,
-            home="/var/db/swallowtail-raw-conversion",
+            home="/var/db/swallowtail_conversion",
             stderr_chars=4000,
         ),
         worker=WorkerConfig(
@@ -89,11 +89,11 @@ def default_config() -> AppConfig:
             job_timeout_seconds=600,
             max_attempts=3,
             retry_delay_seconds=60,
-            work_dir="/var/tmp/swallowtail-raw-conversion",
+            work_dir="/var/tmp/swallowtail_conversion",
             temp_retention_hours=24,
         ),
         logging=LoggingConfig(
-            file="/var/log/swallowtail_image_engine.log",
+            file="/var/log/swallowtail_conversion.log",
             level="INFO",
         ),
     )

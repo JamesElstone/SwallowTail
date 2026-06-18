@@ -1,0 +1,25 @@
+LoadModule proxy_module libexec/apache24/mod_proxy.so
+LoadModule proxy_fcgi_module libexec/apache24/mod_proxy_fcgi.so
+LoadModule rewrite_module libexec/apache24/mod_rewrite.so
+
+ServerName %%SWALLOWTAIL_SERVER_NAME%%:%%SWALLOWTAIL_HTTP_PORT%%
+
+<VirtualHost *:%%SWALLOWTAIL_HTTP_PORT%%>
+    ServerName %%SWALLOWTAIL_SERVER_NAME%%
+    DocumentRoot "%%SWALLOWTAIL_ROOT%%/web_root"
+
+    DirectoryIndex index.php index.html
+
+    <Directory "%%SWALLOWTAIL_ROOT%%/web_root">
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    <FilesMatch "\.php$">
+        SetHandler "proxy:fcgi://%%SWALLOWTAIL_PHP_FPM_LISTEN%%"
+    </FilesMatch>
+
+    ErrorLog "/var/log/httpd-swallowtail-error.log"
+    CustomLog "/var/log/httpd-swallowtail-access.log" combined
+</VirtualHost>

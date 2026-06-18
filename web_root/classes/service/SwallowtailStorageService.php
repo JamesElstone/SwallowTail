@@ -403,6 +403,11 @@ final class SwallowtailStorageService
             ? $this->windowsMountedBaseLocations()
             : $this->unixMountedBaseLocations();
 
+        $testBaseLocation = trim((string)AppConfigurationStore::get('swallowtail.storage.test_base_location', ''));
+        if ($testBaseLocation !== '') {
+            $locations[] = $testBaseLocation;
+        }
+
         $locations = array_values(array_unique(array_map(
             fn(string $path): string => $this->normaliseAbsoluteDirectory($path),
             $locations

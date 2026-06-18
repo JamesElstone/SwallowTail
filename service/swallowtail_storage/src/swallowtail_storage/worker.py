@@ -15,7 +15,7 @@ from .config import StorageConfig
 class StorageWorker:
     def __init__(self, config: StorageConfig):
         self.config = config
-        self.log = logging.getLogger("storage_service.worker")
+        self.log = logging.getLogger("swallowtail_storage.worker")
         self.shutdown_requested = threading.Event()
         self.last_mount_signature = ""
 

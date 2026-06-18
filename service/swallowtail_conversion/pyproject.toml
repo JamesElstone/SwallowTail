@@ -1,0 +1,19 @@
+[project]
+name = "swallowtail-conversion"
+version = "0.1.0"
+description = "SwallowTail conversion worker"
+requires-python = ">=3.11"
+dependencies = [
+    "PyMySQL>=1.1",
+    "pyodbc>=5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

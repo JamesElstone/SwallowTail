@@ -6,7 +6,7 @@ processes durable storage migration jobs.
 ## Install On FreeBSD
 
 ```sh
-sh service/storage/scripts/install_freebsd.sh /usr/local/swallowtail
+sh service/swallowtail_storage/scripts/install_freebsd.sh /usr/local/swallowtail
 service swallowtail_storage start
 service swallowtail_storage status
 ```

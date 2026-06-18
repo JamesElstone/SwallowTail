@@ -1,5 +1,0 @@
-#!/bin/sh
-: ${SWALLOWTAIL_STORAGE_PROJECT_ROOT:="%%SWALLOWTAIL_ROOT%%"}
-export PYTHONPATH="${SWALLOWTAIL_STORAGE_PROJECT_ROOT}/service/storage"
-export PYTHONDONTWRITEBYTECODE=1
-exec "%%PYTHON_CMD%%" -m storage_service "$@"

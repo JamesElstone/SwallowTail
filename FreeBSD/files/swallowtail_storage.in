@@ -19,19 +19,22 @@ load_rc_config "$name"
 
 : ${swallowtail_storage_enable:="NO"}
 : ${swallowtail_storage_project_root:="%%SWALLOWTAIL_ROOT%%"}
+: ${swallowtail_storage_python:="%%PYTHON_CMD%%"}
 : ${swallowtail_storage_php:="%%PHP_CMD%%"}
-: ${swallowtail_storage_runner:="%%PREFIX%%/libexec/swallowtail_storage_worker"}
 : ${swallowtail_storage_worker_user:="swallowtail"}
 : ${swallowtail_storage_worker_group:="swallowtail"}
 : ${swallowtail_storage_interval_seconds:="300"}
 : ${swallowtail_storage_migration_limit:="10"}
 : ${swallowtail_storage_log:="/var/log/swallowtail_storage.log"}
 : ${swallowtail_storage_log_level:="INFO"}
+: ${swallowtail_storage_redis_service:="redis"}
 
 pidfile="/var/run/swallowtail/storage.pid"
+procname="${swallowtail_storage_python}"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_runner}"
-required_dirs="${swallowtail_storage_project_root}/service/storage"
+command_args="-f -p ${pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_python} -m swallowtail_storage"
+required_files="${swallowtail_storage_python} ${swallowtail_storage_php}"
+required_dirs="${swallowtail_storage_project_root}/service/swallowtail_storage/src"
 extra_commands="onestatus"
 start_precmd="swallowtail_storage_precmd"
 status_cmd="swallowtail_storage_status"
@@ -44,6 +47,8 @@ swallowtail_storage_export_env()
 	export SWALLOWTAIL_STORAGE_MIGRATION_LIMIT="${swallowtail_storage_migration_limit}"
 	export SWALLOWTAIL_STORAGE_LOG_FILE="${swallowtail_storage_log}"
 	export SWALLOWTAIL_STORAGE_LOG_LEVEL="${swallowtail_storage_log_level}"
+	export PYTHONPATH="${swallowtail_storage_project_root}/service/swallowtail_storage/src"
+	export PYTHONDONTWRITEBYTECODE=1
 }
 
 swallowtail_storage_precmd()
@@ -59,24 +64,47 @@ swallowtail_storage_precmd()
 	fi
 
 	swallowtail_storage_export_env
-	${swallowtail_storage_runner} --health
+	${swallowtail_storage_python} -m swallowtail_storage --health
 }
 
 swallowtail_storage_status()
 {
+	status=0
+
 	if [ -f "${pidfile}" ]; then
 		pid=$(cat "${pidfile}" 2>/dev/null || true)
 		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
 			echo "${name} is running as pid ${pid}"
 		else
 			echo "${name} is not running"
+			status=1
 		fi
 	else
 		echo "${name} is not running"
+		status=1
 	fi
 
+	swallowtail_storage_redis_status || status=$?
 	swallowtail_storage_export_env
-	${swallowtail_storage_runner} --status
+	${swallowtail_storage_python} -m swallowtail_storage --status || status=$?
+
+	return "${status}"
+}
+
+swallowtail_storage_redis_status()
+{
+	redis_output=$(/usr/sbin/service "${swallowtail_storage_redis_service}" onestatus 2>&1)
+	redis_status=$?
+
+	if [ -n "${redis_output}" ]; then
+		echo "redis: ${redis_output}"
+	elif [ "${redis_status}" -eq 0 ]; then
+		echo "redis: ${swallowtail_storage_redis_service} is running"
+	else
+		echo "redis: ${swallowtail_storage_redis_service} is not running"
+	fi
+
+	return "${redis_status}"
 }
 
 run_rc_command "$1"

@@ -2,5 +2,5 @@ SwallowTail is a FreeBSD-hosted photo application with packaged background
 services for RAW conversion and storage maintenance.
 
 This port installs the SwallowTail application under /usr/local/swallowtail,
-plus rc.d integration, worker wrappers, sample configuration, and newsyslog
-configuration for all SwallowTail services required by this host.
+plus rc.d integration, sample configuration, and newsyslog configuration for
+all SwallowTail services required by this host.

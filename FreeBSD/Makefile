@@ -12,12 +12,15 @@ CONFLICTS_INSTALL=	swallowtail-raw-conversion
 
 RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}pyodbc>=5.0:databases/py-pyodbc@${PY_FLAVOR} \
+		${LOCALBASE}/sbin/httpd:www/apache24 \
+		${LOCALBASE}/lib/mariadb/libmaodbc.so:databases/mariadb-connector-odbc \
 		rawtherapee-cli:graphics/rawtherapee \
 		redis-server:databases/redis
 
 USES=		php:cli python:3.11
+USE_PHP=	ctype curl filter gd mbstring pdo pdo_odbc session tokenizer
 USE_RC_SUBR=	swallowtail_storage \
-		swallowtail_image_engine
+		swallowtail_conversion
 
 NO_ARCH=	yes
 NO_BUILD=	yes
@@ -26,8 +29,14 @@ DISTFILES=
 USERS=		swallowtail
 GROUPS=		swallowtail
 
+OPTIONS_DEFINE=	APACHECONF
+APACHECONF_DESC=	Install active Apache include as swallowtail.conf
+
 SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
 SWALLOWTAIL_SOURCE?=	${.CURDIR}/..
+SWALLOWTAIL_SERVER_NAME?=	swallowtail.example.invalid
+SWALLOWTAIL_HTTP_PORT?=	80
+SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9000
 
 PROJECT_DIRS=	db_schema \
 		secure \
@@ -45,21 +54,28 @@ IGNORE=	requires SWALLOWTAIL_SOURCE to point at a SwallowTail checkout
 .endif
 
 SUB_FILES=	pkg-message \
-		swallowtail_storage_worker \
-		swallowtail_image_engine_worker
+		swallowtail-apache.conf
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
-		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT}
+		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT} \
+		SWALLOWTAIL_SERVER_NAME=${SWALLOWTAIL_SERVER_NAME} \
+		SWALLOWTAIL_HTTP_PORT=${SWALLOWTAIL_HTTP_PORT} \
+		SWALLOWTAIL_PHP_FPM_LISTEN=${SWALLOWTAIL_PHP_FPM_LISTEN}
+
+.include <bsd.port.options.mk>
 
 PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
-		etc/newsyslog.conf.d/swallowtail_image_engine.conf \
+		etc/newsyslog.conf.d/swallowtail_conversion.conf \
 		etc/php/ext-30-pdo_odbc.ini \
-		libexec/swallowtail_storage_worker \
-		libexec/swallowtail_image_engine_worker
+		etc/apache24/Includes/swallowtail.conf.sample
+
+.if ${PORT_OPTIONS:MAPACHECONF}
+PLIST_FILES+=	etc/apache24/Includes/swallowtail.conf
+.endif
 
 do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
-	${MKDIR} ${STAGEDIR}${PREFIX}/libexec
+	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}
 	for dir in ${PROJECT_DIRS}; do \
 		if [ -d "${SWALLOWTAIL_SOURCE}/$${dir}" ]; then \
@@ -75,15 +91,17 @@ do-install:
 	done
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_storage.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_storage.conf
-	${INSTALL_DATA} ${FILESDIR}/swallowtail_image_engine.newsyslog.conf \
-		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_image_engine.conf
+	${INSTALL_DATA} ${FILESDIR}/swallowtail_conversion.newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_conversion.conf
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php
 	${INSTALL_DATA} ${FILESDIR}/ext-30-pdo_odbc.ini \
 		${STAGEDIR}${PREFIX}/etc/php/ext-30-pdo_odbc.ini
-	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_storage_worker \
-		${STAGEDIR}${PREFIX}/libexec/swallowtail_storage_worker
-	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_image_engine_worker \
-		${STAGEDIR}${PREFIX}/libexec/swallowtail_image_engine_worker
+	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
+		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf.sample
+.if ${PORT_OPTIONS:MAPACHECONF}
+	${INSTALL_DATA} ${WRKDIR}/swallowtail-apache.conf \
+		${STAGEDIR}${PREFIX}/etc/apache24/Includes/swallowtail.conf
+.endif
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f | ${SORT} >> ${TMPPLIST}

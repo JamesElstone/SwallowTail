@@ -1318,9 +1318,9 @@ static void BuildRegisterEndpoint(const char *siteUrl, char *endpoint, DWORD end
     }
     TrimTrailingSlashes(endpoint);
     if (EndsWithNoCase(endpoint, "/api")) {
-        lstrcatA(endpoint, "/spicebush-register.php");
+        lstrcatA(endpoint, "/register-for-token.php");
     } else {
-        lstrcatA(endpoint, "/api/spicebush-register.php");
+        lstrcatA(endpoint, "/api/register-for-token.php");
     }
 }
 

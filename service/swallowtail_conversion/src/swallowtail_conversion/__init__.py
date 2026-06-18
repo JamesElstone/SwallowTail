@@ -1,0 +1,1 @@
+"""SwallowTail conversion worker."""

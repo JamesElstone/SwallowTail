@@ -1,1 +1,0 @@
-"""SwallowTail RawTherapee conversion worker."""

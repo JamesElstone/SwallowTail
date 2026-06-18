@@ -12,7 +12,7 @@ from .worker import ConversionWorker
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="SwallowTail RawTherapee conversion worker")
+    parser = argparse.ArgumentParser(description="SwallowTail conversion worker")
     parser.add_argument("--config", help="Optional legacy INI path")
     parser.add_argument("--database-driver")
     parser.add_argument("--database-dsn")
@@ -82,7 +82,7 @@ def _setting(args, attr: str, env_name: str, current):
 
 
 def _apply_overrides(config, args):
-    prefix = "SWALLOWTAIL_IMAGE_ENGINE_"
+    prefix = "SWALLOWTAIL_CONVERSION_"
     return replace(
         config,
         database=replace(
