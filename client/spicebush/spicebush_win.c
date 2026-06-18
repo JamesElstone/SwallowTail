@@ -1298,6 +1298,39 @@ static int JsonFirstArrayStringValue(const char *json, const char *key, char *ou
     return i > 0;
 }
 
+static int JsonU64Value(const char *json, const char *key, U64 *value);
+
+static void LogJsonStringDiagnostic(const char *label, const char *response, const char *key)
+{
+    char value[512];
+    if (JsonStringValue(response, key, value, sizeof(value))) {
+        LogMessage("%s diagnostic: %s=%s", label, key, value);
+    }
+}
+
+static void LogJsonU64Diagnostic(const char *label, const char *response, const char *key)
+{
+    U64 value = 0;
+    if (JsonU64Value(response, key, &value)) {
+        LogMessage("%s diagnostic: %s=%I64u", label, key, value);
+    }
+}
+
+static void LogResponseDiagnostics(const char *label, const char *response)
+{
+    if (!response || !response[0]) return;
+
+    LogJsonStringDiagnostic(label, response, "storage_error");
+    LogJsonStringDiagnostic(label, response, "storage_error_type");
+    LogJsonStringDiagnostic(label, response, "upload_mode");
+    LogJsonStringDiagnostic(label, response, "upload_token_label");
+    LogJsonU64Diagnostic(label, response, "upload_token_id");
+    LogJsonU64Diagnostic(label, response, "upload_token_created_by_user_id");
+    LogJsonU64Diagnostic(label, response, "upload_size_bytes");
+    LogJsonU64Diagnostic(label, response, "content_length");
+    LogJsonU64Diagnostic(label, response, "max_raw_bytes");
+}
+
 static void LogResponseSummary(const char *label, DWORD status, const char *response)
 {
     char errorText[512];
@@ -1308,6 +1341,7 @@ static void LogResponseSummary(const char *label, DWORD status, const char *resp
 
     if (JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
         LogMessage("%s failed response: status=%lu error=%s", label, status, errorText);
+        LogResponseDiagnostics(label, response);
         return;
     }
 
@@ -1326,6 +1360,7 @@ static void LogResponseSummary(const char *label, DWORD status, const char *resp
     preview[j] = '\0';
 
     LogMessage("%s failed response: status=%lu preview=%s", label, status, preview[0] ? preview : "(empty)");
+    LogResponseDiagnostics(label, response);
 }
 
 static int JsonBoolValue(const char *json, const char *key, int *value)

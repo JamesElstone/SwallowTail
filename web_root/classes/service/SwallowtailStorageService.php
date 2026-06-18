@@ -242,7 +242,7 @@ final class SwallowtailStorageService
     public function ensureDirectoryForPath(string $absolutePath): void
     {
         $directory = dirname($absolutePath);
-        if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
+        if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
             throw new RuntimeException(sprintf(
                 'Unable to create SwallowTail storage directory: %s%s',
                 $directory,

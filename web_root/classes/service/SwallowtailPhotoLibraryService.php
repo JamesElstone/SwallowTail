@@ -501,10 +501,6 @@ final class SwallowtailPhotoLibraryService
         array $metadata = [],
         array $details = []
     ): void {
-        if (!InterfaceDB::tableExists('user_account_audit') || !InterfaceDB::tableExists('users')) {
-            return;
-        }
-
         $uploadToken = is_array($uploadToken) ? $uploadToken : $this->uploadTokenForAudit($token);
         if (!is_array($uploadToken)) {
             return;
@@ -528,20 +524,26 @@ final class SwallowtailPhotoLibraryService
         $auditDetails = array_merge([
             'upload_token_id' => $tokenId,
             'token_label' => (string)($uploadToken['token_label'] ?? ''),
+            'created_by_user_id' => $affectedUserId,
             'success' => $success,
             'client_ip' => trim((string)$remoteAddress),
             'allowed_cidrs' => array_values((array)$cidrs),
             'failure_reason' => $success ? null : $reason,
         ], $details);
 
-        (new UserHistoryStore())->recordAccountAudit(
-            $affectedUserId,
-            null,
-            trim($actionType) !== '' ? trim($actionType) : 'upload_token_used',
-            $reason,
-            $auditDetails,
-            $metadata
-        );
+        $actionType = trim($actionType) !== '' ? trim($actionType) : 'upload_token_used';
+        $this->recordUploadTokenActivity($affectedUserId, $actionType, $success, $reason, $metadata, $auditDetails);
+
+        if (InterfaceDB::tableExists('user_account_audit') && InterfaceDB::tableExists('users')) {
+            (new UserHistoryStore())->recordAccountAudit(
+                $affectedUserId,
+                null,
+                $actionType,
+                $reason,
+                $auditDetails,
+                $metadata
+            );
+        }
     }
 
     public function markUploadTokenUsed(int $tokenId): void
@@ -591,6 +593,69 @@ final class SwallowtailPhotoLibraryService
         }
 
         return null;
+    }
+
+    private function recordUploadTokenActivity(
+        int $userId,
+        string $actionType,
+        bool $success,
+        string $reason,
+        array $metadata,
+        array $details
+    ): void {
+        if ($userId <= 0) {
+            return;
+        }
+
+        (new ActivityStore())->recordApiActivity(
+            'api',
+            $this->uploadTokenActivityAction($actionType),
+            $success ? 'success' : 'error',
+            $reason,
+            $userId,
+            $metadata,
+            $this->uploadTokenActivityDetail($details),
+            $this->uploadTokenActivityMethod($actionType),
+            $this->uploadTokenActivityUri($actionType)
+        );
+    }
+
+    private function uploadTokenActivityAction(string $actionType): string
+    {
+        $label = preg_replace('/^upload_token_/', '', $actionType) ?? $actionType;
+        $label = str_replace('_', ' ', $label);
+
+        return trim($label) !== '' ? trim($label) : 'upload token';
+    }
+
+    private function uploadTokenActivityDetail(array $details): ?string
+    {
+        $tokenLabel = trim((string)($details['token_label'] ?? ''));
+
+        return $tokenLabel !== '' ? $tokenLabel : null;
+    }
+
+    private function uploadTokenActivityMethod(string $actionType): ?string
+    {
+        return str_contains($actionType, 'raw_upload') ? 'POST' : 'GET';
+    }
+
+    private function uploadTokenActivityUri(string $actionType): string
+    {
+        if (str_contains($actionType, 'raw_upload')) {
+            return '/api/raw-upload.php';
+        }
+        if (str_contains($actionType, 'quick_checksum')) {
+            return '/api/quick-checksum.php';
+        }
+        if (str_contains($actionType, 'conversion_status')) {
+            return '/api/conversion-status.php';
+        }
+        if (str_contains($actionType, 'ping')) {
+            return '/api/ping.php';
+        }
+
+        return '/api';
     }
 
     private function uploadTokenUserLabel(array $uploadToken): string

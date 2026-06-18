@@ -382,6 +382,7 @@ $swallowtailWithRootStorage = static function (callable $callback) use ($harness
 };
 
 $swallowtailCreateSpiceBushUserSchema = static function (): void {
+    InterfaceDB::execute('DROP TABLE IF EXISTS application_activity_flash_history');
     InterfaceDB::execute('DROP TABLE IF EXISTS user_account_audit');
     InterfaceDB::execute('DROP TABLE IF EXISTS user_login_rate_limits');
     InterfaceDB::execute('DROP TABLE IF EXISTS user_totp');
@@ -439,6 +440,23 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
         user_agent TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )");
+    InterfaceDB::execute("CREATE TABLE application_activity_flash_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NULL,
+        page_id TEXT NOT NULL,
+        action_name TEXT NULL,
+        card_action_name TEXT NULL,
+        message_type TEXT NOT NULL,
+        message_text TEXT NOT NULL,
+        message_html_text TEXT NULL,
+        request_method TEXT NULL,
+        is_ajax INTEGER NOT NULL DEFAULT 0,
+        device_id TEXT NULL,
+        ip_address TEXT NULL,
+        user_agent TEXT NULL,
+        request_uri TEXT NULL,
+        occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
     InterfaceDB::execute("CREATE TABLE user_login_rate_limits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email_address TEXT NOT NULL,
@@ -456,6 +474,60 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (scope_type, scope_key)
     )");
+};
+
+$swallowtailInvokeRawUploadApi = static function (array $server, array $files): array {
+    $originalGet = $_GET;
+    $originalPost = $_POST;
+    $originalServer = $_SERVER;
+    $originalFiles = $_FILES;
+    $originalCookie = $_COOKIE;
+    $originalStatus = http_response_code();
+    $bufferLevel = ob_get_level();
+
+    $_GET = [];
+    $_POST = [];
+    $_COOKIE = [];
+    $_FILES = $files;
+    $_SERVER = array_merge([
+        'REQUEST_METHOD' => 'POST',
+        'REMOTE_ADDR' => '203.0.113.15',
+        'REQUEST_URI' => '/api/raw-upload.php',
+        'SCRIPT_NAME' => '/api/raw-upload.php',
+    ], $server);
+
+    http_response_code(200);
+    ob_start();
+
+    try {
+        require APP_ROOT . 'api' . DIRECTORY_SEPARATOR . 'raw-upload.php';
+        $body = (string)ob_get_clean();
+        $status = (int)http_response_code();
+    } finally {
+        while (ob_get_level() > $bufferLevel) {
+            ob_end_clean();
+        }
+
+        $_GET = $originalGet;
+        $_POST = $originalPost;
+        $_SERVER = $originalServer;
+        $_FILES = $originalFiles;
+        $_COOKIE = $originalCookie;
+        http_response_code(is_int($originalStatus) && $originalStatus > 0 ? $originalStatus : 200);
+    }
+
+    return [
+        'status' => $status,
+        'body' => $body,
+        'payload' => json_decode($body, true),
+    ];
+};
+
+$swallowtailAssertContains = static function (string $needle, mixed $haystack, string $label): void {
+    $value = (string)$haystack;
+    if (!str_contains($value, $needle)) {
+        throw new RuntimeException($label . ' did not contain ' . var_export($needle, true) . '; value=' . var_export($value, true));
+    }
 };
 
 $harness->check(SwallowtailStorageService::class, 'builds deterministic image paths under discovered storage', function () use ($harness, $swallowtailWithRootStorage): void {
@@ -1610,11 +1682,38 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     @unlink($source);
 });
 
-$harness->check(SwallowtailRawUploadApiService::class, 'accepts token authenticated multipart RAW uploads', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailRawUploadApiService::class, 'accepts token authenticated multipart RAW uploads through API entrypoint', function () use ($harness, $swallowtailCleanupStorageFiles, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailInvokeRawUploadApi, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO users (
+            id,
+            display_name,
+            email_address,
+            password_hash,
+            otp_required,
+            is_active,
+            account_status
+        ) VALUES (
+            :id,
+            :display_name,
+            :email_address,
+            :password_hash,
+            0,
+            1,
+            'active'
+        )",
+        [
+            'id' => 44,
+            'display_name' => 'Token Account',
+            'email_address' => 'token-account@example.test',
+            'password_hash' => 'not-used',
+        ]
+    );
 
     $library = new SwallowtailPhotoLibraryService();
-    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $token = $library->createUploadToken('SpiceBush test rig', 44, null, ['203.0.113.0/24']);
     $source = swallowtail_backend_test_temp_file('swallowtail-test-');
 
     if (!is_string($source)) {
@@ -1622,23 +1721,11 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
-
-    $request = new RequestFramework(
-        [],
-        [],
-        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15'],
-        [],
-        ['Authorization' => 'Bearer ' . $token['token'], 'User-Agent' => 'swallowtail-test'],
-        null,
-        []
-    );
-
-    $service = new SwallowtailRawUploadApiService(
-        new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService()),
-        $library
-    );
-
-    $response = $service->handleUpload($request, [
+    $response = $swallowtailInvokeRawUploadApi([
+        'HTTP_AUTHORIZATION' => 'Bearer ' . $token['token'],
+        'HTTP_USER_AGENT' => 'spicebush-test',
+        'HTTP_X_SWALLOWTAIL_DEVICE_ID' => 'DESKTOP-C6R0CCD',
+    ], [
         'raw_file' => [
             'tmp_name' => $source,
             'name' => 'IMG_0004.CR2',
@@ -1647,8 +1734,8 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
         ],
     ]);
 
-    $payload = json_decode($response->body(), true);
-
+    $payload = $response['payload'];
+    $harness->assertSame(201, $response['status']);
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
@@ -1657,10 +1744,18 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
 
+    $checksum = (string)($payload['sha256'] ?? '');
+    if ($checksum !== '') {
+        $row = InterfaceDB::fetchOne('SELECT storage_base_location FROM photos WHERE original_sha256 = :checksum LIMIT 1', ['checksum' => $checksum]);
+        if (is_array($row)) {
+            $swallowtailCleanupStorageFiles((string)($row['storage_base_location'] ?? ''), $checksum);
+        }
+    }
+
     @unlink($source);
 });
 
-$harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RAW storage failures in account audit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RAW storage failures in account audit and activity logs', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailInvokeRawUploadApi, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
     $swallowtailCreateSpiceBushUserSchema();
 
@@ -1700,7 +1795,12 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
 
     $swallowtailWriteRawFixture($source, 'cr2');
 
-    $blockedBase = swallowtail_backend_test_temp_file('swallowtail-storage-base-file-');
+    $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
+    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture directory.');
+    }
+
+    $blockedBase = tempnam($blockedBaseRoot, 'swallowtail-storage-base-file-');
 
     if (!is_string($blockedBase)) {
         throw new RuntimeException('Unable to create blocked storage base fixture.');
@@ -1710,24 +1810,11 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
     (new SwallowtailStorageCacheService())->clear();
 
-    $request = new RequestFramework(
-        [],
-        [],
-        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15'],
-        [],
-        [
-            'Authorization' => 'Bearer ' . $token['token'],
-            'User-Agent' => 'spicebush-test',
-            'X-Swallowtail-Device-ID' => 'DESKTOP-C6R0CCD',
-        ],
-        null,
-        []
-    );
-    $service = new SwallowtailRawUploadApiService(
-        new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService()),
-        $library
-    );
-    $response = $service->handleUpload($request, [
+    $response = $swallowtailInvokeRawUploadApi([
+        'HTTP_AUTHORIZATION' => 'Bearer ' . $token['token'],
+        'HTTP_USER_AGENT' => 'spicebush-test',
+        'HTTP_X_SWALLOWTAIL_DEVICE_ID' => 'DESKTOP-C6R0CCD',
+    ], [
         'raw_file' => [
             'tmp_name' => $source,
             'name' => 'TEST.CR2',
@@ -1735,21 +1822,45 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
             'size' => filesize($source),
         ],
     ]);
-    $payload = json_decode($response->body(), true);
+    $payload = $response['payload'];
     $auditRows = (new UserHistoryStore())->fetchRecentAccountAudit(10);
     $details = json_decode((string)($auditRows[0]['details_json'] ?? ''), true);
+    $activityRows = InterfaceDB::fetchAll(
+        'SELECT *
+         FROM application_activity_flash_history
+         WHERE user_id = :user_id AND page_id = :page_id
+         ORDER BY occurred_at DESC, id DESC',
+        [
+            'user_id' => 44,
+            'page_id' => 'api',
+        ]
+    );
+    $logsRows = (new LogsRepository())->fetchRecentFlashActivity(10, 44, 'api');
 
-    $harness->assertSame(503, $response->statusCode());
+    $harness->assertSame(503, $response['status']);
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
     $harness->assertSame('RAW upload failed while storing the file.', (string)(($payload['errors'] ?? [])[0] ?? ''));
-    $harness->assertTrue(str_contains((string)(($payload['diagnostics'] ?? [])['storage_error'] ?? ''), 'Unable to create SwallowTail storage directory'));
+    $swallowtailAssertContains('Unable to create SwallowTail storage directory', ($payload['diagnostics'] ?? [])['storage_error'] ?? '', 'RAW upload diagnostics.storage_error');
     $harness->assertSame('upload_token_raw_upload_failed', (string)($auditRows[0]['action_type'] ?? ''));
     $harness->assertSame('RAW upload failed while storing the file.', (string)($auditRows[0]['reason'] ?? ''));
     $harness->assertTrue(is_array($details));
     $harness->assertSame('TEST.CR2', (string)($details['original_filename'] ?? ''));
-    $harness->assertTrue(str_contains((string)($details['storage_error'] ?? ''), 'Unable to create SwallowTail storage directory'));
+    $swallowtailAssertContains('Unable to create SwallowTail storage directory', $details['storage_error'] ?? '', 'account audit storage_error detail');
     $harness->assertSame('DESKTOP-C6R0CCD', (string)($auditRows[0]['device_id'] ?? ''));
+    $harness->assertCount(1, $activityRows);
+    $harness->assertSame(44, (int)($activityRows[0]['user_id'] ?? 0));
+    $harness->assertSame('api', (string)($activityRows[0]['page_id'] ?? ''));
+    $harness->assertSame('raw upload failed', (string)($activityRows[0]['action_name'] ?? ''));
+    $harness->assertSame('SpiceBush storage test', (string)($activityRows[0]['card_action_name'] ?? ''));
+    $harness->assertSame('error', (string)($activityRows[0]['message_type'] ?? ''));
+    $harness->assertSame('RAW upload failed while storing the file.', (string)($activityRows[0]['message_text'] ?? ''));
+    $harness->assertSame('POST', (string)($activityRows[0]['request_method'] ?? ''));
+    $harness->assertSame('/api/raw-upload.php', (string)($activityRows[0]['request_uri'] ?? ''));
+    $harness->assertSame('DESKTOP-C6R0CCD', (string)($activityRows[0]['device_id'] ?? ''));
+    $harness->assertCount(1, $logsRows);
+    $harness->assertSame('Token Account', (string)($logsRows[0]['user_display_name'] ?? ''));
+    $harness->assertSame('RAW upload failed while storing the file.', (string)($logsRows[0]['message_text'] ?? ''));
 
     AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
     (new SwallowtailStorageCacheService())->clear();

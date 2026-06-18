@@ -76,4 +76,57 @@ $harness->run(ActivityStore::class, function (GeneratedServiceClassTestHarness $
         $harness->assertSame('/?page=dashboard&action=save', $metadata['request_uri']);
         $harness->assertSame(1000, mb_strlen((string)$metadata['user_agent']));
     });
+
+    $harness->check(ActivityStore::class, 'records API activity rows', function () use ($harness, $instance): void {
+        InterfaceDB::execute('DROP TABLE IF EXISTS application_activity_flash_history');
+        InterfaceDB::execute("CREATE TABLE application_activity_flash_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NULL,
+            page_id TEXT NOT NULL,
+            action_name TEXT NULL,
+            card_action_name TEXT NULL,
+            message_type TEXT NOT NULL,
+            message_text TEXT NOT NULL,
+            message_html_text TEXT NULL,
+            request_method TEXT NULL,
+            is_ajax INTEGER NOT NULL DEFAULT 0,
+            device_id TEXT NULL,
+            ip_address TEXT NULL,
+            user_agent TEXT NULL,
+            request_uri TEXT NULL,
+            occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )");
+
+        $instance->recordApiActivity(
+            'api',
+            'raw upload failed',
+            'error',
+            " RAW upload failed while storing the file.\n",
+            44,
+            [
+                'device_id' => 'DESKTOP-C6R0CCD',
+                'ip_address' => '203.0.113.15',
+                'user_agent' => str_repeat('s', 1200),
+            ],
+            'SpiceBush desktop',
+            'POST',
+            '/api/raw-upload.php'
+        );
+
+        $row = InterfaceDB::fetchOne('SELECT * FROM application_activity_flash_history LIMIT 1');
+
+        $harness->assertTrue(is_array($row));
+        $harness->assertSame(44, (int)($row['user_id'] ?? 0));
+        $harness->assertSame('api', (string)($row['page_id'] ?? ''));
+        $harness->assertSame('raw upload failed', (string)($row['action_name'] ?? ''));
+        $harness->assertSame('SpiceBush desktop', (string)($row['card_action_name'] ?? ''));
+        $harness->assertSame('error', (string)($row['message_type'] ?? ''));
+        $harness->assertSame('RAW upload failed while storing the file.', (string)($row['message_text'] ?? ''));
+        $harness->assertSame('POST', (string)($row['request_method'] ?? ''));
+        $harness->assertSame('DESKTOP-C6R0CCD', (string)($row['device_id'] ?? ''));
+        $harness->assertSame(1000, mb_strlen((string)($row['user_agent'] ?? '')));
+        $harness->assertSame('/api/raw-upload.php', (string)($row['request_uri'] ?? ''));
+
+        InterfaceDB::execute('DROP TABLE IF EXISTS application_activity_flash_history');
+    });
 });

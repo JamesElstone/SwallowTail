@@ -113,7 +113,7 @@ final class SwallowtailRawUploadApiService
                 );
             } catch (RuntimeException $exception) {
                 $reason = $this->publicStorageError($exception);
-                $diagnostics = $this->storageFailureDiagnostics($exception, $request, $upload, $originalFilename, $maxRawBytes, $temporaryFile !== null);
+                $diagnostics = $this->storageFailureDiagnostics($exception, $request, $uploadToken, $upload, $originalFilename, $maxRawBytes, $temporaryFile !== null);
                 $this->photoLibraryService->recordUploadTokenUsage(
                     $uploadToken,
                     $token,
@@ -220,6 +220,7 @@ final class SwallowtailRawUploadApiService
     private function storageFailureDiagnostics(
         RuntimeException $exception,
         RequestFramework $request,
+        array $uploadToken,
         array $upload,
         string $originalFilename,
         ?int $maxRawBytes,
@@ -228,6 +229,11 @@ final class SwallowtailRawUploadApiService
         return [
             'storage_error' => $exception->getMessage(),
             'storage_error_type' => get_class($exception),
+            'upload_token_id' => (int)($uploadToken['id'] ?? 0),
+            'upload_token_label' => (string)($uploadToken['token_label'] ?? ''),
+            'upload_token_created_by_user_id' => is_numeric($uploadToken['created_by_user_id'] ?? null)
+                ? (int)$uploadToken['created_by_user_id']
+                : null,
             'original_filename' => $originalFilename,
             'upload_size_bytes' => $this->uploadSizeBytes($upload),
             'content_length' => $this->contentLength($request),
