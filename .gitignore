@@ -7,7 +7,7 @@
 tmp/
 .tmp/
 temp/
-/examples
+/examples/*
 /client/spicebush/work
 __pycache__/
 *.pyc
