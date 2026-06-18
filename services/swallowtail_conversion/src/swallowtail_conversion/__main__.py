@@ -5,7 +5,7 @@ import os
 import signal
 from dataclasses import replace
 
-from .config import ensure_runtime_directories, load_config
+from .config import ensure_runtime_directories, load_config, load_php_app_config
 from .health import run_health_checks
 from .logging_setup import configure_logging
 from .worker import ConversionWorker
@@ -14,6 +14,8 @@ from .worker import ConversionWorker
 def main() -> int:
     parser = argparse.ArgumentParser(description="SwallowTail conversion worker")
     parser.add_argument("--config", help="Optional legacy INI path")
+    parser.add_argument("--app-config", help="Optional secure/app.php path")
+    parser.add_argument("--php-binary", help="PHP binary used to read --app-config")
     parser.add_argument("--database-driver")
     parser.add_argument("--database-dsn")
     parser.add_argument("--database-host")
@@ -44,7 +46,12 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
-    config = _apply_overrides(load_config(args.config), args)
+    config = load_config(args.config)
+    app_config_path = _setting(args, "app_config", "SWALLOWTAIL_CONVERSION_APP_CONFIG", "")
+    if app_config_path:
+        php_binary = _setting(args, "php_binary", "SWALLOWTAIL_CONVERSION_PHP_BINARY", "php")
+        config = load_php_app_config(app_config_path, php_binary, config)
+    config = _apply_overrides(config, args)
 
     if args.health:
         ok, lines = run_health_checks(config)

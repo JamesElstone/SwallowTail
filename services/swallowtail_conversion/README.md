@@ -21,10 +21,12 @@ rotation config. Service defaults are embedded in the rc.d script and can be
 overridden in `/etc/rc.conf`:
 
 ```sh
-sysrc swallowtail_conversion_database_dsn=swallowtail
-sysrc swallowtail_conversion_database_user=swallowtail_worker
 sysrc swallowtail_conversion_poll_interval_seconds=5
 ```
+
+Database settings are read from the same `secure/app.php` file used by the web
+app. On FreeBSD, use `www:swallowtail` ownership and `0640` permissions for
+that file so PHP-FPM owns it and the conversion service can read it.
 
 ## Operations
 

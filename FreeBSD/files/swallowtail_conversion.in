@@ -9,6 +9,7 @@
 # swallowtail_conversion_enable="YES"
 #
 # Service defaults can be overridden with swallowtail_conversion_* variables.
+# Database settings are read from ${swallowtail_conversion_project_root}/secure/app.php.
 
 . /etc/rc.subr
 
@@ -21,16 +22,10 @@ load_rc_config "$name"
 : ${swallowtail_conversion_project_root:="%%SWALLOWTAIL_ROOT%%"}
 : ${swallowtail_conversion_python:="%%PYTHON_CMD%%"}
 : ${swallowtail_conversion_php:="%%PHP_CMD%%"}
+: ${swallowtail_conversion_app_config:="${swallowtail_conversion_project_root}/secure/app.php"}
 : ${swallowtail_conversion_worker_user:="swallowtail"}
 : ${swallowtail_conversion_worker_group:="swallowtail"}
 : ${swallowtail_conversion_log:="/var/log/swallowtail_conversion.log"}
-: ${swallowtail_conversion_database_driver:="odbc"}
-: ${swallowtail_conversion_database_dsn:="swallowtail"}
-: ${swallowtail_conversion_database_host:="127.0.0.1"}
-: ${swallowtail_conversion_database_port:="3306"}
-: ${swallowtail_conversion_database_name:="swallowtail"}
-: ${swallowtail_conversion_database_user:="swallowtail_worker"}
-: ${swallowtail_conversion_database_password:=""}
 : ${swallowtail_conversion_redis_host:="127.0.0.1"}
 : ${swallowtail_conversion_redis_port:="6379"}
 : ${swallowtail_conversion_redis_service:="redis"}
@@ -55,7 +50,7 @@ pidfile="/var/run/swallowtail/swallowtail_conversion.pid"
 procname="${swallowtail_conversion_python}"
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -u ${swallowtail_conversion_worker_user} -o ${swallowtail_conversion_log} ${swallowtail_conversion_python} -m swallowtail_conversion"
-required_files="${swallowtail_conversion_python}"
+required_files="${swallowtail_conversion_python} ${swallowtail_conversion_php} ${swallowtail_conversion_app_config}"
 required_dirs="${swallowtail_conversion_project_root}/services/swallowtail_conversion/src"
 extra_commands="reload onestatus migrate"
 start_precmd="swallowtail_conversion_precmd"
@@ -66,13 +61,8 @@ migrate_cmd="swallowtail_conversion_migrate"
 swallowtail_conversion_export_env()
 {
 	export SWALLOWTAIL_CONVERSION_PROJECT_ROOT="${swallowtail_conversion_project_root}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_DRIVER="${swallowtail_conversion_database_driver}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_DSN="${swallowtail_conversion_database_dsn}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_HOST="${swallowtail_conversion_database_host}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_PORT="${swallowtail_conversion_database_port}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_NAME="${swallowtail_conversion_database_name}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_USER="${swallowtail_conversion_database_user}"
-	export SWALLOWTAIL_CONVERSION_DATABASE_PASSWORD="${swallowtail_conversion_database_password}"
+	export SWALLOWTAIL_CONVERSION_APP_CONFIG="${swallowtail_conversion_app_config}"
+	export SWALLOWTAIL_CONVERSION_PHP_BINARY="${swallowtail_conversion_php}"
 	export SWALLOWTAIL_CONVERSION_REDIS_HOST="${swallowtail_conversion_redis_host}"
 	export SWALLOWTAIL_CONVERSION_REDIS_PORT="${swallowtail_conversion_redis_port}"
 	export SWALLOWTAIL_CONVERSION_REDIS_URGENT_QUEUE="${swallowtail_conversion_redis_urgent_queue}"

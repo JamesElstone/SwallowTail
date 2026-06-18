@@ -10,6 +10,7 @@ STALE_RUNNER_FILE="/usr/local/libexec/swallowtail_conversion_worker"
 LOG_FILE="/var/log/swallowtail_conversion.log"
 NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_conversion.conf"
 TEMPLATE_DIR="${PROJECT_ROOT}/FreeBSD/files"
+APP_CONFIG_FILE="${PROJECT_ROOT}/secure/app.php"
 
 if [ ! -d "${PROJECT_ROOT}/services/swallowtail_conversion" ]; then
   echo "Conversion service was not found under ${PROJECT_ROOT}" >&2
@@ -44,7 +45,13 @@ rm -f "${STALE_RUNNER_FILE}"
 cp "${TEMPLATE_DIR}/swallowtail_conversion.newsyslog.conf" "${NEWSYSLOG_FILE}"
 chmod 0644 "${NEWSYSLOG_FILE}"
 
+if [ -f "${APP_CONFIG_FILE}" ]; then
+  chown www:swallowtail "${APP_CONFIG_FILE}"
+  chmod 0640 "${APP_CONFIG_FILE}"
+fi
+
 sysrc swallowtail_conversion_enable=YES
 echo "Installed ${RC_FILE}"
 echo "Installed ${NEWSYSLOG_FILE}"
-echo "Override swallowtail_conversion_* defaults in /etc/rc.conf, then run: service swallowtail_conversion start"
+echo "Database settings are read from ${PROJECT_ROOT}/secure/app.php"
+echo "Override service-specific swallowtail_conversion_* defaults in /etc/rc.conf, then run: service swallowtail_conversion start"

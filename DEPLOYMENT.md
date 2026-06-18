@@ -222,14 +222,13 @@ sysrc swallowtail_storage_enable=YES
 Useful service tunables can be set in `/etc/rc.conf`:
 
 ```sh
-sysrc swallowtail_conversion_database_dsn=swallowtail
-sysrc swallowtail_conversion_database_user=swallowtail_worker
-sysrc swallowtail_conversion_database_password=replace_with_real_password
 sysrc swallowtail_conversion_poll_interval_seconds=5
 sysrc swallowtail_storage_interval_seconds=300
 ```
 
-Use `swallowtail_conversion_*` for RAW conversion worker settings and
+The RAW conversion worker reads database settings from
+`/usr/local/swallowtail/secure/app.php`, the same file used by the web app. Use
+`swallowtail_conversion_*` only for service-specific worker settings and
 `swallowtail_storage_*` for storage service settings.
 
 ## Configure PHP-FPM
@@ -316,6 +315,14 @@ php tools/php/setupDb.php \
   --odbc-name=swallowtail \
   --user=swallowtail_app \
   --password=replace_with_real_password
+```
+
+Give PHP-FPM ownership of the private app config and the `swallowtail` service
+group read access:
+
+```sh
+chown www:swallowtail /usr/local/swallowtail/secure/app.php
+chmod 0640 /usr/local/swallowtail/secure/app.php
 ```
 
 For later schema-only updates:

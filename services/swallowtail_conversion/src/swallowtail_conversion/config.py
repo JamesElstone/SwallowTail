@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from configparser import ConfigParser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,162 @@ def load_config(path: str | None = None) -> AppConfig:
             level=parser.get("logging", "level", fallback=defaults.logging.level).strip().upper(),
         ),
     )
+
+
+def load_php_app_config(path: str, php_binary: str = "php", base: AppConfig | None = None) -> AppConfig:
+    config = base if base is not None else default_config()
+    loaded = _read_php_app_config(path, php_binary)
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"PHP application config did not return an object: {path}")
+
+    config = _apply_php_database_config(config, loaded.get("db"))
+    config = _apply_php_redis_config(config, loaded.get("swallowtail"))
+
+    return config
+
+
+def _read_php_app_config(path: str, php_binary: str) -> dict[str, Any]:
+    php_code = (
+        "$config = require $argv[1];"
+        "if (!is_array($config)) { fwrite(STDERR, 'app.php did not return an array'); exit(2); }"
+        "echo json_encode($config, JSON_UNESCAPED_SLASHES);"
+    )
+
+    try:
+        result = subprocess.run(
+            [php_binary, "-r", php_code, path],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"PHP binary was not found while reading secure/app.php: {php_binary}") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Unable to read PHP application config {path}{suffix}")
+
+    try:
+        loaded = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"PHP application config was not valid JSON after loading: {path}") from exc
+
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"PHP application config did not return an object: {path}")
+
+    return loaded
+
+
+def _apply_php_database_config(config: AppConfig, db_config: Any) -> AppConfig:
+    if not isinstance(db_config, dict):
+        return config
+
+    dsn = str(db_config.get("dsn") or "").strip()
+    if dsn == "":
+        return config
+
+    driver, body = _split_pdo_dsn(dsn)
+    user = str(db_config.get("user") or "")
+    password = str(db_config.get("pass") or "")
+
+    if driver == "odbc":
+        return replace(
+            config,
+            database=replace(
+                config.database,
+                driver="odbc",
+                dsn=_odbc_dsn_from_pdo_body(body),
+                user=user,
+                password=password,
+            ),
+        )
+
+    if driver in {"mysql", "mariadb"}:
+        options = _parse_pdo_dsn_options(body)
+        port = config.database.port
+        if "port" in options and options["port"].strip() != "":
+            try:
+                port = int(options["port"])
+            except ValueError as exc:
+                raise RuntimeError(f"Invalid database port in secure/app.php: {options['port']}") from exc
+
+        return replace(
+            config,
+            database=replace(
+                config.database,
+                driver="mysql",
+                dsn="",
+                host=options.get("host", config.database.host),
+                port=port,
+                database=options.get("dbname", options.get("database", config.database.database)),
+                user=user,
+                password=password,
+            ),
+        )
+
+    raise RuntimeError(f"Unsupported database DSN driver for conversion worker in secure/app.php: {driver}")
+
+
+def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppConfig:
+    if not isinstance(swallowtail_config, dict):
+        return config
+
+    redis_config = swallowtail_config.get("redis")
+    if not isinstance(redis_config, dict):
+        return config
+
+    port = config.redis.port
+    if "port" in redis_config:
+        try:
+            port = int(redis_config["port"])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Invalid Redis port in secure/app.php: {redis_config['port']}") from exc
+
+    return replace(
+        config,
+        redis=replace(
+            config.redis,
+            host=str(redis_config.get("host", config.redis.host)),
+            port=port,
+            urgent_queue=str(redis_config.get("urgent_queue", config.redis.urgent_queue)),
+            normal_queue=str(redis_config.get("normal_queue", config.redis.normal_queue)),
+        ),
+    )
+
+
+def _split_pdo_dsn(dsn: str) -> tuple[str, str]:
+    if ":" not in dsn:
+        raise RuntimeError(f"Database DSN in secure/app.php is missing a driver prefix: {dsn}")
+
+    driver, body = dsn.split(":", 1)
+    driver = driver.strip().lower()
+    if driver == "":
+        raise RuntimeError(f"Database DSN in secure/app.php is missing a driver prefix: {dsn}")
+
+    return driver, body.strip()
+
+
+def _odbc_dsn_from_pdo_body(body: str) -> str:
+    options = _parse_pdo_dsn_options(body)
+    if "dsn" in options:
+        return options["dsn"]
+
+    return body
+
+
+def _parse_pdo_dsn_options(body: str) -> dict[str, str]:
+    options = {}
+    for part in body.split(";"):
+        if "=" not in part:
+            continue
+
+        key, value = part.split("=", 1)
+        key = key.strip().lower()
+        if key != "":
+            options[key] = value.strip()
+
+    return options
 
 
 def ensure_runtime_directories(config: AppConfig) -> None:

@@ -6,7 +6,9 @@ import time
 import unittest
 import uuid
 import logging
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from swallowtail_conversion.config import (
@@ -16,6 +18,8 @@ from swallowtail_conversion.config import (
     RawTherapeeConfig,
     RedisConfig,
     WorkerConfig,
+    default_config,
+    load_php_app_config,
 )
 from swallowtail_conversion.embedded import EmbeddedJpegExtractor
 from swallowtail_conversion.health import _check_directory_writable, _check_log_writable
@@ -118,6 +122,60 @@ def lossless_jpeg_like(width: int, height: int, payload: bytes) -> bytes:
         + payload
         + b"\xff\xd9"
     )
+
+
+class ConfigLoadingTest(unittest.TestCase):
+    def test_php_app_config_loads_odbc_database_details(self) -> None:
+        payload = {
+            "db": {
+                "dsn": "odbc:swallowtail",
+                "user": "swallowtail_app",
+                "pass": "secret",
+            },
+        }
+
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+            config = load_php_app_config("/usr/local/swallowtail/secure/app.php", "/usr/local/bin/php", default_config())
+
+        self.assertEqual("odbc", config.database.driver)
+        self.assertEqual("swallowtail", config.database.dsn)
+        self.assertEqual("swallowtail_app", config.database.user)
+        self.assertEqual("secret", config.database.password)
+        self.assertEqual("/usr/local/bin/php", run.call_args.args[0][0])
+        self.assertEqual("/usr/local/swallowtail/secure/app.php", run.call_args.args[0][-1])
+
+    def test_php_app_config_loads_mysql_database_details(self) -> None:
+        payload = {
+            "db": {
+                "dsn": "mysql:host=db.internal;port=3307;dbname=swallowtail;charset=utf8mb4",
+                "user": "swallowtail_app",
+                "pass": "secret",
+            },
+        }
+
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+            config = load_php_app_config("secure/app.php", "php", default_config())
+
+        self.assertEqual("mysql", config.database.driver)
+        self.assertEqual("", config.database.dsn)
+        self.assertEqual("db.internal", config.database.host)
+        self.assertEqual(3307, config.database.port)
+        self.assertEqual("swallowtail", config.database.database)
+        self.assertEqual("swallowtail_app", config.database.user)
+        self.assertEqual("secret", config.database.password)
+
+    def test_php_app_config_rejects_unsupported_database_driver(self) -> None:
+        payload = {"db": {"dsn": "sqlite:/tmp/swallowtail.sqlite"}}
+
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+            with self.assertRaisesRegex(RuntimeError, "Unsupported database DSN driver"):
+                load_php_app_config("secure/app.php", "php", default_config())
 
 
 class RawTherapeeRunnerTest(unittest.TestCase):
