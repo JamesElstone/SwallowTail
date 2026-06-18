@@ -1660,6 +1660,103 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     @unlink($source);
 });
 
+$harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RAW storage failures in account audit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO users (
+            id,
+            display_name,
+            email_address,
+            password_hash,
+            otp_required,
+            is_active,
+            account_status
+        ) VALUES (
+            :id,
+            :display_name,
+            :email_address,
+            :password_hash,
+            0,
+            1,
+            'active'
+        )",
+        [
+            'id' => 44,
+            'display_name' => 'Token Account',
+            'email_address' => 'token-account@example.test',
+            'password_hash' => 'not-used',
+        ]
+    );
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('SpiceBush storage test', 44, null, ['203.0.113.0/24']);
+    $source = swallowtail_backend_test_temp_file('swallowtail-storage-failure-test-');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $blockedBase = swallowtail_backend_test_temp_file('swallowtail-storage-base-file-');
+
+    if (!is_string($blockedBase)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture.');
+    }
+
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', $blockedBase);
+    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+    (new SwallowtailStorageCacheService())->clear();
+
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15'],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $token['token'],
+            'User-Agent' => 'spicebush-test',
+            'X-Swallowtail-Device-ID' => 'DESKTOP-C6R0CCD',
+        ],
+        null,
+        []
+    );
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService()),
+        $library
+    );
+    $response = $service->handleUpload($request, [
+        'raw_file' => [
+            'tmp_name' => $source,
+            'name' => 'TEST.CR2',
+            'error' => UPLOAD_ERR_OK,
+            'size' => filesize($source),
+        ],
+    ]);
+    $payload = json_decode($response->body(), true);
+    $auditRows = (new UserHistoryStore())->fetchRecentAccountAudit(10);
+    $details = json_decode((string)($auditRows[0]['details_json'] ?? ''), true);
+
+    $harness->assertSame(503, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(empty($payload['success']));
+    $harness->assertSame('RAW upload failed while storing the file.', (string)(($payload['errors'] ?? [])[0] ?? ''));
+    $harness->assertTrue(str_contains((string)(($payload['diagnostics'] ?? [])['storage_error'] ?? ''), 'Unable to create SwallowTail storage directory'));
+    $harness->assertSame('upload_token_raw_upload_failed', (string)($auditRows[0]['action_type'] ?? ''));
+    $harness->assertSame('RAW upload failed while storing the file.', (string)($auditRows[0]['reason'] ?? ''));
+    $harness->assertTrue(is_array($details));
+    $harness->assertSame('TEST.CR2', (string)($details['original_filename'] ?? ''));
+    $harness->assertTrue(str_contains((string)($details['storage_error'] ?? ''), 'Unable to create SwallowTail storage directory'));
+    $harness->assertSame('DESKTOP-C6R0CCD', (string)($auditRows[0]['device_id'] ?? ''));
+
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+    (new SwallowtailStorageCacheService())->clear();
+    @unlink($source);
+    @unlink($blockedBase);
+});
+
 $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads when content length exceeds RAW limit', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 

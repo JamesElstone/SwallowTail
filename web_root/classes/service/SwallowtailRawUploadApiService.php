@@ -61,16 +61,6 @@ final class SwallowtailRawUploadApiService
             ], 401);
         }
 
-        $this->photoLibraryService->recordUploadTokenUsage(
-            $uploadToken,
-            $token,
-            $remoteAddress,
-            'upload_token_raw_upload_succeeded',
-            true,
-            'Upload token RAW upload request was accepted.',
-            $metadata
-        );
-
         $temporaryFile = null;
         $upload = $this->uploadFileFromRequest($files);
         $maxRawBytes = null;
@@ -102,10 +92,12 @@ final class SwallowtailRawUploadApiService
                 ], 400);
             }
 
+            $originalFilename = (string)($upload['name'] ?? $this->filenameFromRequest($request));
+
             try {
                 $result = $this->photoIngestService->ingestLocalRawFile(
                     (string)$upload['tmp_name'],
-                    (string)($upload['name'] ?? $this->filenameFromRequest($request)),
+                    $originalFilename,
                     [
                         'move_source' => $temporaryFile !== null,
                         'uploaded_via' => 'api',
@@ -120,17 +112,60 @@ final class SwallowtailRawUploadApiService
                     ]
                 );
             } catch (RuntimeException $exception) {
+                $reason = $this->publicStorageError($exception);
+                $diagnostics = $this->storageFailureDiagnostics($exception, $request, $upload, $originalFilename, $maxRawBytes, $temporaryFile !== null);
+                $this->photoLibraryService->recordUploadTokenUsage(
+                    $uploadToken,
+                    $token,
+                    $remoteAddress,
+                    'upload_token_raw_upload_failed',
+                    false,
+                    $reason,
+                    $metadata,
+                    $diagnostics
+                );
+
                 return ResponseFramework::json([
                     'success' => false,
-                    'errors' => [$this->publicStorageError($exception)],
+                    'errors' => [$reason],
+                    'diagnostics' => $diagnostics,
                 ], 503);
             }
 
             if (empty($result['success'])) {
+                $this->photoLibraryService->recordUploadTokenUsage(
+                    $uploadToken,
+                    $token,
+                    $remoteAddress,
+                    'upload_token_raw_upload_failed',
+                    false,
+                    (string)(($result['errors'] ?? [])[0] ?? 'RAW upload validation failed.'),
+                    $metadata,
+                    [
+                        'original_filename' => $originalFilename,
+                        'upload_size_bytes' => $this->uploadSizeBytes($upload),
+                    ]
+                );
                 return ResponseFramework::json($result, 400);
             }
 
             $this->photoLibraryService->markUploadTokenUsed((int)$uploadToken['id']);
+            $this->photoLibraryService->recordUploadTokenUsage(
+                $uploadToken,
+                $token,
+                $remoteAddress,
+                'upload_token_raw_upload_succeeded',
+                true,
+                'RAW upload was stored successfully.',
+                $metadata,
+                [
+                    'original_filename' => $originalFilename,
+                    'upload_size_bytes' => $this->uploadSizeBytes($upload),
+                    'status' => (string)($result['status'] ?? ''),
+                    'photo_id' => (int)($result['photo_id'] ?? 0),
+                    'duplicate' => !empty($result['duplicate']),
+                ]
+            );
 
             return ResponseFramework::json($this->publicUploadResponse($result), !empty($result['duplicate']) ? 200 : 201);
         } finally {
@@ -180,6 +215,44 @@ final class SwallowtailRawUploadApiService
         return str_contains($exception->getMessage(), 'No writable SwallowTail storage location')
             ? 'No upload storage locations are currently available.'
             : 'RAW upload failed while storing the file.';
+    }
+
+    private function storageFailureDiagnostics(
+        RuntimeException $exception,
+        RequestFramework $request,
+        array $upload,
+        string $originalFilename,
+        ?int $maxRawBytes,
+        bool $rawBodyUpload
+    ): array {
+        return [
+            'storage_error' => $exception->getMessage(),
+            'storage_error_type' => get_class($exception),
+            'original_filename' => $originalFilename,
+            'upload_size_bytes' => $this->uploadSizeBytes($upload),
+            'content_length' => $this->contentLength($request),
+            'max_raw_bytes' => $maxRawBytes,
+            'upload_mode' => $rawBodyUpload ? 'raw_body' : 'multipart',
+            'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
+        ];
+    }
+
+    private function uploadSizeBytes(array $upload): ?int
+    {
+        if (isset($upload['size']) && is_numeric($upload['size'])) {
+            return max(0, (int)$upload['size']);
+        }
+
+        $path = (string)($upload['tmp_name'] ?? '');
+
+        return is_file($path) ? max(0, (int)filesize($path)) : null;
+    }
+
+    private function contentLength(RequestFramework $request): ?int
+    {
+        $value = trim((string)$request->server('CONTENT_LENGTH', (string)$request->header('Content-Length', '')));
+
+        return preg_match('/^\d+$/', $value) === 1 ? (int)$value : null;
     }
 
     private function filenameFromRequest(RequestFramework $request): string

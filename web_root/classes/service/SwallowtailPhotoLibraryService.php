@@ -498,7 +498,8 @@ final class SwallowtailPhotoLibraryService
         string $actionType,
         bool $success,
         string $reason = '',
-        array $metadata = []
+        array $metadata = [],
+        array $details = []
     ): void {
         if (!InterfaceDB::tableExists('user_account_audit') || !InterfaceDB::tableExists('users')) {
             return;
@@ -524,19 +525,21 @@ final class SwallowtailPhotoLibraryService
             ? trim($reason)
             : ($success ? 'Upload token request was accepted.' : 'Upload token request was rejected.');
 
+        $auditDetails = array_merge([
+            'upload_token_id' => $tokenId,
+            'token_label' => (string)($uploadToken['token_label'] ?? ''),
+            'success' => $success,
+            'client_ip' => trim((string)$remoteAddress),
+            'allowed_cidrs' => array_values((array)$cidrs),
+            'failure_reason' => $success ? null : $reason,
+        ], $details);
+
         (new UserHistoryStore())->recordAccountAudit(
             $affectedUserId,
             null,
             trim($actionType) !== '' ? trim($actionType) : 'upload_token_used',
             $reason,
-            [
-                'upload_token_id' => $tokenId,
-                'token_label' => (string)($uploadToken['token_label'] ?? ''),
-                'success' => $success,
-                'client_ip' => trim((string)$remoteAddress),
-                'allowed_cidrs' => array_values((array)$cidrs),
-                'failure_reason' => $success ? null : $reason,
-            ],
+            $auditDetails,
             $metadata
         );
     }

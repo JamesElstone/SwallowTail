@@ -39,6 +39,10 @@
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
 #define STATS_LABEL_COUNT 17
+#define RAW_UPLOAD_RETRY 0
+#define RAW_UPLOAD_OK 1
+#define RAW_UPLOAD_REJECT_OVERSIZE 2
+#define RAW_UPLOAD_FAILED_PERMANENT 3
 
 typedef unsigned __int64 U64;
 
@@ -1569,7 +1573,7 @@ static void StartPingCheck(void)
     else ShowRegisterWindow(0);
 }
 
-static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes, int *permanentReject)
+static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
 {
     ParsedUrl parsed;
     char url[2048], headers[1800], filename[MAX_PATH], response[4096];
@@ -1582,9 +1586,9 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes, int 
     BYTE buf[65536];
     int ok = 0;
     int duplicate = 0;
+    int result = RAW_UPLOAD_RETRY;
     DWORD photoId = 0;
     const char *slash = strrchr(path, '\\');
-    if (permanentReject) *permanentReject = 0;
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
     SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
@@ -1672,7 +1676,16 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes, int 
         hash,
         sizeBytes);
     if (!ok) {
-        if (status == 413 && permanentReject) *permanentReject = 1;
+        char errorText[512];
+        errorText[0] = '\0';
+        JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText));
+        if (status == 413 || strstr(errorText, "exceeded the configured size limit") != NULL || strstr(errorText, "exceeded the configured upload limit") != NULL) {
+            result = RAW_UPLOAD_REJECT_OVERSIZE;
+        } else if ((status >= 400 && status < 500)
+            || strcmp(errorText, "RAW upload failed while storing the file.") == 0
+            || strcmp(errorText, "No upload storage locations are currently available.") == 0) {
+            result = RAW_UPLOAD_FAILED_PERMANENT;
+        }
         LogResponseSummary("Raw upload", status, response);
     }
 done:
@@ -1680,8 +1693,11 @@ done:
     if (request) InternetCloseHandle(request);
     if (connect) InternetCloseHandle(connect);
     if (internet) InternetCloseHandle(internet);
-    if (ok) MarkUploadedStatus(hash, sizeBytes, photoId, duplicate ? "duplicate" : "uploaded", path);
-    return ok;
+    if (ok) {
+        MarkUploadedStatus(hash, sizeBytes, photoId, duplicate ? "duplicate" : "uploaded", path);
+        result = RAW_UPLOAD_OK;
+    }
+    return result;
 }
 
 static void ProcessPath(DWORD queueId, const char *path)
@@ -1690,7 +1706,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     U64 sizeBytes = 0;
     U64 maxRawUploadBytes = 0;
     int serverMaxRawUploadState = 0;
-    int permanentReject = 0;
+    int uploadResult = RAW_UPLOAD_RETRY;
     DWORD photoId = 0;
     DWORD start = GetTickCount();
     LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
@@ -1744,7 +1760,8 @@ static void ProcessPath(DWORD queueId, const char *path)
         return;
     }
 
-    if (UploadFileRaw(path, hash, sizeBytes, &permanentReject)) {
+    uploadResult = UploadFileRaw(path, hash, sizeBytes);
+    if (uploadResult == RAW_UPLOAD_OK) {
         DWORD elapsed = GetTickCount() - start;
         EnterCriticalSection(&g_app.lock);
         g_app.totalUploadMillis += elapsed;
@@ -1753,10 +1770,15 @@ static void ProcessPath(DWORD queueId, const char *path)
         LogMessage("Process uploaded: path=%s hash=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
         AppendQueueDone(queueId, "uploaded");
         CompactQueueIfNeeded();
-    } else if (permanentReject) {
+    } else if (uploadResult == RAW_UPLOAD_REJECT_OVERSIZE) {
         InterlockedIncrement(&g_app.totalRejectedOversize);
-        LogMessage("Process rejected after permanent upload failure: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process rejected after upload limit response: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "rejected_oversize");
+        CompactQueueIfNeeded();
+    } else if (uploadResult == RAW_UPLOAD_FAILED_PERMANENT) {
+        InterlockedIncrement(&g_app.totalFailed);
+        LogMessage("Process upload failed permanently; not requeueing: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        AppendQueueDone(queueId, "failed_permanent");
         CompactQueueIfNeeded();
     } else {
         InterlockedIncrement(&g_app.totalFailed);

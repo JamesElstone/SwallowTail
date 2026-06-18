@@ -13,6 +13,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#define RAW_UPLOAD_RETRY 0
+#define RAW_UPLOAD_OK 1
+#define RAW_UPLOAD_REJECT_OVERSIZE 2
+#define RAW_UPLOAD_FAILED_PERMANENT 3
+
 typedef struct SpiceBushCli {
     SpiceBushConfig config;
     SpiceBushStats stats;
@@ -303,7 +308,7 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     return 0;
 }
 
-static int upload_file(const SpiceBushConfig *config, const char *path, const char *hash, sb_u64 size_bytes, int *permanent_reject)
+static int upload_file(const SpiceBushConfig *config, const char *path, const char *hash, sb_u64 size_bytes)
 {
     char url[SB_TEXT * 2];
     char headers[SB_TEXT * 2];
@@ -311,9 +316,6 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
     long status = 0;
     unsigned long photo_id = 0;
     int duplicate = 0;
-    if (permanent_reject != NULL) {
-        *permanent_reject = 0;
-    }
 
     snprintf(url, sizeof(url), "%s/raw-upload.php", config->api_url);
     snprintf(
@@ -335,13 +337,20 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         sb_json_ulong_value(response, "photo_id", &photo_id);
         sb_json_bool_value(response, "duplicate", &duplicate);
         sb_mark_uploaded(config, hash, size_bytes, photo_id, duplicate ? "duplicate" : "uploaded", path);
-        return 1;
-    }
-    if (status == 413 && permanent_reject != NULL) {
-        *permanent_reject = 1;
+        return RAW_UPLOAD_OK;
     }
     fprintf(stderr, "Upload failed with HTTP %ld for %s\n%s\n", status, path, response);
-    return 0;
+    if (status == 413
+        || strstr(response, "exceeded the configured size limit") != NULL
+        || strstr(response, "exceeded the configured upload limit") != NULL) {
+        return RAW_UPLOAD_REJECT_OVERSIZE;
+    }
+    if ((status >= 400 && status < 500)
+        || strstr(response, "RAW upload failed while storing the file.") != NULL
+        || strstr(response, "No upload storage locations are currently available.") != NULL) {
+        return RAW_UPLOAD_FAILED_PERMANENT;
+    }
+    return RAW_UPLOAD_RETRY;
 }
 
 static int process_cr2(const char *path, void *context)
@@ -351,7 +360,7 @@ static int process_cr2(const char *path, void *context)
     sb_u64 size_bytes = 0;
     unsigned long start;
     unsigned long photo_id = 0;
-    int permanent_reject = 0;
+    int upload_result = RAW_UPLOAD_RETRY;
 
     cli->stats.found++;
     printf("found: %s\n", path);
@@ -390,13 +399,17 @@ static int process_cr2(const char *path, void *context)
 
     start = tick_millis();
     printf("  uploading: %s bytes=%llu\n", hash, (unsigned long long)size_bytes);
-    if (upload_file(&cli->config, path, hash, size_bytes, &permanent_reject)) {
+    upload_result = upload_file(&cli->config, path, hash, size_bytes);
+    if (upload_result == RAW_UPLOAD_OK) {
         cli->stats.uploaded++;
         cli->stats.upload_millis += (sb_u64)(tick_millis() - start);
         printf("  uploaded\n");
-    } else if (permanent_reject) {
+    } else if (upload_result == RAW_UPLOAD_REJECT_OVERSIZE) {
         cli->stats.rejected_oversize++;
         printf("  rejected: upload exceeded the SwallowTail upload limit\n");
+    } else if (upload_result == RAW_UPLOAD_FAILED_PERMANENT) {
+        cli->stats.failed++;
+        printf("  failed permanently; not queued for retry\n");
     } else {
         cli->stats.failed++;
         queue_retry(&cli->config, path);

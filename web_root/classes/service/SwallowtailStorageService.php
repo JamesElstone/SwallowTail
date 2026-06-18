@@ -243,7 +243,11 @@ final class SwallowtailStorageService
     {
         $directory = dirname($absolutePath);
         if (!is_dir($directory) && !mkdir($directory, 0770, true) && !is_dir($directory)) {
-            throw new RuntimeException('Unable to create SwallowTail storage directory.');
+            throw new RuntimeException(sprintf(
+                'Unable to create SwallowTail storage directory: %s%s',
+                $directory,
+                $this->lastPhpErrorSuffix()
+            ));
         }
     }
 
@@ -264,7 +268,15 @@ final class SwallowtailStorageService
                 : @copy($sourcePath, $destinationPath);
 
             if (!$stored) {
-                throw new RuntimeException('Unable to store RAW file in SwallowTail storage.');
+                throw new RuntimeException(sprintf(
+                    'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
+                    $sourcePath,
+                    $destinationPath,
+                    (string)$location['storage_base_location'],
+                    $sourceBytes,
+                    $move ? 'yes' : 'no',
+                    $this->lastPhpErrorSuffix()
+                ));
             }
 
             @chmod($destinationPath, 0660);
@@ -395,6 +407,14 @@ final class SwallowtailStorageService
         }
 
         return $writable[0];
+    }
+
+    private function lastPhpErrorSuffix(): string
+    {
+        $error = error_get_last();
+        $message = is_array($error) ? trim((string)($error['message'] ?? '')) : '';
+
+        return $message !== '' ? ' php_error=' . $message : '';
     }
 
     private function mountedBaseLocations(): array
