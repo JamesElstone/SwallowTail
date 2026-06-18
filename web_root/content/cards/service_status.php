@@ -50,9 +50,7 @@ final class _service_statusCard extends CardBaseFramework
             $rows .= $this->statusRow((array)$check);
         }
 
-        return '<div class="panel-soft service-status-panel">
-            <div class="service-status-list">' . $rows . '</div>
-        </div>';
+        return '<div class="service-status-list">' . $rows . '</div>';
     }
 
     private function statusRow(array $check): string
@@ -63,7 +61,7 @@ final class _service_statusCard extends CardBaseFramework
         $status = HelperFramework::escape((string)($check['status'] ?? 'Unknown'));
         $detail = HelperFramework::escape((string)($check['detail'] ?? 'No detail available.'));
 
-        return '<div class="service-status-row">
+        return '<div class="panel-soft service-status-panel service-status-row">
             <span class="traffic-light ' . $state . '" aria-label="' . $status . '" title="' . $status . '"></span>
             <div class="service-status-main">
                 <strong>' . $label . '</strong>

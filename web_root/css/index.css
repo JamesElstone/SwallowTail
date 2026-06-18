@@ -3297,7 +3297,7 @@ label {
 
 .service-status-list {
   display: grid;
-  gap: 0;
+  gap: 12px;
 }
 
 .service-status-panel {
@@ -3309,17 +3309,6 @@ label {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.service-status-row:first-child {
-  padding-top: 0;
-}
-
-.service-status-row:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
 }
 
 .service-status-main {
