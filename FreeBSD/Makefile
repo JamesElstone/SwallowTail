@@ -20,7 +20,11 @@ USES=		php:cli python:3.11 ssl
 USE_GITHUB=	yes
 GH_ACCOUNT=	JamesElstone
 GH_PROJECT=	SwallowTail
-GH_TAGNAME=	0290ba0087b3db81cd4bd103f47ffd00cc320cab
+# Local development only: track the moving main branch until this port is
+# submitted upstream. Pin GH_TAGNAME to a release tag and regenerate distinfo
+# before submitting through bugs.freebsd.org.
+GH_TAGNAME=	main
+NO_CHECKSUM=	yes
 USE_PHP=	ctype curl filter gd mbstring pdo pdo_odbc session tokenizer
 USE_RC_SUBR=	swallowtail_storage \
 		swallowtail_conversion
