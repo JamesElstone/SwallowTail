@@ -1,0 +1,5 @@
+#!/bin/sh
+: ${SWALLOWTAIL_IMAGE_ENGINE_PROJECT_ROOT:="%%SWALLOWTAIL_ROOT%%"}
+export PYTHONPATH="${SWALLOWTAIL_IMAGE_ENGINE_PROJECT_ROOT}/service/image_engine"
+export PYTHONDONTWRITEBYTECODE=1
+exec "%%PYTHON_CMD%%" -m raw_conversion "$@"

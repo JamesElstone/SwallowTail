@@ -1,4 +1,4 @@
-# SwallowTail Subsystem Service
+# SwallowTail Image Engine Service
 
 This service consumes SwallowTail conversion jobs from MariaDB, wakes quickly via
 Redis, and renders `.CR2` RAW image files with `rawtherapee-cli`.
@@ -13,7 +13,7 @@ defined on the job.
 Run the repo-provided installer from the checked-out project:
 
 ```sh
-sh service/subsystem/scripts/install_freebsd.sh /usr/local/swallowtail
+sh service/image_engine/scripts/install_freebsd.sh /usr/local/swallowtail
 ```
 
 The installer creates the rc.d script, worker wrapper, log file, and newsyslog
@@ -21,17 +21,17 @@ rotation config. Service defaults are embedded in the rc.d script and can be
 overridden in `/etc/rc.conf`:
 
 ```sh
-sysrc swallowtail_subsystem_database_dsn=swallowtail
-sysrc swallowtail_subsystem_database_user=swallowtail_worker
-sysrc swallowtail_subsystem_poll_interval_seconds=5
+sysrc swallowtail_image_engine_database_dsn=swallowtail
+sysrc swallowtail_image_engine_database_user=swallowtail_worker
+sysrc swallowtail_image_engine_poll_interval_seconds=5
 ```
 
 ## Operations
 
 ```sh
-service swallowtail_subsystem start
-service swallowtail_subsystem status
-service swallowtail_subsystem migrate
+service swallowtail_image_engine start
+service swallowtail_image_engine status
+service swallowtail_image_engine migrate
 ```
 
 `migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration

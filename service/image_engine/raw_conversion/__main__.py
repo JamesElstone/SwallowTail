@@ -82,7 +82,7 @@ def _setting(args, attr: str, env_name: str, current):
 
 
 def _apply_overrides(config, args):
-    prefix = "SWALLOWTAIL_SUBSYSTEM_"
+    prefix = "SWALLOWTAIL_IMAGE_ENGINE_"
     return replace(
         config,
         database=replace(

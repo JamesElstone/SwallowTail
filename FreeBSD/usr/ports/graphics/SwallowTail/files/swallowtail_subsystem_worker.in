@@ -1,5 +1,0 @@
-#!/bin/sh
-: ${SWALLOWTAIL_SUBSYSTEM_PROJECT_ROOT:="%%SWALLOWTAIL_ROOT%%"}
-export PYTHONPATH="${SWALLOWTAIL_SUBSYSTEM_PROJECT_ROOT}/service/subsystem"
-export PYTHONDONTWRITEBYTECODE=1
-exec "%%PYTHON_CMD%%" -m raw_conversion "$@"

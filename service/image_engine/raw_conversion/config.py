@@ -93,7 +93,7 @@ def default_config() -> AppConfig:
             temp_retention_hours=24,
         ),
         logging=LoggingConfig(
-            file="/var/log/swallowtail_subsystem.log",
+            file="/var/log/swallowtail_image_engine.log",
             level="INFO",
         ),
     )

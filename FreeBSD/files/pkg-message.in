@@ -8,13 +8,13 @@ SwallowTail has been installed at:
 This port contains all SwallowTail service integrations. Enable and start the
 services you want on this host:
 
-  sysrc swallowtail_subsystem_enable=YES
+  sysrc swallowtail_image_engine_enable=YES
   sysrc swallowtail_storage_enable=YES
-  service swallowtail_subsystem start
+  service swallowtail_image_engine start
   service swallowtail_storage start
 
 Service defaults are embedded in the rc.d scripts. Override them in
-/etc/rc.conf using swallowtail_subsystem_* and swallowtail_storage_* variables.
+/etc/rc.conf using swallowtail_image_engine_* and swallowtail_storage_* variables.
 EOM
 }
 ]

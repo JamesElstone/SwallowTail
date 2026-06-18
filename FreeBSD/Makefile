@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	0.1.0
-CATEGORIES=	graphics www python
+CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
 COMMENT=	SwallowTail photo application and background services
@@ -17,7 +17,7 @@ RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVO
 
 USES=		php:cli python:3.11
 USE_RC_SUBR=	swallowtail_storage \
-		swallowtail_subsystem
+		swallowtail_image_engine
 
 NO_ARCH=	yes
 NO_BUILD=	yes
@@ -27,7 +27,7 @@ USERS=		swallowtail
 GROUPS=		swallowtail
 
 SWALLOWTAIL_ROOT?=	${PREFIX}/swallowtail
-SWALLOWTAIL_SOURCE?=	${.CURDIR}/../../../../..
+SWALLOWTAIL_SOURCE?=	${.CURDIR}/..
 
 PROJECT_DIRS=	db_schema \
 		secure \
@@ -35,6 +35,7 @@ PROJECT_DIRS=	db_schema \
 		tools \
 		web_root
 PROJECT_FILES=	API.md \
+		DEPLOYMENT.md \
 		LICENSE \
 		README.md \
 		eelKit_CHANGES.md
@@ -45,15 +46,16 @@ IGNORE=	requires SWALLOWTAIL_SOURCE to point at a SwallowTail checkout
 
 SUB_FILES=	pkg-message \
 		swallowtail_storage_worker \
-		swallowtail_subsystem_worker
+		swallowtail_image_engine_worker
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
 		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT}
 
 PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
-		etc/newsyslog.conf.d/swallowtail_subsystem.conf \
+		etc/newsyslog.conf.d/swallowtail_image_engine.conf \
+		etc/php/ext-30-pdo_odbc.ini \
 		libexec/swallowtail_storage_worker \
-		libexec/swallowtail_subsystem_worker
+		libexec/swallowtail_image_engine_worker
 
 do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
@@ -73,12 +75,15 @@ do-install:
 	done
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_storage.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_storage.conf
-	${INSTALL_DATA} ${FILESDIR}/swallowtail_subsystem.newsyslog.conf \
-		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_subsystem.conf
+	${INSTALL_DATA} ${FILESDIR}/swallowtail_image_engine.newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_image_engine.conf
+	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php
+	${INSTALL_DATA} ${FILESDIR}/ext-30-pdo_odbc.ini \
+		${STAGEDIR}${PREFIX}/etc/php/ext-30-pdo_odbc.ini
 	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_storage_worker \
 		${STAGEDIR}${PREFIX}/libexec/swallowtail_storage_worker
-	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_subsystem_worker \
-		${STAGEDIR}${PREFIX}/libexec/swallowtail_subsystem_worker
+	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail_image_engine_worker \
+		${STAGEDIR}${PREFIX}/libexec/swallowtail_image_engine_worker
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f | ${SORT} >> ${TMPPLIST}
