@@ -92,7 +92,12 @@ $swallowtailEnableRootStorageForTests = static function (): void {
         $restoreRegistered = true;
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
-                AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_backend_storage_tmp_root());
+                $storageRoot = swallowtail_backend_storage_tmp_root();
+                if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+                    throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
+                }
+
+                AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
                 AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
                 AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
@@ -132,7 +137,12 @@ $swallowtailEnableRootStorageForTests = static function (): void {
         });
     }
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_backend_storage_tmp_root());
+    $storageRoot = swallowtail_backend_storage_tmp_root();
+    if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+        throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
+    }
+
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
     AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
     AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
     AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
@@ -532,7 +542,7 @@ $swallowtailAssertContains = static function (string $needle, mixed $haystack, s
 
 $harness->check(SwallowtailStorageService::class, 'builds deterministic image paths under discovered storage', function () use ($harness, $swallowtailWithRootStorage): void {
     $swallowtailWithRootStorage(static function (SwallowtailStorageService $service, string $baseLocation) use ($harness): void {
-    $sha256 = str_repeat('a', 64);
+        $sha256 = str_repeat('a', 64);
         $sourcePath = $service->imagePath($baseLocation, $sha256, 'source');
         $profilePath = $service->imagePath($baseLocation, $sha256, 'profile');
         $filteredPath = $service->imagePath($baseLocation, $sha256, 'filtered');
@@ -543,6 +553,196 @@ $harness->check(SwallowtailStorageService::class, 'builds deterministic image pa
         $harness->assertTrue(str_ends_with($filteredPath, $sha256 . '_filtered.jpg'));
         $harness->assertTrue(!str_starts_with($sourcePath, APP_ROOT));
     });
+});
+
+$harness->check(SwallowtailStorageService::class, 'marks invalid storage bases unwritable before upload', function () use ($harness, $swallowtailAssertContains): void {
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
+    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture directory.');
+    }
+
+    $blockedBase = tempnam($blockedBaseRoot, 'swallowtail-storage-base-file-');
+    if (!is_string($blockedBase)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture.');
+    }
+
+    try {
+        AppConfigurationStore::set('swallowtail.storage.test_base_location', $blockedBase);
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        (new SwallowtailStorageCacheService())->clear();
+
+        $matching = array_values(array_filter(
+            (new SwallowtailStorageService())->liveStorageLocations(),
+            static fn(array $location): bool => str_contains(
+                (string)($location['storage_base_location'] ?? ''),
+                basename($blockedBase)
+            )
+        ));
+        if ($matching === []) {
+            throw new RuntimeException('Expected invalid test storage base to be discovered.');
+        }
+
+        $location = $matching[0];
+        $harness->assertSame(false, !empty($location['permission_can_write']));
+        $harness->assertSame(false, !empty($location['can_write']));
+        $swallowtailAssertContains('not a directory', (string)($location['permission_error'] ?? ''), 'storage permission error');
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        (new SwallowtailStorageCacheService())->clear();
+        @unlink($blockedBase);
+    }
+});
+
+$harness->check(SwallowtailStorageService::class, 'verifies active live storage locations are writable by PHP', function () use ($harness): void {
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        (new SwallowtailStorageCacheService())->clear();
+
+        $locations = (new SwallowtailStorageService())->liveStorageLocations();
+        $active = array_values(array_filter($locations, static function (array $location): bool {
+            $baseLocation = rtrim((string)($location['storage_base_location'] ?? ''), DIRECTORY_SEPARATOR);
+
+            return $baseLocation !== ''
+                && is_dir($baseLocation)
+                && empty($location['is_excluded'])
+                && empty($location['is_full'])
+                && (empty($location['is_zfs']) || !empty($location['is_selected_zfs_dataset']));
+        }));
+
+        if ($active === []) {
+            $harness->skip('No active live storage locations exist on this development machine.');
+        }
+
+        foreach ($active as $location) {
+            if (empty($location['permission_can_write'])) {
+                throw new RuntimeException(sprintf(
+                    'Active live storage location is not writable by PHP: base=%s checked_path=%s error=%s',
+                    (string)($location['storage_base_location'] ?? ''),
+                    (string)($location['permission_checked_path'] ?? ''),
+                    (string)($location['permission_error'] ?? '')
+                ));
+            }
+
+            if (empty($location['can_write'])) {
+                throw new RuntimeException(sprintf(
+                    'Active live storage location passed permission checks but was not marked writable: base=%s',
+                    (string)($location['storage_base_location'] ?? '')
+                ));
+            }
+        }
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        (new SwallowtailStorageCacheService())->clear();
+    }
+});
+
+$harness->check(SwallowtailStorageService::class, 'reports storage mkdir failures without PHP warnings', function () use ($harness, $swallowtailAssertContains): void {
+    $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
+    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture directory.');
+    }
+
+    $blockedBase = tempnam($blockedBaseRoot, 'swallowtail-storage-base-file-');
+    if (!is_string($blockedBase)) {
+        throw new RuntimeException('Unable to create blocked storage base fixture.');
+    }
+
+    $storage = new SwallowtailStorageService();
+    $destinationPath = $storage->imagePath($blockedBase, str_repeat('b', 64), 'source');
+    $bufferLevel = ob_get_level();
+    ob_start();
+
+    try {
+        try {
+            $storage->ensureDirectoryForPath($destinationPath);
+            throw new RuntimeException('Expected storage mkdir failure.');
+        } catch (RuntimeException $exception) {
+            $message = $exception->getMessage();
+            $swallowtailAssertContains('Unable to create SwallowTail storage directory', $message, 'storage mkdir failure');
+            $swallowtailAssertContains('php_error=', $message, 'storage mkdir failure');
+        }
+
+        $output = (string)ob_get_clean();
+        $harness->assertSame('', trim($output));
+    } finally {
+        while (ob_get_level() > $bufferLevel) {
+            ob_end_clean();
+        }
+
+        @unlink($blockedBase);
+    }
+});
+
+$harness->check(SwallowtailStorageService::class, 'reports storage file write failures without PHP warnings', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-storage-write-failure-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    try {
+        $swallowtailWriteRawFixture($source, 'cr2');
+        $checksum = hash_file('sha256', $source);
+        if (!is_string($checksum)) {
+            throw new RuntimeException('Unable to hash RAW fixture.');
+        }
+
+        $storage = new SwallowtailStorageService();
+        $baseLocation = swallowtail_backend_storage_tmp_root();
+        AppConfigurationStore::set('swallowtail.storage.test_base_location', $baseLocation);
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        (new SwallowtailStorageCacheService())->clear();
+
+        $destinationPath = $storage->imagePath($baseLocation, $checksum, 'source');
+        $storage->ensureDirectoryForPath($destinationPath);
+        if (!mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
+            throw new RuntimeException('Unable to create blocked storage destination fixture.');
+        }
+
+        $bufferLevel = ob_get_level();
+        ob_start();
+        try {
+            try {
+                $storage->storeSourceFile($source, $checksum);
+                throw new RuntimeException('Expected storage file write failure.');
+            } catch (RuntimeException $exception) {
+                $message = $exception->getMessage();
+                $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', $message, 'storage write failure');
+                $swallowtailAssertContains('destination=' . $destinationPath, $message, 'storage write failure');
+                $swallowtailAssertContains('php_error=', $message, 'storage write failure');
+            }
+
+            $output = (string)ob_get_clean();
+            $harness->assertSame('', trim($output));
+        } finally {
+            while (ob_get_level() > $bufferLevel) {
+                ob_end_clean();
+            }
+        }
+    } finally {
+        AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+        (new SwallowtailStorageCacheService())->clear();
+        @unlink($source);
+        swallowtail_backend_remove_tree(swallowtail_backend_storage_tmp_root());
+    }
 });
 
 $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file families after SHA-256 verification', function () use ($harness, $swallowtailCreateSqliteSchema): void {
@@ -1795,15 +1995,17 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
 
     $swallowtailWriteRawFixture($source, 'cr2');
 
-    $blockedBaseRoot = dirname(swallowtail_backend_storage_tmp_root());
-    if (!is_dir($blockedBaseRoot) && !mkdir($blockedBaseRoot, 0770, true) && !is_dir($blockedBaseRoot)) {
-        throw new RuntimeException('Unable to create blocked storage base fixture directory.');
+    $blockedBase = swallowtail_backend_storage_tmp_root();
+    $checksum = hash_file('sha256', $source);
+    if (!is_string($checksum)) {
+        throw new RuntimeException('Unable to hash RAW fixture.');
     }
 
-    $blockedBase = tempnam($blockedBaseRoot, 'swallowtail-storage-base-file-');
-
-    if (!is_string($blockedBase)) {
-        throw new RuntimeException('Unable to create blocked storage base fixture.');
+    $storage = new SwallowtailStorageService();
+    $destinationPath = $storage->imagePath($blockedBase, $checksum, 'source');
+    $storage->ensureDirectoryForPath($destinationPath);
+    if (!mkdir($destinationPath, 0770, true) && !is_dir($destinationPath)) {
+        throw new RuntimeException('Unable to create blocked storage destination fixture.');
     }
 
     AppConfigurationStore::set('swallowtail.storage.test_base_location', $blockedBase);
@@ -1841,12 +2043,12 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(empty($payload['success']));
     $harness->assertSame('RAW upload failed while storing the file.', (string)(($payload['errors'] ?? [])[0] ?? ''));
-    $swallowtailAssertContains('Unable to create SwallowTail storage directory', ($payload['diagnostics'] ?? [])['storage_error'] ?? '', 'RAW upload diagnostics.storage_error');
+    $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', ($payload['diagnostics'] ?? [])['storage_error'] ?? '', 'RAW upload diagnostics.storage_error');
     $harness->assertSame('upload_token_raw_upload_failed', (string)($auditRows[0]['action_type'] ?? ''));
     $harness->assertSame('RAW upload failed while storing the file.', (string)($auditRows[0]['reason'] ?? ''));
     $harness->assertTrue(is_array($details));
     $harness->assertSame('TEST.CR2', (string)($details['original_filename'] ?? ''));
-    $swallowtailAssertContains('Unable to create SwallowTail storage directory', $details['storage_error'] ?? '', 'account audit storage_error detail');
+    $swallowtailAssertContains('Unable to store RAW file in SwallowTail storage', $details['storage_error'] ?? '', 'account audit storage_error detail');
     $harness->assertSame('DESKTOP-C6R0CCD', (string)($auditRows[0]['device_id'] ?? ''));
     $harness->assertCount(1, $activityRows);
     $harness->assertSame(44, (int)($activityRows[0]['user_id'] ?? 0));
@@ -1865,7 +2067,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
     (new SwallowtailStorageCacheService())->clear();
     @unlink($source);
-    @unlink($blockedBase);
+    swallowtail_backend_remove_tree($blockedBase);
 });
 
 $harness->check(SwallowtailRawUploadApiService::class, 'rejects raw body uploads when content length exceeds RAW limit', function () use ($harness, $swallowtailCreateSqliteSchema): void {
@@ -2257,18 +2459,43 @@ $harness->check(SwallowtailStorageLocationService::class, 'filters discovered st
         $swallowtailWithRootStorage(static function (SwallowtailStorageService $storage, string $baseLocation) use ($harness): void {
             $locations = $storage->storageLocations();
             $harness->assertTrue($locations !== []);
-            $harness->assertTrue(str_ends_with((string)$locations[0]['data_root'], DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR));
-            $harness->assertTrue(!empty($locations[0]['can_write']));
+            $writableLocations = array_values(array_filter(
+                $locations,
+                static fn(array $location): bool => !empty($location['can_write'])
+            ));
+            if ($writableLocations === []) {
+                $harness->skip('Storage settings test needs at least one writable storage location.');
+            }
+
+            $baseLocation = (string)$writableLocations[0]['storage_base_location'];
+            $harness->assertTrue(str_ends_with((string)$writableLocations[0]['data_root'], DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR));
+            $harness->assertTrue(!empty($writableLocations[0]['permission_can_write']));
 
             AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 100);
             $thresholdLocations = $storage->storageLocations();
-            $harness->assertTrue(empty($thresholdLocations[0]['can_write']));
+            $thresholdLocation = null;
+            foreach ($thresholdLocations as $location) {
+                if ((string)($location['storage_base_location'] ?? '') === $baseLocation) {
+                    $thresholdLocation = $location;
+                    break;
+                }
+            }
+            $harness->assertTrue(is_array($thresholdLocation));
+            $harness->assertTrue(empty($thresholdLocation['can_write']));
 
             AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
             (new SwallowtailStorageLocationService($storage))->setExcluded($baseLocation, true);
             $excludedLocations = $storage->storageLocations();
-            $harness->assertTrue(!empty($excludedLocations[0]['is_excluded']));
-            $harness->assertTrue(empty($excludedLocations[0]['can_write']));
+            $excludedLocation = null;
+            foreach ($excludedLocations as $location) {
+                if ((string)($location['storage_base_location'] ?? '') === $baseLocation) {
+                    $excludedLocation = $location;
+                    break;
+                }
+            }
+            $harness->assertTrue(is_array($excludedLocation));
+            $harness->assertTrue(!empty($excludedLocation['is_excluded']));
+            $harness->assertTrue(empty($excludedLocation['can_write']));
         });
     } finally {
         file_put_contents($configPath, $originalConfig, LOCK_EX);

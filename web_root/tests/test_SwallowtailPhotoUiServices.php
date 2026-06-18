@@ -82,7 +82,12 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
         $restoreRegistered = true;
         register_shutdown_function(static function () use ($configPath, &$originalConfig): void {
             try {
-                AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_ui_storage_tmp_root());
+                $storageRoot = swallowtail_ui_storage_tmp_root();
+                if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+                    throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
+                }
+
+                AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
                 AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
                 AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
@@ -122,7 +127,12 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
         });
     }
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', swallowtail_ui_storage_tmp_root());
+    $storageRoot = swallowtail_ui_storage_tmp_root();
+    if (!is_dir($storageRoot) && !mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+        throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
+    }
+
+    AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
     AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
     AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
     AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);

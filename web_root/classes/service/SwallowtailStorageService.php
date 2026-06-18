@@ -83,12 +83,16 @@ final class SwallowtailStorageService
                 && $zpoolName !== ''
                 && $datasetName !== ''
                 && (string)($selectedDatasets[$zpoolName]['dataset_name'] ?? '') === $datasetName;
+            $permissions = $this->storagePermissionState($baseLocation, $dataRoot);
 
             $locations[] = [
                 'storage_base_location' => $baseLocation,
                 'label' => $isZfs && $datasetName !== '' ? $datasetName : $baseLocation,
                 'root_path' => $dataRoot,
                 'data_root' => $dataRoot,
+                'permission_can_write' => $permissions['can_write'],
+                'permission_checked_path' => $permissions['checked_path'],
+                'permission_error' => $permissions['error'],
                 'total_bytes' => $totalBytes,
                 'available_bytes' => $availableBytes,
                 'free_percent' => $freePercent,
@@ -104,6 +108,7 @@ final class SwallowtailStorageService
                 'can_write' => !$isExcluded
                     && !$belowThreshold
                     && (!$isZfs || $isSelectedZfsDataset)
+                    && $permissions['can_write']
                     && ($availableBytes === null || $availableBytes >= 0),
             ];
         }
@@ -191,9 +196,14 @@ final class SwallowtailStorageService
             }
 
             $availableBytes = is_numeric($location['available_bytes'] ?? null) ? (int)$location['available_bytes'] : null;
+            $permissions = $this->permissionStateForLocation($location);
+            $location['permission_can_write'] = $permissions['can_write'];
+            $location['permission_checked_path'] = $permissions['checked_path'];
+            $location['permission_error'] = $permissions['error'];
             $location['can_write'] = empty($location['is_excluded'])
                 && empty($location['is_full'])
                 && (empty($location['is_zfs']) || !empty($location['is_selected_zfs_dataset']))
+                && $permissions['can_write']
                 && ($availableBytes === null || $availableBytes >= $requiredBytes);
         }
         unset($location);
@@ -242,11 +252,25 @@ final class SwallowtailStorageService
     public function ensureDirectoryForPath(string $absolutePath): void
     {
         $directory = dirname($absolutePath);
-        if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
+        if (is_dir($directory)) {
+            return;
+        }
+
+        try {
+            $created = $this->filesystemOperation(static fn(): bool => mkdir($directory, 0770, true));
+        } catch (Throwable $exception) {
             throw new RuntimeException(sprintf(
                 'Unable to create SwallowTail storage directory: %s%s',
                 $directory,
-                $this->lastPhpErrorSuffix()
+                $this->filesystemFailureSuffix(null, $exception)
+            ), 0, $exception);
+        }
+
+        if (!$created['success'] && !is_dir($directory)) {
+            throw new RuntimeException(sprintf(
+                'Unable to create SwallowTail storage directory: %s%s',
+                $directory,
+                $this->filesystemFailureSuffix($created['warning'])
             ));
         }
     }
@@ -263,11 +287,9 @@ final class SwallowtailStorageService
         $this->ensureDirectoryForPath($destinationPath);
 
         if (!is_file($destinationPath)) {
-            $stored = $move
-                ? (@rename($sourcePath, $destinationPath) || (@copy($sourcePath, $destinationPath) && @unlink($sourcePath)))
-                : @copy($sourcePath, $destinationPath);
-
-            if (!$stored) {
+            try {
+                $stored = $this->storeFileToStorage($sourcePath, $destinationPath, $move);
+            } catch (Throwable $exception) {
                 throw new RuntimeException(sprintf(
                     'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
                     $sourcePath,
@@ -275,11 +297,26 @@ final class SwallowtailStorageService
                     (string)$location['storage_base_location'],
                     $sourceBytes,
                     $move ? 'yes' : 'no',
-                    $this->lastPhpErrorSuffix()
+                    $this->filesystemFailureSuffix(null, $exception)
+                ), 0, $exception);
+            }
+
+            if (!$stored['success']) {
+                throw new RuntimeException(sprintf(
+                    'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
+                    $sourcePath,
+                    $destinationPath,
+                    (string)$location['storage_base_location'],
+                    $sourceBytes,
+                    $move ? 'yes' : 'no',
+                    $this->filesystemFailureSuffix($stored['warning'])
                 ));
             }
 
-            @chmod($destinationPath, 0660);
+            try {
+                $this->filesystemOperation(static fn(): bool => chmod($destinationPath, 0660));
+            } catch (Throwable) {
+            }
         }
 
         return [
@@ -287,6 +324,39 @@ final class SwallowtailStorageService
             'storage_base_location' => (string)$location['storage_base_location'],
             'absolute_path' => $destinationPath,
         ];
+    }
+
+    /**
+     * @return array{success: bool, warning: string|null}
+     */
+    private function storeFileToStorage(string $sourcePath, string $destinationPath, bool $move): array
+    {
+        if (!$move) {
+            return $this->filesystemOperation(static fn(): bool => copy($sourcePath, $destinationPath));
+        }
+
+        $rename = $this->filesystemOperation(static fn(): bool => rename($sourcePath, $destinationPath));
+        if ($rename['success']) {
+            return $rename;
+        }
+
+        $copy = $this->filesystemOperation(static fn(): bool => copy($sourcePath, $destinationPath));
+        if (!$copy['success']) {
+            return [
+                'success' => false,
+                'warning' => $this->combineFilesystemWarnings('rename', $rename['warning'], 'copy', $copy['warning']),
+            ];
+        }
+
+        $unlink = $this->filesystemOperation(static fn(): bool => unlink($sourcePath));
+        if (!$unlink['success']) {
+            return [
+                'success' => false,
+                'warning' => $this->combineFilesystemWarnings('rename', $rename['warning'], 'unlink', $unlink['warning']),
+            ];
+        }
+
+        return ['success' => true, 'warning' => $rename['warning']];
     }
 
     public function imageInfo(array $photo, string $imageType): ?array
@@ -409,12 +479,185 @@ final class SwallowtailStorageService
         return $writable[0];
     }
 
-    private function lastPhpErrorSuffix(): string
+    /**
+     * @return array{success: bool, warning: string|null}
+     */
+    private function filesystemOperation(callable $operation): array
     {
-        $error = error_get_last();
-        $message = is_array($error) ? trim((string)($error['message'] ?? '')) : '';
+        $warning = null;
+        set_error_handler(static function (int $severity, string $message) use (&$warning): bool {
+            $message = trim($message);
+            if ($message !== '') {
+                $warning = $message;
+            }
 
-        return $message !== '' ? ' php_error=' . $message : '';
+            return true;
+        });
+
+        try {
+            return [
+                'success' => (bool)$operation(),
+                'warning' => $warning,
+            ];
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    private function filesystemFailureSuffix(?string $warning = null, ?Throwable $exception = null): string
+    {
+        $parts = [];
+        $warning = trim((string)$warning);
+        if ($warning !== '') {
+            $parts[] = 'php_error=' . $warning;
+        }
+
+        if ($exception !== null) {
+            $parts[] = 'exception=' . get_class($exception) . ': ' . $exception->getMessage();
+        }
+
+        return ' ' . ($parts !== [] ? implode(' ', $parts) : 'php_error=operation returned false without PHP warning');
+    }
+
+    private function combineFilesystemWarnings(string $firstOperation, ?string $firstWarning, string $secondOperation, ?string $secondWarning): string
+    {
+        $messages = [];
+        $firstWarning = trim((string)$firstWarning);
+        $secondWarning = trim((string)$secondWarning);
+
+        if ($firstWarning !== '') {
+            $messages[] = $firstOperation . '_error=' . $firstWarning;
+        }
+        if ($secondWarning !== '') {
+            $messages[] = $secondOperation . '_error=' . $secondWarning;
+        }
+
+        return $messages !== []
+            ? implode(' ', $messages)
+            : $secondOperation . '_error=operation returned false without PHP warning';
+    }
+
+    /**
+     * @param array<string, mixed> $location
+     * @return array{can_write: bool, checked_path: string, error: string|null}
+     */
+    private function permissionStateForLocation(array $location): array
+    {
+        $baseLocation = trim((string)($location['storage_base_location'] ?? ''));
+        if ($baseLocation === '') {
+            return [
+                'can_write' => false,
+                'checked_path' => '',
+                'error' => 'Storage base location is missing.',
+            ];
+        }
+
+        try {
+            $dataRoot = trim((string)($location['data_root'] ?? $location['root_path'] ?? ''));
+            if ($dataRoot === '') {
+                $dataRoot = $this->dataRoot($baseLocation);
+            }
+
+            return $this->storagePermissionState($baseLocation, $dataRoot);
+        } catch (Throwable $exception) {
+            return [
+                'can_write' => false,
+                'checked_path' => $baseLocation,
+                'error' => $exception->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * @return array{can_write: bool, checked_path: string, error: string|null}
+     */
+    private function storagePermissionState(string $baseLocation, string $dataRoot): array
+    {
+        $basePath = $this->pathWithoutTrailingDirectorySeparator($this->normaliseAbsoluteDirectory($baseLocation));
+        if (!file_exists($basePath)) {
+            return [
+                'can_write' => false,
+                'checked_path' => $basePath,
+                'error' => 'Storage base location does not exist.',
+            ];
+        }
+
+        if (!is_dir($basePath)) {
+            return [
+                'can_write' => false,
+                'checked_path' => $basePath,
+                'error' => 'Storage base location is not a directory.',
+            ];
+        }
+
+        $dataRootPath = $this->pathWithoutTrailingDirectorySeparator($dataRoot);
+        if (is_dir($dataRootPath)) {
+            if (is_writable($dataRootPath)) {
+                return [
+                    'can_write' => true,
+                    'checked_path' => $dataRootPath,
+                    'error' => null,
+                ];
+            }
+
+            return [
+                'can_write' => false,
+                'checked_path' => $dataRootPath,
+                'error' => 'SwallowTail storage data root is not writable by PHP.',
+            ];
+        }
+
+        $parent = $this->nearestExistingDirectory(dirname($dataRootPath));
+        if ($parent === null) {
+            return [
+                'can_write' => false,
+                'checked_path' => $dataRootPath,
+                'error' => 'No existing parent directory is available for the SwallowTail storage data root.',
+            ];
+        }
+
+        if (!is_writable($parent)) {
+            return [
+                'can_write' => false,
+                'checked_path' => $parent,
+                'error' => 'SwallowTail storage data root cannot be created because the parent directory is not writable by PHP.',
+            ];
+        }
+
+        return [
+            'can_write' => true,
+            'checked_path' => $parent,
+            'error' => null,
+        ];
+    }
+
+    private function nearestExistingDirectory(string $path): ?string
+    {
+        $candidate = $this->pathWithoutTrailingDirectorySeparator($path);
+        while ($candidate !== '') {
+            if (is_dir($candidate)) {
+                return $candidate;
+            }
+
+            $parent = $this->pathWithoutTrailingDirectorySeparator(dirname($candidate));
+            if ($parent === $candidate) {
+                return null;
+            }
+
+            $candidate = $parent;
+        }
+
+        return null;
+    }
+
+    private function pathWithoutTrailingDirectorySeparator(string $path): string
+    {
+        $path = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, trim($path));
+        if ($path === DIRECTORY_SEPARATOR || preg_match('/^[A-Za-z]:[\\\\\\/]$/', $path) === 1) {
+            return $path;
+        }
+
+        return rtrim($path, DIRECTORY_SEPARATOR);
     }
 
     private function mountedBaseLocations(): array
