@@ -29,9 +29,6 @@ CONFLICTS_INSTALL=	swallowtail-raw-conversion
 NO_ARCH=	yes
 NO_BUILD=	yes
 
-USERS=		swallowtail
-GROUPS=		swallowtail
-
 OPTIONS_DEFINE=	APACHECONF
 APACHECONF_DESC=	Install active Apache include as swallowtail.conf
 
@@ -53,7 +50,8 @@ PROJECT_FILES=	API.md \
 		README.md \
 		eelKit_CHANGES.md
 
-SUB_FILES=	pkg-message \
+SUB_FILES=	pkg-install \
+		pkg-message \
 		swallowtail-apache.conf \
 		swallowtail-php-fpm.conf
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \

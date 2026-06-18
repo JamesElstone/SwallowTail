@@ -1,0 +1,17 @@
+#!/bin/sh
+
+case "$2" in
+PRE-INSTALL)
+	if ! /usr/sbin/pw groupshow swallowtail >/dev/null 2>&1; then
+		/usr/sbin/pw groupadd swallowtail
+	fi
+
+	if ! /usr/sbin/pw usershow swallowtail >/dev/null 2>&1; then
+		/usr/sbin/pw useradd swallowtail \
+			-g swallowtail \
+			-c "SwallowTail service account" \
+			-d /nonexistent \
+			-s /usr/sbin/nologin
+	fi
+	;;
+esac
