@@ -37,6 +37,7 @@ class StorageWorker:
         return self.refresh("once")
 
     def refresh(self, reason: str) -> bool:
+        self.touch_status()
         ok = self.run_php("refresh")
         if ok:
             status = self.php_json("status")
@@ -44,6 +45,7 @@ class StorageWorker:
                 (((status.get("cache") or {}).get("snapshot") or {}).get("mount_signature")) or self.mount_signature()
             )
         self.run_php("process-migrations", str(self.config.migration_limit))
+        self.touch_status()
         self.log.info("Storage refresh completed reason=%s ok=%s", reason, ok)
         return ok
 
@@ -108,6 +110,12 @@ class StorageWorker:
     def run_php(self, *args: str) -> bool:
         payload = self.php_json(*args)
         return bool(payload.get("success"))
+
+    def touch_status(self) -> bool:
+        ok = self.run_php("touch-service", "swallowtail_storage")
+        if not ok:
+            self.log.debug("Unable to refresh Redis heartbeat for storage worker")
+        return ok
 
     def php_json(self, *args: str) -> dict:
         script = Path(self.config.project_root) / "tools" / "php" / "storageCache.php"

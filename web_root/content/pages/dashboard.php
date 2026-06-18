@@ -33,6 +33,7 @@ final class _dashboard extends PageContextFramework
     {
         return [
             'storage_summary',
+            'service_status',
             'activity',
             'dashboard_notes',
             // 'dump_context',

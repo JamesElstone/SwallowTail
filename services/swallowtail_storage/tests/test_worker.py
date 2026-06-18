@@ -30,6 +30,8 @@ class StorageWorkerTest(unittest.TestCase):
                     "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc'}}))",
                     "elif cmd == 'process-migrations':",
                     "    print(json.dumps({'success': True, 'processed': 1}))",
+                    "elif cmd == 'touch-service':",
+                    "    print(json.dumps({'success': True, 'service': sys.argv[2] if len(sys.argv) > 2 else ''}))",
                     "elif cmd == 'status':",
                     "    redis_available = '--redis-down' not in sys.argv",
                     "    print(json.dumps({'success': True, 'cache': {'redis_available': redis_available, 'snapshot': {'mount_signature': 'abc'}}}))",

@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'service_status', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -33,6 +33,72 @@ $harness->check(_dashboard::class, 'shows storage summary first on dashboard', f
     $cards = (new _dashboard())->cards();
 
     $harness->assertSame('storage_summary', (string)($cards[0] ?? ''));
+    $harness->assertSame('service_status', (string)($cards[1] ?? ''));
+});
+
+$harness->check(SwallowtailServiceStatusService::class, 'reports pid-backed service state', function () use ($harness): void {
+    $pidFile = tempnam(sys_get_temp_dir(), 'swallowtail-service-');
+    if (!is_string($pidFile)) {
+        $harness->skip('Unable to create temporary PID file.');
+    }
+
+    try {
+        file_put_contents($pidFile, "12345\n");
+
+        $service = new SwallowtailServiceStatusService(
+            processExists: static fn(int $pid): ?bool => $pid === 12345
+        );
+        $method = new ReflectionMethod($service, 'pidFileStatus');
+        $method->setAccessible(true);
+        $status = (array)$method->invoke($service, 'test_worker', 'Test worker', $pidFile);
+
+        $harness->assertSame('ok', (string)($status['state'] ?? ''));
+        $harness->assertSame('Running', (string)($status['status'] ?? ''));
+    } finally {
+        @unlink($pidFile);
+    }
+});
+
+$harness->check(SwallowtailServiceStatusService::class, 'reports fresh Redis service heartbeat', function () use ($harness): void {
+    $service = new SwallowtailServiceStatusService(
+        heartbeatReader: static fn(string $key): ?string => json_encode([
+            'service' => 'swallowtail_conversion',
+            'touched_at' => time() - 30,
+        ])
+    );
+    $method = new ReflectionMethod($service, 'heartbeatStatus');
+    $method->setAccessible(true);
+    $status = (array)$method->invoke(
+        $service,
+        'swallowtail_conversion',
+        'RAW conversion worker',
+        'swallowtail:service:swallowtail_conversion:last_touched',
+        '/tmp/missing-swallowtail-test.pid'
+    );
+
+    $harness->assertSame('ok', (string)($status['state'] ?? ''));
+    $harness->assertSame('Fresh', (string)($status['status'] ?? ''));
+});
+
+$harness->check(SwallowtailServiceStatusService::class, 'reports stale Redis service heartbeat', function () use ($harness): void {
+    $service = new SwallowtailServiceStatusService(
+        heartbeatReader: static fn(string $key): ?string => json_encode([
+            'service' => 'swallowtail_conversion',
+            'touched_at' => time() - 400,
+        ])
+    );
+    $method = new ReflectionMethod($service, 'heartbeatStatus');
+    $method->setAccessible(true);
+    $status = (array)$method->invoke(
+        $service,
+        'swallowtail_conversion',
+        'RAW conversion worker',
+        'swallowtail:service:swallowtail_conversion:last_touched',
+        '/tmp/missing-swallowtail-test.pid'
+    );
+
+    $harness->assertSame('bad', (string)($status['state'] ?? ''));
+    $harness->assertSame('Stale', (string)($status['status'] ?? ''));
 });
 
 $harness->check(_settings::class, 'includes reusable storage card', function () use ($harness): void {

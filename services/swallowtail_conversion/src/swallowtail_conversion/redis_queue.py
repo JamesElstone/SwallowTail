@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from .config import RedisConfig
 
@@ -16,6 +18,27 @@ class RedisMessage:
 class RedisQueue:
     def __init__(self, config: RedisConfig):
         self.config = config
+
+    def touch_service(self, service_key: str) -> bool:
+        heartbeat_key = f"swallowtail:service:{service_key}:last_touched"
+        touched_at = int(time.time())
+        payload = json.dumps(
+            {
+                "service": service_key,
+                "touched_at": touched_at,
+                "touched_at_iso": datetime.fromtimestamp(touched_at, timezone.utc).isoformat(),
+            },
+            separators=(",", ":"),
+        )
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("SET", heartbeat_key, payload, "EX", "720"))
+                response = self._read_resp(sock)
+        except OSError:
+            return False
+
+        return self._to_text(response) == "OK"
 
     def pop(self) -> RedisMessage | None:
         try:

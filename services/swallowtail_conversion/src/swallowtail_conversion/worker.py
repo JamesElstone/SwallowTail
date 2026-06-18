@@ -42,6 +42,7 @@ class ConversionWorker:
         with ThreadPoolExecutor(max_workers=self.config.rawtherapee.maximum_threads) as executor:
             futures: set[Future] = set()
             while not self.shutdown_requested.is_set() or futures:
+                self._touch_status()
                 while not self.shutdown_requested.is_set() and len(futures) < self.config.rawtherapee.maximum_threads:
                     job_id = self._next_job_id()
                     if job_id is None:
@@ -60,6 +61,7 @@ class ConversionWorker:
         self.log.info("Raw conversion worker stopped")
 
     def run_once(self) -> bool:
+        self._touch_status()
         self.cleanup_stale_temp_dirs()
         job_id = self._next_job_id()
         if job_id is None:
@@ -113,6 +115,10 @@ class ConversionWorker:
         if message is not None:
             return message.job_id
         return self.db.next_queued_job_id()
+
+    def _touch_status(self) -> None:
+        if not self.redis.touch_service("swallowtail_conversion"):
+            self.log.debug("Unable to refresh Redis heartbeat for conversion worker")
 
     def cleanup_stale_temp_dirs(self) -> int:
         work_dir = Path(self.config.worker.work_dir)

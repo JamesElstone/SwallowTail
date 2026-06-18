@@ -34,6 +34,11 @@ try {
             'command' => 'process-migrations',
             'processed' => (new SwallowtailStorageMigrationService())->processPending((int)($argv[2] ?? 10)),
         ],
+        'touch-service' => [
+            'success' => (new SwallowtailServiceStatusService())->touchService((string)($argv[2] ?? '')),
+            'command' => 'touch-service',
+            'service' => (string)($argv[2] ?? ''),
+        ],
         default => [
             'success' => false,
             'errors' => ['Unknown storage cache command.'],

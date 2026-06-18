@@ -3295,6 +3295,68 @@ label {
   min-width: 0;
 }
 
+.service-status-list {
+  display: grid;
+  gap: 0;
+}
+
+.service-status-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.service-status-row:first-child {
+  padding-top: 0;
+}
+
+.service-status-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.service-status-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.service-status-main strong,
+.service-status-main span {
+  overflow-wrap: anywhere;
+}
+
+.service-status-main span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.traffic-light {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16), inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+}
+
+.traffic-light.ok {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.16), inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+}
+
+.traffic-light.warn {
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16), inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+}
+
+.traffic-light.bad {
+  background: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16), inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+}
+
 .storage-summary-chart .chart {
   width: 100%;
   height: auto;

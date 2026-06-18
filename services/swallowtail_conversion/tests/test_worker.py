@@ -319,6 +319,33 @@ class WorkerBehaviourTest(unittest.TestCase):
         worker.db = FakeDb()
         self.assertEqual(42, worker._next_job_id())
 
+    def test_run_once_records_worker_heartbeat(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.touched: list[str] = []
+
+            def touch_service(self, service_key: str) -> bool:
+                self.touched.append(service_key)
+                return True
+
+            def pop(self):
+                return None
+
+        class FakeDb:
+            def next_queued_job_id(self):
+                return None
+
+        redis = FakeRedis()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.redis = redis
+        worker.db = FakeDb()
+
+        self.assertFalse(worker.run_once())
+        self.assertEqual(["swallowtail_conversion"], redis.touched)
+
     def test_cleanup_removes_only_stale_job_directories(self) -> None:
         config = app_config(self.root, str(self.fake))
         work_dir = Path(config.worker.work_dir)
