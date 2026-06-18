@@ -22,9 +22,22 @@ final class SwallowtailPhotoIngestService
 
     public function maxRawBytes(): int
     {
+        return $this->maxRawBytesForPhpKeys(['upload_max_filesize', 'post_max_size']);
+    }
+
+    public function maxRawBodyBytes(): int
+    {
+        return $this->maxRawBytesForPhpKeys(['post_max_size']);
+    }
+
+    /**
+     * @param array<int, string> $phpLimitKeys
+     */
+    private function maxRawBytesForPhpKeys(array $phpLimitKeys): int
+    {
         $limits = [max(1, $this->appMaxRawBytes)];
 
-        foreach (['upload_max_filesize', 'post_max_size'] as $key) {
+        foreach ($phpLimitKeys as $key) {
             $bytes = self::phpIniBytes($this->phpUploadLimit($key));
             if ($bytes !== null && $bytes > 0) {
                 $limits[] = $bytes;
@@ -73,7 +86,11 @@ final class SwallowtailPhotoIngestService
 
     public function ingestLocalRawFile(string $sourcePath, string $originalFilename, array $context = []): array
     {
-        $validation = $this->validateRawFile($sourcePath, $originalFilename);
+        $validation = $this->validateRawFile(
+            $sourcePath,
+            $originalFilename,
+            $this->contextMaxRawBytes($context)
+        );
 
         if (!$validation['valid']) {
             return [
@@ -168,10 +185,11 @@ final class SwallowtailPhotoIngestService
         ];
     }
 
-    public function validateRawFile(string $sourcePath, string $originalFilename): array
+    public function validateRawFile(string $sourcePath, string $originalFilename, ?int $maxRawBytes = null): array
     {
         $errors = [];
         $warnings = [];
+        $maxRawBytes = $maxRawBytes !== null ? max(1, $maxRawBytes) : $this->maxRawBytes();
 
         if (!is_file($sourcePath) || !is_readable($sourcePath)) {
             $errors[] = 'RAW file was not readable.';
@@ -180,7 +198,7 @@ final class SwallowtailPhotoIngestService
         $bytes = is_file($sourcePath) ? (int)filesize($sourcePath) : 0;
         if ($bytes <= 0) {
             $errors[] = 'RAW file was empty.';
-        } elseif ($bytes > $this->maxRawBytes()) {
+        } elseif ($bytes > $maxRawBytes) {
             $errors[] = 'RAW file exceeded the configured upload limit.';
         }
 
@@ -217,6 +235,17 @@ final class SwallowtailPhotoIngestService
         }
 
         return false;
+    }
+
+    private function contextMaxRawBytes(array $context): ?int
+    {
+        if (!array_key_exists('max_raw_bytes', $context)) {
+            return null;
+        }
+
+        $value = (int)$context['max_raw_bytes'];
+
+        return $value > 0 ? $value : null;
     }
 
     private function phpUploadLimit(string $key): mixed

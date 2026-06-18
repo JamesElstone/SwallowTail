@@ -73,9 +73,10 @@ final class SwallowtailRawUploadApiService
 
         $temporaryFile = null;
         $upload = $this->uploadFileFromRequest($files);
+        $maxRawBytes = null;
 
         if ($upload === null) {
-            $maxRawBytes = $this->photoIngestService->maxRawBytes();
+            $maxRawBytes = $this->photoIngestService->maxRawBodyBytes();
             if ($this->contentLengthExceedsRawLimit($request, $maxRawBytes)) {
                 return $this->rawUploadLimitResponse();
             }
@@ -109,6 +110,7 @@ final class SwallowtailRawUploadApiService
                         'move_source' => $temporaryFile !== null,
                         'uploaded_via' => 'api',
                         'upload_token_id' => (int)$uploadToken['id'],
+                        'max_raw_bytes' => $maxRawBytes,
                         'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
                         'request_metadata' => [
                             'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),

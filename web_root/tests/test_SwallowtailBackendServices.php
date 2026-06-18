@@ -568,6 +568,9 @@ $harness->check(SwallowtailPhotoIngestService::class, 'clamps RAW file limit to 
     $harness->assertSame(52428800, $uploadLimited->maxRawBytes());
     $harness->assertSame(52428800, $postLimited->maxRawBytes());
     $harness->assertSame($appLimit, $unlimited->maxRawBytes());
+    $harness->assertSame(67108864, $uploadLimited->maxRawBodyBytes());
+    $harness->assertSame(52428800, $postLimited->maxRawBodyBytes());
+    $harness->assertSame($appLimit, $unlimited->maxRawBodyBytes());
 
     $source = swallowtail_backend_test_temp_file('swallowtail-limit-');
     if (!is_string($source)) {
@@ -811,7 +814,16 @@ $harness->check(SwallowtailPingApiService::class, 'keeps token diagnostics out o
     $listedTokens = $library->listUploadTokens();
     $harness->assertSame('Token Account', (string)($listedTokens[0]['created_by_user_label'] ?? ''));
     $harness->assertSame('token-account@example.test', (string)($listedTokens[0]['created_by_user_email_address'] ?? ''));
-    $service = new SwallowtailPingApiService($library);
+    $service = new SwallowtailPingApiService(
+        $library,
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService(),
+            $library,
+            new SwallowtailConversionQueueService(),
+            1024 * 1024 * 1024,
+            ['upload_max_filesize' => '8M', 'post_max_size' => '64M']
+        )
+    );
 
     $successRequest = new RequestFramework(
         [],
@@ -831,6 +843,7 @@ $harness->check(SwallowtailPingApiService::class, 'keeps token diagnostics out o
     $harness->assertTrue(is_array($successPayload));
     $harness->assertTrue(!empty($successPayload['success']));
     $harness->assertTrue(!empty($successPayload['pong']));
+    $harness->assertSame(67108864, (int)($successPayload['max_raw_upload_bytes'] ?? 0));
 
     $failureRequest = new RequestFramework(
         [],
@@ -1787,6 +1800,54 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertSame('uploaded', $payload['status'] ?? null);
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'raw body uploads ignore multipart upload_max_filesize limit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $library = new SwallowtailPhotoLibraryService();
+    $token = $library->createUploadToken('SpiceBush test rig', null, null, ['203.0.113.0/24']);
+    $source = swallowtail_backend_test_temp_file('swallowtail-raw-body-upload-limit-test-');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+
+    $swallowtailWriteRawFixture($source, 'cr2');
+    $request = new RequestFramework(
+        [],
+        [],
+        ['REQUEST_METHOD' => 'POST', 'REMOTE_ADDR' => '203.0.113.15', 'CONTENT_LENGTH' => (string)filesize($source)],
+        [],
+        [
+            'Authorization' => 'Bearer ' . $token['token'],
+            'X-Swallowtail-Filename' => 'SPICEBUSH_0004.CR2',
+            'User-Agent' => 'spicebush-test',
+        ],
+        null,
+        []
+    );
+
+    $service = new SwallowtailRawUploadApiService(
+        new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService(),
+            $library,
+            new SwallowtailConversionQueueService(),
+            4096,
+            ['upload_max_filesize' => '1', 'post_max_size' => '64M']
+        ),
+        $library
+    );
+    $response = $service->handleUpload($request, [], $source);
+    $payload = json_decode($response->body(), true);
+
+    $harness->assertSame(201, $response->statusCode());
+    $harness->assertTrue(is_array($payload));
+    $harness->assertTrue(!empty($payload['success']));
+    $harness->assertSame('uploaded', $payload['status'] ?? null);
+    $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);
 });

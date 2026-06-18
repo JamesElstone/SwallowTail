@@ -11,6 +11,7 @@ final class SwallowtailPingApiService
 {
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
+        private readonly SwallowtailPhotoIngestService $photoIngestService = new SwallowtailPhotoIngestService(),
     ) {
     }
 
@@ -74,6 +75,7 @@ final class SwallowtailPingApiService
         return ResponseFramework::json([
             'success' => true,
             'pong' => true,
+            'max_raw_upload_bytes' => $this->photoIngestService->maxRawBodyBytes(),
         ]);
     }
 

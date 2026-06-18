@@ -88,9 +88,11 @@ typedef struct AppState {
     LONG activeScans;
     LONG processing;
     U64 totalUploadMillis;
+    U64 serverMaxRawUploadBytes;
     DWORD nextQueueId;
     DWORD queueDoneSinceCompact;
     int statsPingState;
+    int serverMaxRawUploadState;
     DWORD statsPingStateExpiresAt;
     int registerQuitMode;
     char appDir[MAX_PATH];
@@ -1349,6 +1351,28 @@ static int JsonDwordValue(const char *json, const char *key, DWORD *value)
     return 1;
 }
 
+static int JsonU64Value(const char *json, const char *key, U64 *value)
+{
+    char needle[128];
+    const char *p;
+    U64 parsed = 0;
+    SbSnprintf(needle, sizeof(needle) - 1, "\"%s\"", key);
+    needle[sizeof(needle) - 1] = '\0';
+    p = strstr(json, needle);
+    if (!p) return 0;
+    p = strchr(p + lstrlenA(needle), ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p < '0' || *p > '9') return 0;
+    while (*p >= '0' && *p <= '9') {
+        parsed = parsed * 10ULL + (U64)(*p - '0');
+        p++;
+    }
+    if (value) *value = parsed;
+    return 1;
+}
+
 static void UrlEncode(const char *src, char *dst, DWORD dstSize)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -1436,6 +1460,7 @@ static DWORD WINAPI PingThread(LPVOID param)
     char *postedError = NULL;
     DWORD status = 0;
     int requestOk;
+    U64 maxRawUploadBytes = 0;
     (void)param;
 
     SbSnprintf(url, sizeof(url) - 1, "%s/ping.php", g_app.apiUrl);
@@ -1453,10 +1478,20 @@ static DWORD WINAPI PingThread(LPVOID param)
 
     requestOk = HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response));
     if (requestOk && status == 200 && JsonBoolValue(response, "pong", &requestOk) && requestOk) {
-        LogMessage("Ping succeeded: status=%lu", status);
+        JsonU64Value(response, "max_raw_upload_bytes", &maxRawUploadBytes);
+        EnterCriticalSection(&g_app.lock);
+        g_app.serverMaxRawUploadBytes = maxRawUploadBytes;
+        g_app.serverMaxRawUploadState = maxRawUploadBytes > 0 ? 1 : -1;
+        LeaveCriticalSection(&g_app.lock);
+        LogMessage("Ping succeeded: status=%lu max_raw_upload_bytes=%I64u", status, maxRawUploadBytes);
         PostMessageA(g_app.mainWindow, WM_PING_DONE, 1, 0);
         return 0;
     }
+
+    EnterCriticalSection(&g_app.lock);
+    g_app.serverMaxRawUploadBytes = 0;
+    g_app.serverMaxRawUploadState = -1;
+    LeaveCriticalSection(&g_app.lock);
 
     if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
         LogMessage("Ping failed with server error: status=%lu error=%s", status, errorText);
@@ -2186,6 +2221,24 @@ static void FormatDuration(U64 millis, char *out, DWORD outSize)
     }
 }
 
+static void FormatBytes(U64 bytes, char *out, DWORD outSize)
+{
+    double value = (double)bytes;
+    const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+    int unitIndex = 0;
+
+    while (value >= 1024.0 && unitIndex < 4) {
+        value /= 1024.0;
+        unitIndex++;
+    }
+
+    if (unitIndex == 0) {
+        SbSnprintf(out, outSize, "%I64u B", bytes);
+    } else {
+        SbSnprintf(out, outSize, "%.1f %s", value, units[unitIndex]);
+    }
+}
+
 static void RefreshStats(void)
 {
     char text[256];
@@ -2198,6 +2251,7 @@ static void RefreshStats(void)
     char activeText[32];
     char queueText[32];
     char etaText[80];
+    char serverLimitText[80];
     const char *status = "Idle";
     LONG pending;
     LONG found;
@@ -2207,9 +2261,11 @@ static void RefreshStats(void)
     LONG scanned;
     LONG active;
     LONG processing;
+    int serverMaxRawUploadState;
     LONG progress = 0;
     U64 avg = 0;
     U64 etaMillis = 0;
+    U64 serverMaxRawUploadBytes;
     EnterCriticalSection(&g_app.lock);
     pending = (LONG)g_app.queueCount;
     found = g_app.totalFound;
@@ -2219,6 +2275,8 @@ static void RefreshStats(void)
     scanned = g_app.totalScannedDrives;
     active = g_app.activeScans;
     processing = g_app.processing;
+    serverMaxRawUploadState = g_app.serverMaxRawUploadState;
+    serverMaxRawUploadBytes = g_app.serverMaxRawUploadBytes;
     if (g_app.totalUploaded > 0) avg = g_app.totalUploadMillis / (U64)g_app.totalUploaded;
     LeaveCriticalSection(&g_app.lock);
     UpdateTrayTooltip(g_app.mainWindow);
@@ -2240,6 +2298,13 @@ static void RefreshStats(void)
     FormatCount(pending, queueText, sizeof(queueText));
     etaMillis = avg * (U64)pending;
     FormatDuration(etaMillis, etaText, sizeof(etaText));
+    if (serverMaxRawUploadState > 0 && serverMaxRawUploadBytes > 0) {
+        FormatBytes(serverMaxRawUploadBytes, serverLimitText, sizeof(serverLimitText));
+    } else if (serverMaxRawUploadState < 0) {
+        SafeCopy(serverLimitText, sizeof(serverLimitText), "Unavailable");
+    } else {
+        SafeCopy(serverLimitText, sizeof(serverLimitText), "Not checked");
+    }
 
     SetWindowTextA(g_app.statsLabels[0], "SwallowTail RAW CR2 Photo Uploads");
     SbSnprintf(text, sizeof(text), "Status: %s", status);
@@ -2264,7 +2329,8 @@ static void RefreshStats(void)
     SetWindowTextA(g_app.statsLabels[11], text);
     SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextA(g_app.statsLabels[12], text);
-    SetWindowTextA(g_app.statsLabels[13], "");
+    SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
+    SetWindowTextA(g_app.statsLabels[13], text);
     SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms per file", avg);
     SetWindowTextA(g_app.statsLabels[14], text);
     SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
