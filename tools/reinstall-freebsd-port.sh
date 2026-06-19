@@ -117,3 +117,6 @@ echo "==> make reinstall in $PORT_DIR"
 for service_name in $SERVICE_NAMES; do
 	restart_or_start_service "$service_name"
 done
+
+echo "==> installed swallowtail package version"
+pkg query %v swallowtail
