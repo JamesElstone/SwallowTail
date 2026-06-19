@@ -60,6 +60,15 @@ class ConversionDatabase:
         )
 
     def requeue_expired_jobs(self) -> int:
+        rows = self._fetchall(
+            """
+            SELECT DISTINCT photo_id
+              FROM photo_conversion_jobs
+             WHERE status = 'processing'
+               AND locked_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL %s SECOND)
+            """,
+            (self.worker.job_timeout_seconds,),
+        )
         cursor = self._execute(
             """
             UPDATE photo_conversion_jobs
@@ -73,6 +82,8 @@ class ConversionDatabase:
             (self.worker.job_timeout_seconds,),
         )
         count = cursor.rowcount
+        for row in rows:
+            self._refresh_photo_conversion_state(int(row["photo_id"]))
         self.connection.commit()
         return count
 
@@ -134,6 +145,8 @@ class ConversionDatabase:
             return None
 
         row = self._fetchone("SELECT * FROM photo_conversion_jobs WHERE id = %s LIMIT 1", (job_id,))
+        if row is not None:
+            self._refresh_photo_conversion_state(int(row["photo_id"]))
         self.connection.commit()
         return ConversionJob.from_row(row) if row else None
 
@@ -181,7 +194,7 @@ class ConversionDatabase:
             """,
             (round(duration, 3), job.id),
         )
-        self._execute("UPDATE photos SET conversion_state = 'ready' WHERE id = %s", (job.photo_id,))
+        self._refresh_photo_conversion_state(job.photo_id)
         self._insert_audit(
             job.photo_id,
             "photo_filtered_refreshed" if job.image_type == "filtered" else "photo_image_generated",
@@ -220,8 +233,8 @@ class ConversionDatabase:
                 """,
                 (duration_seconds, message[-4000:], job.id),
             )
-            self._execute("UPDATE photos SET conversion_state = 'failed' WHERE id = %s", (job.photo_id,))
             self._insert_audit(job.photo_id, "photo_conversion_failed", {"job_id": job.id, "error": message[-4000:]})
+        self._refresh_photo_conversion_state(job.photo_id)
         self.connection.commit()
 
     def cancel_job(self, job: ConversionJob, message: str) -> None:
@@ -237,7 +250,47 @@ class ConversionDatabase:
             """,
             (message[-4000:], job.id),
         )
+        self._refresh_photo_conversion_state(job.photo_id)
         self.connection.commit()
+
+    def _refresh_photo_conversion_state(self, photo_id: int) -> None:
+        row = self._fetchone(
+            """
+            SELECT
+                SUM(CASE WHEN status IN ('queued', 'processing') THEN 1 ELSE 0 END) AS active_jobs,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+                SUM(CASE WHEN status != 'cancelled' THEN 1 ELSE 0 END) AS non_cancelled_jobs,
+                SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_jobs
+              FROM photo_conversion_jobs
+             WHERE photo_id = %s
+            """,
+            (photo_id,),
+        )
+        if row is None:
+            return
+
+        state = self.photo_state_from_job_counts(
+            int(row["active_jobs"] or 0),
+            int(row["failed_jobs"] or 0),
+            int(row["non_cancelled_jobs"] or 0),
+            int(row["succeeded_jobs"] or 0),
+        )
+        self._execute("UPDATE photos SET conversion_state = %s WHERE id = %s", (state, photo_id))
+
+    @staticmethod
+    def photo_state_from_job_counts(
+        active_jobs: int,
+        failed_jobs: int,
+        non_cancelled_jobs: int,
+        succeeded_jobs: int,
+    ) -> str:
+        if active_jobs > 0:
+            return "processing"
+        if failed_jobs > 0:
+            return "failed"
+        if non_cancelled_jobs > 0 and succeeded_jobs >= non_cancelled_jobs:
+            return "ready"
+        return "pending"
 
     def _insert_audit(self, photo_id: int, action_type: str, details: dict[str, Any]) -> None:
         self._execute(
@@ -267,6 +320,16 @@ class ConversionDatabase:
             return row
         columns = [column[0] for column in cursor.description]
         return dict(zip(columns, row))
+
+    def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        cursor = self._execute(sql, params)
+        rows = cursor.fetchall()
+        if rows is None:
+            return []
+        if rows and isinstance(rows[0], dict):
+            return list(rows)
+        columns = [column[0] for column in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
 
     def _sql(self, sql: str) -> str:
         if self.paramstyle == "%s":

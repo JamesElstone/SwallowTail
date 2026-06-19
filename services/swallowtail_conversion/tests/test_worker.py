@@ -447,6 +447,16 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
             list(ConversionDatabase.IMAGE_TYPE_ORDER.keys()),
         )
 
+    def test_photo_state_follows_aggregate_job_status(self) -> None:
+        state = ConversionDatabase.photo_state_from_job_counts
+
+        self.assertEqual("processing", state(active_jobs=1, failed_jobs=0, non_cancelled_jobs=3, succeeded_jobs=2))
+        self.assertEqual("processing", state(active_jobs=1, failed_jobs=1, non_cancelled_jobs=3, succeeded_jobs=1))
+        self.assertEqual("failed", state(active_jobs=0, failed_jobs=1, non_cancelled_jobs=3, succeeded_jobs=2))
+        self.assertEqual("ready", state(active_jobs=0, failed_jobs=0, non_cancelled_jobs=3, succeeded_jobs=3))
+        self.assertEqual("ready", state(active_jobs=0, failed_jobs=0, non_cancelled_jobs=2, succeeded_jobs=2))
+        self.assertEqual("pending", state(active_jobs=0, failed_jobs=0, non_cancelled_jobs=0, succeeded_jobs=0))
+
     def test_database_priority_order_sql_matches_image_type_policy(self) -> None:
         sql = ConversionDatabase._image_type_order_sql()
 

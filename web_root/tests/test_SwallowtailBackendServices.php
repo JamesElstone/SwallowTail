@@ -925,6 +925,11 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertTrue(!empty($result['success']));
     $harness->assertSame('uploaded', $result['status']);
     $harness->assertTrue((int)$result['photo_id'] > 0);
+    $photo = InterfaceDB::fetchOne(
+        'SELECT conversion_state FROM photos WHERE id = :photo_id LIMIT 1',
+        ['photo_id' => (int)$result['photo_id']]
+    );
+    $harness->assertSame('processing', (string)($photo['conversion_state'] ?? ''));
     $storage = new SwallowtailStorageService();
     $harness->assertTrue(is_file($storage->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'source')));
     $harness->assertTrue((string)$result['storage_base_location'] !== '');

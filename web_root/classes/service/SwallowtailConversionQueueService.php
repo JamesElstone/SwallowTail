@@ -162,6 +162,7 @@ final class SwallowtailConversionQueueService
         );
 
         if ($existingJobId !== false && $existingJobId !== null) {
+            $this->setPhotoConversionState($photoId, 'processing');
             return (int)$existingJobId;
         }
 
@@ -208,6 +209,7 @@ final class SwallowtailConversionQueueService
         );
 
         $jobId = $this->lastInsertId();
+        $this->setPhotoConversionState($photoId, 'processing');
         $this->notifyRedis($jobId, $imageType, $priority);
 
         return $jobId;
@@ -286,6 +288,21 @@ final class SwallowtailConversionQueueService
                 fclose($socket);
             }
         }
+    }
+
+    private function setPhotoConversionState(int $photoId, string $state): void
+    {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photos')) {
+            return;
+        }
+
+        InterfaceDB::prepareExecute(
+            'UPDATE photos SET conversion_state = :state WHERE id = :photo_id',
+            [
+                'photo_id' => $photoId,
+                'state' => $state,
+            ]
+        );
     }
 
     private function normaliseImageType(string $imageType): string

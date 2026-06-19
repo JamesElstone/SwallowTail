@@ -80,12 +80,12 @@ final class _browse_galleryCard extends CardBaseFramework
         $thumbnail = $previewType !== null
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
+        $statusIndicator = $this->statusIndicator((string)($photo['conversion_state'] ?? 'pending'));
 
         return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '">
-            <span class="gallery-thumb">' . $thumbnail . '</span>
+            <span class="gallery-thumb">' . $thumbnail . $statusIndicator . '</span>
             <span class="gallery-meta">
                 <strong>' . HelperFramework::escape($filename) . '</strong>
-                <span>' . HelperFramework::escape($this->statusLabel((string)($photo['conversion_state'] ?? 'pending'))) . '</span>
             </span>
         </a>';
     }
@@ -104,16 +104,39 @@ final class _browse_galleryCard extends CardBaseFramework
         return '/api/photo-asset.php?photo_id=' . rawurlencode((string)$photoId) . '&type=' . rawurlencode($type);
     }
 
-    private function statusLabel(string $state): string
+    private function statusIndicator(string $state): string
+    {
+        $status = $this->statusIndicatorState($state);
+        $label = match ($status) {
+            'ready' => 'Ready',
+            'failed' => 'Conversion failed',
+            default => 'Processing',
+        };
+
+        return '<span class="gallery-status gallery-status-' . HelperFramework::escape($status) . '" aria-label="' . HelperFramework::escape($label) . '">'
+            . $this->statusIconSvg($status)
+            . '</span>';
+    }
+
+    private function statusIndicatorState(string $state): string
     {
         $state = strtolower(trim($state));
+        if ($state === 'ready' || $state === 'not_required') {
+            return 'ready';
+        }
+        if ($state === 'failed') {
+            return 'failed';
+        }
 
-        return match ($state) {
-            'ready' => 'Ready',
-            'processing' => 'Processing',
-            'failed' => 'Conversion failed',
-            'not_required' => 'No conversion needed',
-            default => 'Conversion pending',
+        return 'processing';
+    }
+
+    private function statusIconSvg(string $status): string
+    {
+        return match ($status) {
+            'ready' => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1"/><path d="M10 18.5 L16 24.5 L27 12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            'failed' => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1"/><path d="M12 12 L24 24 M24 12 L12 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            default => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><path d="M8 25 A15 15 0 0 1 11 9" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/><path d="M28 11 A15 15 0 0 1 25 27" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/><path d="M28 11 L33 12 L30 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 25 L3 24 L6 20" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         };
     }
 
