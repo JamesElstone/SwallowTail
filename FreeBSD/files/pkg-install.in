@@ -13,5 +13,10 @@ PRE-INSTALL)
 			-d /nonexistent \
 			-s /usr/sbin/nologin
 	fi
+
+	if pw usershow www >/dev/null 2>&1 \
+		&& ! id -nG www | tr ' ' '\n' | grep -Fx swallowtail >/dev/null 2>&1; then
+		pw groupmod swallowtail -m www
+	fi
 	;;
 esac

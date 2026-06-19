@@ -284,23 +284,60 @@ final class SwallowtailStorageService
             return;
         }
 
-        try {
-            $changed = $this->filesystemOperation(static fn(): bool => chmod($directory, 02770));
-        } catch (Throwable $exception) {
-            throw new RuntimeException(sprintf(
-                'Unable to set SwallowTail storage directory permissions: %s%s',
-                $directory,
-                $this->filesystemFailureSuffix(null, $exception)
-            ), 0, $exception);
+        foreach ($this->storageDirectoryPermissionTargets($directory) as $target) {
+            try {
+                $changed = $this->filesystemOperation(static fn(): bool => chmod($target, 0770));
+            } catch (Throwable $exception) {
+                throw new RuntimeException(sprintf(
+                    'Unable to set SwallowTail storage directory permissions: %s%s',
+                    $target,
+                    $this->filesystemFailureSuffix(null, $exception)
+                ), 0, $exception);
+            }
+
+            if (!$changed['success']) {
+                throw new RuntimeException(sprintf(
+                    'Unable to set SwallowTail storage directory permissions: %s%s',
+                    $target,
+                    $this->filesystemFailureSuffix($changed['warning'])
+                ));
+            }
+
+            try {
+                $this->filesystemOperation(static fn(): bool => chmod($target, 02770));
+            } catch (Throwable) {
+            }
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function storageDirectoryPermissionTargets(string $directory): array
+    {
+        $directory = $this->pathWithoutTrailingDirectorySeparator($directory);
+        $marker = DIRECTORY_SEPARATOR . self::DATA_DIRECTORY;
+        $search = $directory . DIRECTORY_SEPARATOR;
+        $position = strpos($search, $marker . DIRECTORY_SEPARATOR);
+        if ($position === false) {
+            return [$directory];
         }
 
-        if (!$changed['success']) {
-            throw new RuntimeException(sprintf(
-                'Unable to set SwallowTail storage directory permissions: %s%s',
-                $directory,
-                $this->filesystemFailureSuffix($changed['warning'])
-            ));
+        $dataRoot = substr($directory, 0, $position + strlen($marker));
+        $relative = trim(substr($directory, strlen($dataRoot)), DIRECTORY_SEPARATOR);
+        $targets = [$dataRoot];
+        $current = $dataRoot;
+
+        foreach (explode(DIRECTORY_SEPARATOR, $relative) as $part) {
+            if ($part === '') {
+                continue;
+            }
+
+            $current .= DIRECTORY_SEPARATOR . $part;
+            $targets[] = $current;
         }
+
+        return $targets;
     }
 
     public function storeSourceFile(string $sourcePath, string $checksum, bool $move = false): array

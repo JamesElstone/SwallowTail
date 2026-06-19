@@ -27,6 +27,11 @@ swallowtail-data directory. The SUDOERS port option, enabled by default,
 installs etc/sudoers.d/swallowtail so the web UI can request that helper
 through sudo without granting shell access.
 
+The port adds the www account to the swallowtail group when that account is
+available, so the web process can preserve group-writable storage directories
+for the conversion worker. Restart apache24 or the active PHP runtime after
+upgrading if it was already running.
+
 Service defaults are embedded in the rc.d scripts. Override them in
 the system rc configuration using sysrc(8) with swallowtail_conversion_* and
 swallowtail_storage_* variables.

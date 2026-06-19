@@ -722,12 +722,14 @@ $harness->check(SwallowtailStorageService::class, 'creates storage hash director
         umask($previousUmask);
     }
 
-    $directoryMode = fileperms(dirname($destinationPath));
-    if (!is_int($directoryMode)) {
-        throw new RuntimeException('Unable to inspect storage hash directory permissions.');
-    }
+    foreach ([dirname($destinationPath), dirname(dirname($destinationPath))] as $directory) {
+        $directoryMode = fileperms($directory);
+        if (!is_int($directoryMode)) {
+            throw new RuntimeException('Unable to inspect storage hash directory permissions.');
+        }
 
-    $harness->assertSame(02770, $directoryMode & 07777);
+        $harness->assertSame(0770, $directoryMode & 0770);
+    }
 });
 
 $harness->check(SwallowtailStorageService::class, 'reports storage file write failures without PHP warnings', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
