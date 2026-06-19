@@ -36,6 +36,8 @@
 #define ID_STATS_SCAN 3001
 #define ID_STATS_PING 3002
 #define ID_STATS_CLEAR_HISTORY 3003
+#define ID_STATS_PAUSE 3004
+#define ID_MAIN_SHUTDOWN_TIMER 4001
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
 #define STATS_LABEL_COUNT 17
@@ -73,10 +75,12 @@ typedef struct AppState {
     HWND registerStatus;
     HWND statsLabels[STATS_LABEL_COUNT];
     HWND statsPingButton;
+    HWND statsPauseButton;
     HICON registerLogoIcon;
     HFONT uiFont;
     HFONT boldUiFont;
     HANDLE instanceMutex;
+    HANDLE processorThread;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
     HANDLE stopEvent;
@@ -92,6 +96,8 @@ typedef struct AppState {
     LONG totalScannedDrives;
     LONG activeScans;
     LONG processing;
+    LONG uploadsPaused;
+    LONG shutdownRequested;
     U64 totalUploadMillis;
     U64 serverMaxRawUploadBytes;
     DWORD nextQueueId;
@@ -133,6 +139,8 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize);
 static void UpdateTrayTooltip(HWND hwnd);
 static void MigrateUploadedCache(void);
 static void CompactQueueIfNeeded(void);
+static int UploadsPaused(void);
+static int ShutdownRequested(void);
 static DWORD ClearUploadedHistoryCache(void);
 static U64 ParseU64(const char *text);
 
@@ -1835,7 +1843,7 @@ static DWORD WINAPI ProcessorThread(LPVOID param)
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         if (wait == WAIT_OBJECT_0) break;
-        while (QueuePop(&queueId, path, sizeof(path))) {
+        while (!ShutdownRequested() && !UploadsPaused() && QueuePop(&queueId, path, sizeof(path))) {
             InterlockedExchange(&g_app.processing, 1);
             ProcessPath(queueId, path);
             InterlockedExchange(&g_app.processing, 0);
@@ -2199,6 +2207,37 @@ static HWND Button(HWND parent, int id, const char *text, int x, int y, int w, i
     return SetAppFont(CreateWindowA("BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | style, x, y, w, h, parent, (HMENU)(INT_PTR)id, g_app.instance, NULL));
 }
 
+static int UploadsPaused(void)
+{
+    return InterlockedCompareExchange(&g_app.uploadsPaused, 0, 0) != 0;
+}
+
+static int ShutdownRequested(void)
+{
+    return InterlockedCompareExchange(&g_app.shutdownRequested, 0, 0) != 0;
+}
+
+static void UpdateStatsPauseButton(void)
+{
+    if (!g_app.statsPauseButton) return;
+    SetWindowTextA(g_app.statsPauseButton, UploadsPaused() ? "resume" : "pause");
+    EnableWindow(g_app.statsPauseButton, !ShutdownRequested());
+}
+
+static void SetUploadsPaused(int paused)
+{
+    if (ShutdownRequested()) return;
+    InterlockedExchange(&g_app.uploadsPaused, paused ? 1 : 0);
+    UpdateStatsPauseButton();
+    if (!paused && g_app.queueEvent) SetEvent(g_app.queueEvent);
+    PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static void ToggleUploadsPaused(void)
+{
+    SetUploadsPaused(!UploadsPaused());
+}
+
 static void SetStatsPingState(int state)
 {
     g_app.statsPingState = state;
@@ -2217,6 +2256,30 @@ static int StatsPingStateExpired(void)
     return g_app.statsPingState != 0
         && g_app.statsPingStateExpiresAt != 0
         && (LONG)(GetTickCount() - g_app.statsPingStateExpiresAt) >= 0;
+}
+
+static int CompleteGracefulShutdownIfReady(HWND hwnd)
+{
+    if (g_app.processorThread) {
+        DWORD wait = WaitForSingleObject(g_app.processorThread, 0);
+        if (wait != WAIT_OBJECT_0) return 0;
+        CloseHandle(g_app.processorThread);
+        g_app.processorThread = NULL;
+    }
+    KillTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER);
+    DestroyWindow(hwnd);
+    return 1;
+}
+
+static void BeginGracefulShutdown(HWND hwnd)
+{
+    if (InterlockedExchange(&g_app.shutdownRequested, 1) != 0) return;
+    UpdateStatsPauseButton();
+    if (g_app.stopEvent) SetEvent(g_app.stopEvent);
+    if (g_app.queueEvent) SetEvent(g_app.queueEvent);
+    if (!CompleteGracefulShutdownIfReady(hwnd)) {
+        SetTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER, 250, NULL);
+    }
 }
 
 static void DrawPingButton(const DRAWITEMSTRUCT *item)
@@ -2305,7 +2368,7 @@ static void ShowStatsWindow(void)
         rect.left = 0;
         rect.top = 0;
         rect.right = 18 + 180 + 18;
-        rect.bottom = 540;
+        rect.bottom = 580;
         AdjustWindowRect(&rect, style, FALSE);
         g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
     }
@@ -2350,15 +2413,15 @@ static void FormatDuration(U64 millis, char *out, DWORD outSize)
     hours %= 24ULL;
 
     if (millis == 0) {
-        SafeCopy(out, outSize, "0 minutes");
+        SafeCopy(out, outSize, "0m");
     } else if (days > 0) {
-        SbSnprintf(out, outSize, "%I64u days %I64u hours", days, hours);
+        SbSnprintf(out, outSize, "%I64ud %I64uh", days, hours);
     } else if (hours > 0) {
-        SbSnprintf(out, outSize, "%I64u hours %I64u minutes", hours, minutes);
+        SbSnprintf(out, outSize, "%I64uh %I64um", hours, minutes);
     } else if (minutes > 0) {
-        SbSnprintf(out, outSize, "%I64u minutes", minutes);
+        SbSnprintf(out, outSize, "%I64um", minutes);
     } else {
-        SafeCopy(out, outSize, "less than 1 minute");
+        SafeCopy(out, outSize, "<1m");
     }
 }
 
@@ -2425,6 +2488,7 @@ static void RefreshStats(void)
     LeaveCriticalSection(&g_app.lock);
     UpdateTrayTooltip(g_app.mainWindow);
     if (!g_app.statsWindow) return;
+    UpdateStatsPauseButton();
 
     if (found > 0) progress = ((uploaded + alreadyUploaded) * 100L) / found;
     if (progress > 100) progress = 100;
@@ -2478,7 +2542,7 @@ static void RefreshStats(void)
     SetWindowTextA(g_app.statsLabels[13], text);
     SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
     SetWindowTextA(g_app.statsLabels[14], text);
-    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms per file", avg);
+    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
     SetWindowTextA(g_app.statsLabels[15], text);
     SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
     SetWindowTextA(g_app.statsLabels[16], text);
@@ -2639,15 +2703,18 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             int scanWidth = 160;
             int pingWidth = 180;
             int buttonY = 410;
-            int clearY = buttonY + 36;
+            int pauseY = buttonY + 36;
+            int clearY = pauseY + 36;
             int pingY = clearY + 36;
             int labelWidth = pingWidth;
             for (i = 0; i < STATS_LABEL_COUNT; i++) {
                 g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
             }
             Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", margin, buttonY, scanWidth, 28, 0);
+            g_app.statsPauseButton = Button(hwnd, ID_STATS_PAUSE, "pause", margin, pauseY, pingWidth, 28, 0);
             Button(hwnd, ID_STATS_CLEAR_HISTORY, "Clear local history cache", margin, clearY, pingWidth, 28, 0);
             g_app.statsPingButton = Button(hwnd, ID_STATS_PING, "Test Server Connectivity", margin, pingY, pingWidth, 28, BS_OWNERDRAW);
+            UpdateStatsPauseButton();
         }
         SetTimer(hwnd, 1, 1000, NULL);
         if (StatsPingStateExpired()) {
@@ -2669,6 +2736,7 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ShowTrayBalloon(g_app.mainWindow, APP_NAME, message, 10000);
             RefreshStats();
         }
+        else if (LOWORD(wp) == ID_STATS_PAUSE) ToggleUploadsPaused();
         else if (LOWORD(wp) == ID_STATS_PING) {
             if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') {
                 SetStatsPingState(-1);
@@ -2774,9 +2842,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         switch (LOWORD(wp)) {
         case ID_TRAY_REGISTER: ShowRegisterWindow(0); break;
         case ID_TRAY_STATS: ShowStatsWindow(); break;
-        case ID_TRAY_EXIT: DestroyWindow(hwnd); break;
+        case ID_TRAY_EXIT: BeginGracefulShutdown(hwnd); break;
         }
         return 0;
+    case WM_TIMER:
+        if (wp == ID_MAIN_SHUTDOWN_TIMER) {
+            CompleteGracefulShutdownIfReady(hwnd);
+            return 0;
+        }
+        break;
     case WM_REFRESH_STATS:
         RefreshStats();
         return 0;
@@ -2800,6 +2874,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DESTROY:
         SetEvent(g_app.stopEvent);
+        KillTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER);
         RemoveTrayIcon(hwnd);
         PostQuitMessage(0);
         return 0;
@@ -2832,7 +2907,6 @@ static void RegisterClasses(void)
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int show)
 {
     MSG msg;
-    HANDLE processor;
     (void)previous;
     (void)cmdLine;
     (void)show;
@@ -2858,8 +2932,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     RegisterClasses();
     g_app.mainWindow = CreateWindowA("SpiceBushMain", APP_NAME, WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, instance, NULL);
     LoadQueue();
-    processor = CreateThread(NULL, 0, ProcessorThread, NULL, 0, NULL);
-    if (processor) CloseHandle(processor);
+    g_app.processorThread = CreateThread(NULL, 0, ProcessorThread, NULL, 0, NULL);
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow(1);
     else StartPingCheck();
     while (GetMessageA(&msg, NULL, 0, 0)) {
@@ -2869,6 +2942,12 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
         }
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
+    }
+    if (g_app.stopEvent) SetEvent(g_app.stopEvent);
+    if (g_app.processorThread) {
+        WaitForSingleObject(g_app.processorThread, INFINITE);
+        CloseHandle(g_app.processorThread);
+        g_app.processorThread = NULL;
     }
     DeleteCriticalSection(&g_app.lock);
     if (g_app.balloonWindow) DestroyWindow(g_app.balloonWindow);
