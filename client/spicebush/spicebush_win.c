@@ -1637,9 +1637,10 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         "X-SwallowTail-Upload-Token: %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
+        "X-Swallowtail-Quick-Checksum-FNV1A64: %s\r\n"
         "X-Swallowtail-Device-ID: %s\r\n"
         "X-Requested-With: XMLHttpRequest\r\n",
-        g_app.uploadToken, g_app.uploadToken, filename, g_app.deviceId);
+        g_app.uploadToken, g_app.uploadToken, filename, hash, g_app.deviceId);
     headers[sizeof(headers) - 1] = '\0';
     LogMessage("Raw upload request prepared: url=%s filename=%s token_present=%s token_length=%u auth_header=yes fallback_header=yes",
         url,

@@ -104,6 +104,7 @@ final class SwallowtailRawUploadApiService
                         'upload_token_id' => (int)$uploadToken['id'],
                         'max_raw_bytes' => $maxRawBytes,
                         'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
+                        'quick_hash' => $this->quickHashFromRequest($request),
                         'request_metadata' => [
                             'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
                             'ip_address' => (string)$request->remoteAddress(),
@@ -266,6 +267,16 @@ final class SwallowtailRawUploadApiService
         $filename = trim((string)$request->header('X-Swallowtail-Filename', (string)$request->query('filename', 'upload.CR2')));
 
         return $filename !== '' ? $filename : 'upload.CR2';
+    }
+
+    private function quickHashFromRequest(RequestFramework $request): string
+    {
+        $quickHash = trim((string)$request->header(
+            'X-Swallowtail-Quick-Checksum-FNV1A64',
+            (string)$request->post('quick_hash', (string)$request->query('quick_hash', ''))
+        ));
+
+        return preg_match('/^[A-Fa-f0-9]{16}$/', $quickHash) === 1 ? strtolower($quickHash) : '';
     }
 
     private function copyInputStreamToTemporaryFile(string $inputStream, int $maxBytes): string

@@ -1932,10 +1932,16 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
+    $quickHash = hash_file(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM, $source);
+    if (!is_string($quickHash)) {
+        throw new RuntimeException('Unable to quick hash RAW fixture.');
+    }
+
     $response = $swallowtailInvokeRawUploadApi([
         'HTTP_AUTHORIZATION' => 'Bearer ' . $token['token'],
         'HTTP_USER_AGENT' => 'spicebush-test',
         'HTTP_X_SWALLOWTAIL_DEVICE_ID' => 'DESKTOP-C6R0CCD',
+        'HTTP_X_SWALLOWTAIL_QUICK_CHECKSUM_FNV1A64' => $quickHash,
     ], [
         'raw_file' => [
             'tmp_name' => $source,
@@ -1950,6 +1956,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
+    $harness->assertSame($quickHash, (string)($payload['quick_hash'] ?? ''));
     $harness->assertCount(3, (array)($payload['conversion_jobs'] ?? []));
     $harness->assertTrue((int)(($payload['conversion_jobs']['thumbnail'] ?? [])['job_id'] ?? 0) > 0);
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
@@ -1957,8 +1964,9 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
 
     $checksum = (string)($payload['sha256'] ?? '');
     if ($checksum !== '') {
-        $row = InterfaceDB::fetchOne('SELECT storage_base_location FROM photos WHERE original_sha256 = :checksum LIMIT 1', ['checksum' => $checksum]);
+        $row = InterfaceDB::fetchOne('SELECT storage_base_location, original_quick_hash FROM photos WHERE original_sha256 = :checksum LIMIT 1', ['checksum' => $checksum]);
         if (is_array($row)) {
+            $harness->assertSame($quickHash, (string)($row['original_quick_hash'] ?? ''));
             $swallowtailCleanupStorageFiles((string)($row['storage_base_location'] ?? ''), $checksum);
         }
     }

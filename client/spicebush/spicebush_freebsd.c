@@ -324,9 +324,11 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         "Authorization: Bearer %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
+        "X-Swallowtail-Quick-Checksum-FNV1A64: %s\r\n"
         "X-Swallowtail-Device-ID: %s\r\n",
         config->upload_token,
         sb_basename(path),
+        hash,
         config->device_id
     );
 

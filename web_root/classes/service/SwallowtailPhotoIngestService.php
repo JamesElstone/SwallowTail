@@ -99,9 +99,20 @@ final class SwallowtailPhotoIngestService
             ];
         }
 
-        $hashes = $this->hashRawFile($sourcePath);
-        $sha256 = $hashes['sha256'];
-        $quickHash = $hashes['quick_hash'];
+        $sha256 = hash_file('sha256', $sourcePath);
+        if (!is_string($sha256) || $sha256 === '') {
+            throw new RuntimeException('Unable to checksum RAW file.');
+        }
+        $sha256 = strtolower($sha256);
+
+        $quickHash = $this->contextQuickHash($context);
+        if ($quickHash === null) {
+            $quickHash = hash_file(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM, $sourcePath);
+            if (!is_string($quickHash) || $quickHash === '') {
+                throw new RuntimeException('Unable to quick-checksum RAW file.');
+            }
+            $quickHash = strtolower($quickHash);
+        }
 
         $expectedSha256 = strtolower(trim((string)($context['expected_sha256'] ?? '')));
         if ($expectedSha256 !== '' && !hash_equals($expectedSha256, $sha256)) {
@@ -241,49 +252,6 @@ final class SwallowtailPhotoIngestService
         return $value > 0 ? $value : null;
     }
 
-    /**
-     * @return array{sha256: string, quick_hash: string}
-     */
-    private function hashRawFile(string $sourcePath): array
-    {
-        $handle = @fopen($sourcePath, 'rb');
-        if (!is_resource($handle)) {
-            throw new RuntimeException('Unable to open RAW file for checksumming.');
-        }
-
-        $sha256Context = hash_init('sha256');
-        $quickHashContext = hash_init(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM);
-
-        try {
-            while (!feof($handle)) {
-                $chunk = fread($handle, 1024 * 1024);
-                if ($chunk === false) {
-                    throw new RuntimeException('Unable to checksum RAW file.');
-                }
-
-                if ($chunk === '') {
-                    continue;
-                }
-
-                hash_update($sha256Context, $chunk);
-                hash_update($quickHashContext, $chunk);
-            }
-        } finally {
-            fclose($handle);
-        }
-
-        $sha256 = hash_final($sha256Context);
-        $quickHash = hash_final($quickHashContext);
-        if ($sha256 === '' || $quickHash === '') {
-            throw new RuntimeException('Unable to checksum RAW file.');
-        }
-
-        return [
-            'sha256' => strtolower($sha256),
-            'quick_hash' => strtolower($quickHash),
-        ];
-    }
-
     private function phpUploadLimit(string $key): mixed
     {
         if (is_array($this->phpUploadLimits) && array_key_exists($key, $this->phpUploadLimits)) {
@@ -291,5 +259,15 @@ final class SwallowtailPhotoIngestService
         }
 
         return ini_get($key);
+    }
+
+    private function contextQuickHash(array $context): ?string
+    {
+        $quickHash = strtolower(trim((string)($context['quick_hash'] ?? '')));
+        if ($quickHash === '') {
+            return null;
+        }
+
+        return preg_match('/^[a-f0-9]{16}$/', $quickHash) === 1 ? $quickHash : null;
     }
 }
