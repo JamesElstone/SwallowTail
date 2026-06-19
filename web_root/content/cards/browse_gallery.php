@@ -26,7 +26,7 @@ final class _browse_galleryCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return 'Thumbnails for photos you can view.';
+        return 'Previews for photos you can view.';
     }
 
     public function handle(
@@ -76,10 +76,10 @@ final class _browse_galleryCard extends CardBaseFramework
         $photoId = (int)($photo['id'] ?? 0);
         $filename = (string)($photo['original_filename'] ?? 'Photo');
         $viewerUrl = '?page=picture_viewer&photo_id=' . rawurlencode((string)$photoId);
-        $thumbnailUrl = '/api/photo-asset.php?photo_id=' . rawurlencode((string)$photoId) . '&type=thumbnail';
-        $thumbnail = !empty($photo['thumbnail_ready'])
-            ? '<img src="' . HelperFramework::escape($thumbnailUrl) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
-            : '<div class="gallery-placeholder">Thumbnail pending</div>';
+        $previewType = $this->galleryPreviewType($photo);
+        $thumbnail = $previewType !== null
+            ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
+            : '<div class="gallery-placeholder">Preview pending</div>';
 
         return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '">
             <span class="gallery-thumb">' . $thumbnail . '</span>
@@ -88,6 +88,20 @@ final class _browse_galleryCard extends CardBaseFramework
                 <span>' . HelperFramework::escape($this->statusLabel((string)($photo['conversion_state'] ?? 'pending'))) . '</span>
             </span>
         </a>';
+    }
+
+    private function galleryPreviewType(array $photo): ?string
+    {
+        if (!empty($photo['thumbnail_ready'])) {
+            return 'thumbnail';
+        }
+
+        return !empty($photo['embedded_ready']) ? 'embedded' : null;
+    }
+
+    private function photoAssetUrl(int $photoId, string $type): string
+    {
+        return '/api/photo-asset.php?photo_id=' . rawurlencode((string)$photoId) . '&type=' . rawurlencode($type);
     }
 
     private function statusLabel(string $state): string

@@ -514,6 +514,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $uploaderRows = $service->accessiblePhotos(902)['rows'];
     $viewerRows = $service->accessiblePhotos(903)['rows'];
     $noAccessRows = $service->accessiblePhotos(904)['rows'];
+    $clampedGallery = $service->accessiblePhotos(901, 99, 2);
 
     $harness->assertSame(3, count($adminRows));
     $harness->assertSame(1, count($uploaderRows));
@@ -521,6 +522,11 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame(1, count($viewerRows));
     $harness->assertSame('event.CR2', (string)$viewerRows[0]['original_filename']);
     $harness->assertSame(0, count($noAccessRows));
+    $harness->assertSame(1, count((array)$clampedGallery['rows']));
+    $harness->assertSame(2, (int)$clampedGallery['pagination']['page']);
+    $harness->assertSame(3, (int)$clampedGallery['pagination']['total_items']);
+    $harness->assertSame(3, (int)$clampedGallery['pagination']['first_item']);
+    $harness->assertSame(3, (int)$clampedGallery['pagination']['last_item']);
 });
 
 $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized private image assets', function () use ($harness, $swallowtailUiCreateSchema): void {

@@ -41,7 +41,6 @@ final class SwallowtailPhotoUiService
 
         $page = max(1, $page);
         $perPage = max(1, min(96, $perPage));
-        $offset = ($page - 1) * $perPage;
         $params = [];
         $where = $this->accessWhereSql($userId, $params, 'photo');
 
@@ -51,6 +50,9 @@ final class SwallowtailPhotoUiService
              WHERE " . $where,
             $params
         );
+
+        $pagination = $this->pagination($total, $page, $perPage);
+        $offset = (((int)$pagination['page']) - 1) * $perPage;
 
         $rows = InterfaceDB::fetchAll(
             "SELECT
@@ -71,7 +73,7 @@ final class SwallowtailPhotoUiService
 
         return [
             'rows' => array_map([$this, 'normalisePhotoRow'], $rows),
-            'pagination' => $this->pagination($total, $page, $perPage),
+            'pagination' => $pagination,
         ];
     }
 

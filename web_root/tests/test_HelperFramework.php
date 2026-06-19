@@ -66,4 +66,28 @@ $harness->run(HelperFramework::class, function (GeneratedServiceClassTestHarness
         $harness->assertSame(false, $emptyPagination['has_previous_page']);
         $harness->assertSame(false, $emptyPagination['has_next_page']);
     });
+
+    $harness->check(HelperFramework::class, 'labels database pagination ranges', function () use ($harness): void {
+        $harness->assertSame('photos 1 of 1', HelperFramework::paginationItemsLabel([
+            'page' => 1,
+            'per_page' => 24,
+            'total_items' => 1,
+            'total_pages' => 1,
+            'has_previous_page' => false,
+            'has_next_page' => false,
+            'first_item' => 1,
+            'last_item' => 1,
+        ], 'photos'));
+
+        $harness->assertSame('photos 25-48 of 50', HelperFramework::paginationItemsLabel([
+            'page' => 2,
+            'per_page' => 24,
+            'total_items' => 50,
+            'total_pages' => 3,
+            'has_previous_page' => true,
+            'has_next_page' => true,
+            'first_item' => 25,
+            'last_item' => 48,
+        ], 'photos'));
+    });
 });

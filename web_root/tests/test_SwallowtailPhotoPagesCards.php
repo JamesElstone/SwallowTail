@@ -375,3 +375,21 @@ $harness->check(_gallery::class, 'browse gallery thumbnails link to picture view
     $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=42'));
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=thumbnail'));
 });
+
+$harness->check(_gallery::class, 'browse gallery falls back to embedded previews', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 43,
+        'original_filename' => 'IMG_0043.CR2',
+        'conversion_state' => 'processing',
+        'thumbnail_ready' => false,
+        'embedded_ready' => true,
+    ]);
+
+    $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=43'));
+    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=embedded'));
+    $harness->assertTrue(!str_contains($html, 'Preview pending'));
+});
