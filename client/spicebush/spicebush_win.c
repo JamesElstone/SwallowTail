@@ -2220,7 +2220,7 @@ static int ShutdownRequested(void)
 static void UpdateStatsPauseButton(void)
 {
     if (!g_app.statsPauseButton) return;
-    SetWindowTextA(g_app.statsPauseButton, UploadsPaused() ? "resume" : "pause");
+    SetWindowTextA(g_app.statsPauseButton, UploadsPaused() ? "Resume" : "Pause");
     EnableWindow(g_app.statsPauseButton, !ShutdownRequested());
 }
 
@@ -2700,20 +2700,19 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE:
         {
             int margin = 18;
-            int scanWidth = 160;
-            int pingWidth = 180;
+            int buttonWidth = 180;
             int buttonY = 410;
             int pauseY = buttonY + 36;
             int clearY = pauseY + 36;
             int pingY = clearY + 36;
-            int labelWidth = pingWidth;
+            int labelWidth = buttonWidth;
             for (i = 0; i < STATS_LABEL_COUNT; i++) {
                 g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
             }
-            Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", margin, buttonY, scanWidth, 28, 0);
-            g_app.statsPauseButton = Button(hwnd, ID_STATS_PAUSE, "pause", margin, pauseY, pingWidth, 28, 0);
-            Button(hwnd, ID_STATS_CLEAR_HISTORY, "Clear local history cache", margin, clearY, pingWidth, 28, 0);
-            g_app.statsPingButton = Button(hwnd, ID_STATS_PING, "Test Server Connectivity", margin, pingY, pingWidth, 28, BS_OWNERDRAW);
+            Button(hwnd, ID_STATS_SCAN, "Scan Existing Drives", margin, buttonY, buttonWidth, 28, 0);
+            g_app.statsPauseButton = Button(hwnd, ID_STATS_PAUSE, "Pause", margin, pauseY, buttonWidth, 28, 0);
+            Button(hwnd, ID_STATS_CLEAR_HISTORY, "Clear local history cache", margin, clearY, buttonWidth, 28, 0);
+            g_app.statsPingButton = Button(hwnd, ID_STATS_PING, "Test Server Connectivity", margin, pingY, buttonWidth, 28, BS_OWNERDRAW);
             UpdateStatsPauseButton();
         }
         SetTimer(hwnd, 1, 1000, NULL);
