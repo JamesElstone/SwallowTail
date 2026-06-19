@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	10
+PORTREVISION=	11
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -135,7 +135,7 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/php-fpm.d/swallowtail.conf
 	${INSTALL_PROGRAM} ${WRKDIR}/spicebush/spicebush \
 		${STAGEDIR}${PREFIX}/bin/spicebush
-	${INSTALL_SCRIPT} ${WRKDIR}/swallowtail-fix-storage-permissions \
+	${INSTALL_SCRIPT} -m 0555 ${WRKDIR}/swallowtail-fix-storage-permissions \
 		${STAGEDIR}${PREFIX}/sbin/swallowtail-fix-storage-permissions
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/tmp
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root/tests/tmp
