@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	13
+PORTREVISION=	14
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -86,7 +86,7 @@ PLIST_FILES+=	etc/apache24/Includes/swallowtail.conf
 
 .if ${PORT_OPTIONS:MSUDOERS}
 SUB_FILES+=	swallowtail-sudoers
-PLIST_FILES+=	etc/sudoers.d/swallowtail.conf
+PLIST_FILES+=	etc/sudoers.d/swallowtail
 .endif
 
 do-build:
@@ -153,7 +153,7 @@ do-install:
 .if ${PORT_OPTIONS:MSUDOERS}
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/sudoers.d
 	${INSTALL} -m 0440 ${WRKDIR}/swallowtail-sudoers \
-		${STAGEDIR}${PREFIX}/etc/sudoers.d/swallowtail.conf
+		${STAGEDIR}${PREFIX}/etc/sudoers.d/swallowtail
 .endif
 
 post-install:

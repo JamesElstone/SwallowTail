@@ -24,7 +24,7 @@ The storage permission repair helper is installed under the package prefix as:
 Run it as root with --help to see the safety checks, --dry-run support, and the
 exact ownership/mode policy it applies under each storage location's
 swallowtail-data directory. The SUDOERS port option, enabled by default,
-installs etc/sudoers.d/swallowtail.conf so the web UI can request that helper
+installs etc/sudoers.d/swallowtail so the web UI can request that helper
 through sudo without granting shell access.
 
 Service defaults are embedded in the rc.d scripts. Override them in
