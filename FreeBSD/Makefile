@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	11
+PORTREVISION=	12
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -110,6 +110,13 @@ do-install:
 				${STAGEDIR}${SWALLOWTAIL_ROOT}; \
 		fi; \
 	done
+	if [ -f "${STAGEDIR}${SWALLOWTAIL_ROOT}/tools/reinstall-freebsd-port.sh" ]; then \
+		${CHMOD} 0555 ${STAGEDIR}${SWALLOWTAIL_ROOT}/tools/reinstall-freebsd-port.sh; \
+	fi
+	if [ -d "${STAGEDIR}${SWALLOWTAIL_ROOT}/tools/bin" ]; then \
+		${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT}/tools/bin -type f \
+			-exec ${CHMOD} 0555 {} \; ; \
+	fi
 	if [ -d "${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root" ]; then \
 		${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root -type f \
 			-name '*.md' -delete; \
@@ -151,8 +158,17 @@ do-install:
 
 post-install:
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type f \
+		! -path 'swallowtail/tools/reinstall-freebsd-port.sh' \
+		! -path 'swallowtail/tools/bin/*' \
 		! -path 'swallowtail/web_root/tests/fixtures/config/app.php' | \
 		${SORT} >> ${TMPPLIST}
+	${ECHO_CMD} "@mode 0555" >> ${TMPPLIST}
+	${ECHO_CMD} "swallowtail/tools/reinstall-freebsd-port.sh" >> ${TMPPLIST}
+	if [ -d "${STAGEDIR}${PREFIX}/swallowtail/tools/bin" ]; then \
+		cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail/tools/bin -type f | \
+			${SORT} >> ${TMPPLIST}; \
+	fi
+	${ECHO_CMD} "@mode" >> ${TMPPLIST}
 	${ECHO_CMD} "@owner www" >> ${TMPPLIST}
 	${ECHO_CMD} "@group www" >> ${TMPPLIST}
 	${ECHO_CMD} "@mode 0640" >> ${TMPPLIST}
