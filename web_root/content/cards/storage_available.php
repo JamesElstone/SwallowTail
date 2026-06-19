@@ -82,7 +82,7 @@ final class _storage_availableCard extends CardBaseFramework
                 . '</p>'
             : '';
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $fixPermissionAction = $baseLocation === '' ? '' : '
+        $fixPermissionAction = $baseLocation === '' || $permissionCanWrite !== false ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
                 <input type="hidden" name="card_action" value="StorageSettings">

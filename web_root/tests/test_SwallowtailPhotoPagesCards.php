@@ -205,9 +205,9 @@ $harness->check(_storage_availableCard::class, 'renders zpool dataset select and
     ], $context);
 
     $harness->assertTrue(str_contains($locationHtml, 'Migrate Files from this Location'));
-    $harness->assertTrue(str_contains($locationHtml, 'Fix Permission Issues'));
     $harness->assertTrue(str_contains($locationHtml, 'data-chicken-check="true"'));
-    $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
+    $harness->assertTrue(!str_contains($locationHtml, 'Fix Permission Issues'));
+    $harness->assertTrue(!str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
 });
 
@@ -334,6 +334,8 @@ $harness->check(_storage_availableCard::class, 'shows PHP permission failures be
     $harness->assertTrue(!str_contains($locationHtml, '>Writable<'));
     $harness->assertTrue(str_contains($locationHtml, "parent directory is not writable by the 'swallowtail' user"));
     $harness->assertTrue(str_contains($locationHtml, 'Checked: /storage/1'));
+    $harness->assertTrue(str_contains($locationHtml, 'Fix Permission Issues'));
+    $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
 });
 
 $harness->check(StorageSettingsAction::class, 'returns flash messages for ajax storage settings failures', function () use ($harness): void {
