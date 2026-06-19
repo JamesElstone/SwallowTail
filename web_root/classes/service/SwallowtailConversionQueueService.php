@@ -261,12 +261,12 @@ final class SwallowtailConversionQueueService
         }
 
         try {
-            $socket = @stream_socket_client('tcp://' . $host . ':' . $port, $errno, $errstr, 0.25);
+            $socket = @stream_socket_client('tcp://' . $host . ':' . $port, $errno, $errstr, 0.1);
             if (!is_resource($socket)) {
                 return;
             }
 
-            stream_set_timeout($socket, 1);
+            stream_set_timeout($socket, 0, 200000);
             $payload = json_encode(['job_id' => $jobId], JSON_THROW_ON_ERROR);
             $command = "*3\r\n"
                 . "$5\r\nLPUSH\r\n"
