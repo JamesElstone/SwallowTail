@@ -253,6 +253,7 @@ final class SwallowtailStorageService
     {
         $directory = dirname($absolutePath);
         if (is_dir($directory)) {
+            $this->ensureStorageDirectoryPermissions($directory);
             return;
         }
 
@@ -271,6 +272,33 @@ final class SwallowtailStorageService
                 'Unable to create SwallowTail storage directory: %s%s',
                 $directory,
                 $this->filesystemFailureSuffix($created['warning'])
+            ));
+        }
+
+        $this->ensureStorageDirectoryPermissions($directory);
+    }
+
+    private function ensureStorageDirectoryPermissions(string $directory): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            return;
+        }
+
+        try {
+            $changed = $this->filesystemOperation(static fn(): bool => chmod($directory, 02770));
+        } catch (Throwable $exception) {
+            throw new RuntimeException(sprintf(
+                'Unable to set SwallowTail storage directory permissions: %s%s',
+                $directory,
+                $this->filesystemFailureSuffix(null, $exception)
+            ), 0, $exception);
+        }
+
+        if (!$changed['success']) {
+            throw new RuntimeException(sprintf(
+                'Unable to set SwallowTail storage directory permissions: %s%s',
+                $directory,
+                $this->filesystemFailureSuffix($changed['warning'])
             ));
         }
     }

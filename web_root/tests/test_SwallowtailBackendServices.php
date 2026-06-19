@@ -703,6 +703,33 @@ $harness->check(SwallowtailStorageService::class, 'reports storage mkdir failure
     }
 });
 
+$harness->check(SwallowtailStorageService::class, 'creates storage hash directories writable by the service group', function () use ($harness): void {
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $harness->skip('POSIX directory modes are not available on Windows.');
+    }
+
+    $storageRoot = swallowtail_backend_storage_tmp_root();
+    if (!is_dir($storageRoot) && !@mkdir($storageRoot, 0770, true) && !is_dir($storageRoot)) {
+        throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
+    }
+
+    $storage = new SwallowtailStorageService();
+    $destinationPath = $storage->imagePath($storageRoot, str_repeat('c', 64), 'source');
+    $previousUmask = umask(0022);
+    try {
+        $storage->ensureDirectoryForPath($destinationPath);
+    } finally {
+        umask($previousUmask);
+    }
+
+    $directoryMode = fileperms(dirname($destinationPath));
+    if (!is_int($directoryMode)) {
+        throw new RuntimeException('Unable to inspect storage hash directory permissions.');
+    }
+
+    $harness->assertSame(02770, $directoryMode & 07777);
+});
+
 $harness->check(SwallowtailStorageService::class, 'reports storage file write failures without PHP warnings', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
