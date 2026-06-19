@@ -111,9 +111,7 @@ class ConversionWorker:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _next_job_id(self) -> int | None:
-        message = self.redis.pop()
-        if message is not None:
-            return message.job_id
+        self.redis.pop()
         return self.db.next_queued_job_id()
 
     def _touch_status(self) -> None:

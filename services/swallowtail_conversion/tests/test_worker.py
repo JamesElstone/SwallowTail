@@ -21,6 +21,7 @@ from swallowtail_conversion.config import (
     default_config,
     load_php_app_config,
 )
+from swallowtail_conversion.db import ConversionDatabase
 from swallowtail_conversion.embedded import EmbeddedJpegExtractor
 from swallowtail_conversion.health import _check_directory_writable, _check_log_writable
 from swallowtail_conversion.jobs import ConversionJob
@@ -319,6 +320,48 @@ class WorkerBehaviourTest(unittest.TestCase):
         worker.db = FakeDb()
         self.assertEqual(42, worker._next_job_id())
 
+    def test_redis_original_message_wakes_database_priority_selection(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.popped = False
+
+            def pop(self):
+                self.popped = True
+                return SimpleNamespace(job_id=99)
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.selected = False
+
+            def next_queued_job_id(self):
+                self.selected = True
+                return 7
+
+        redis = FakeRedis()
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = redis
+        worker.db = db
+
+        self.assertEqual(7, worker._next_job_id())
+        self.assertTrue(redis.popped)
+        self.assertTrue(db.selected)
+
+    def test_redis_thumbnail_message_still_uses_database_priority_selection(self) -> None:
+        class FakeRedis:
+            def pop(self):
+                return SimpleNamespace(job_id=51)
+
+        class FakeDb:
+            def next_queued_job_id(self):
+                return 12
+
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = FakeRedis()
+        worker.db = FakeDb()
+
+        self.assertEqual(12, worker._next_job_id())
+
     def test_run_once_records_worker_heartbeat(self) -> None:
         class FakeRedis:
             def __init__(self) -> None:
@@ -395,6 +438,26 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "log directory not found"):
             _check_log_writable(str(self.root / "missing" / "raw.log"))
+
+
+class ConversionDatabaseOrderingTest(unittest.TestCase):
+    def test_database_priority_order_is_embedded_filtered_thumbnail_original(self) -> None:
+        self.assertEqual(
+            ["embedded", "filtered", "thumbnail", "original"],
+            list(ConversionDatabase.IMAGE_TYPE_ORDER.keys()),
+        )
+
+    def test_database_priority_order_sql_matches_image_type_policy(self) -> None:
+        sql = ConversionDatabase._image_type_order_sql()
+
+        embedded = sql.index("WHEN 'embedded' THEN 1")
+        filtered = sql.index("WHEN 'filtered' THEN 2")
+        thumbnail = sql.index("WHEN 'thumbnail' THEN 3")
+        original = sql.index("WHEN 'original' THEN 4")
+
+        self.assertLess(embedded, filtered)
+        self.assertLess(filtered, thumbnail)
+        self.assertLess(thumbnail, original)
 
 
 if __name__ == "__main__":

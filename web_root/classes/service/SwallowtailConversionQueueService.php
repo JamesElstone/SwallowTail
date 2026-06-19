@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const IMAGE_TYPES = ['embedded', 'original', 'thumbnail', 'filtered'];
+    private const IMAGE_TYPES = ['embedded', 'filtered', 'thumbnail', 'original'];
     private const PRIORITIES = ['low', 'normal', 'high'];
 
     public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
@@ -43,8 +43,8 @@ final class SwallowtailConversionQueueService
 
         foreach ([
             'embedded' => 'high',
-            'original' => 'normal',
             'thumbnail' => $priority,
+            'original' => 'normal',
         ] as $imageType => $jobPriority) {
             $outputPath = $storage->imagePath($base, $sha256, $imageType);
             $dimensions = $this->dimensionsForImageType($imageType);
@@ -229,9 +229,9 @@ final class SwallowtailConversionQueueService
              ORDER BY
                CASE image_type
                  WHEN 'embedded' THEN 1
-                 WHEN 'original' THEN 2
-                 WHEN 'filtered' THEN 3
-                 WHEN 'thumbnail' THEN 4
+                 WHEN 'filtered' THEN 2
+                 WHEN 'thumbnail' THEN 3
+                 WHEN 'original' THEN 4
                  ELSE 5
                END,
                CASE priority

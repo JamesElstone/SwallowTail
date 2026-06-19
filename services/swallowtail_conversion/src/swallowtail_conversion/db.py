@@ -10,6 +10,14 @@ from .jobs import ConversionJob
 
 
 class ConversionDatabase:
+    IMAGE_TYPE_ORDER = {
+        "embedded": 1,
+        "filtered": 2,
+        "thumbnail": 3,
+        "original": 4,
+    }
+    DEFAULT_IMAGE_TYPE_ORDER = 6
+
     def __init__(self, database: DatabaseConfig, worker: WorkerConfig):
         self.worker = worker
         self.driver = database.driver
@@ -74,19 +82,13 @@ class ConversionDatabase:
 
     def next_queued_job_id(self) -> int | None:
         row = self._fetchone(
-            """
+            f"""
             SELECT id
               FROM photo_conversion_jobs
              WHERE status = 'queued'
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
-               CASE image_type
-                 WHEN 'embedded' THEN 1
-                 WHEN 'original' THEN 2
-                 WHEN 'filtered' THEN 3
-                 WHEN 'thumbnail' THEN 4
-                 ELSE 6
-               END,
+               {self._image_type_order_sql()},
                CASE priority
                  WHEN 'high' THEN 1
                  WHEN 'normal' THEN 2
@@ -98,6 +100,19 @@ class ConversionDatabase:
         )
         self.connection.rollback()
         return int(row["id"]) if row else None
+
+    @classmethod
+    def _image_type_order_sql(cls) -> str:
+        clauses = "\n                 ".join(
+            f"WHEN '{image_type}' THEN {rank}" for image_type, rank in cls.IMAGE_TYPE_ORDER.items()
+        )
+
+        return (
+            "CASE image_type\n"
+            f"                 {clauses}\n"
+            f"                 ELSE {cls.DEFAULT_IMAGE_TYPE_ORDER}\n"
+            "               END"
+        )
 
     def claim_job(self, job_id: int) -> ConversionJob | None:
         cursor = self._execute(

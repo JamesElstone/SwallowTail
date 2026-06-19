@@ -944,6 +944,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
         'image_type' => 'original',
     ]));
     $harness->assertCount(3, (array)($result['conversion_jobs'] ?? []));
+    $harness->assertSame(['embedded', 'thumbnail', 'original'], array_keys((array)($result['conversion_jobs'] ?? [])));
     $harness->assertTrue((int)(($result['conversion_jobs']['embedded'] ?? [])['job_id'] ?? 0) > 0);
     $thumbnail = InterfaceDB::fetchOne(
         "SELECT output_width, output_height
@@ -958,6 +959,31 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', 'action_type', 'raw_uploaded'));
 
     @unlink($source);
+});
+
+$harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in image priority order', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            priority,
+            status
+        ) VALUES
+            (1, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 'normal', 'queued'),
+            (1, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail.jpg', 'normal', 'queued'),
+            (1, 'image', 'filtered', '/tmp/source.cr2', '/tmp/filtered.jpg', 'normal', 'queued'),
+            (1, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 'normal', 'queued')"
+    );
+
+    $rows = (new SwallowtailConversionQueueService())->queuedJobs(10);
+    $types = array_map(static fn(array $row): string => (string)($row['image_type'] ?? ''), $rows);
+
+    $harness->assertSame(['embedded', 'filtered', 'thumbnail', 'original'], $types);
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
