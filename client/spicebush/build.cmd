@@ -14,7 +14,7 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
-cl /nologo /W4 /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /MT /O2 /Fowork\ spicebush_win.c spicebush_shared.c work\spicebush.res /link /SUBSYSTEM:WINDOWS /OUT:work\SpiceBush.exe shell32.lib user32.lib gdi32.lib advapi32.lib wininet.lib
+cl /nologo /W4 /D_CRT_SECURE_NO_WARNINGS /DWINVER=0x0501 /D_WIN32_WINNT=0x0501 /MT /O2 /Fowork\ spicebush_win.c spicebush_shared.c work\spicebush.res /link /SUBSYSTEM:WINDOWS /OUT:work\SpiceBush.exe shell32.lib user32.lib gdi32.lib advapi32.lib wininet.lib
 set BUILD_STATUS=%ERRORLEVEL%
 if "%BUILD_STATUS%"=="0" (
     del /q work\spicebush_win.obj work\spicebush_shared.obj work\spicebush.res >nul 2>nul

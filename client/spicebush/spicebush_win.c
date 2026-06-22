@@ -273,6 +273,18 @@ static int EndsWithNoCase(const char *text, const char *suffix)
     return lstrcmpiA(text + textLen - suffixLen, suffix) == 0;
 }
 
+static void SetWindowTextIfChanged(HWND hwnd, const char *text)
+{
+    char current[512];
+    if (!hwnd) return;
+    if (!text) text = "";
+    current[0] = '\0';
+    GetWindowTextA(hwnd, current, sizeof(current));
+    if (lstrcmpA(current, text) != 0) {
+        SetWindowTextA(hwnd, text);
+    }
+}
+
 static void TrimTrailingSlashes(char *text)
 {
     int len = lstrlenA(text);
@@ -2052,7 +2064,6 @@ static DWORD WINAPI ScanDriveThread(LPVOID param)
     ScanRequest *request = (ScanRequest *)param;
     ScanStats stats;
     ZeroMemory(&stats, sizeof(stats));
-    InterlockedIncrement(&g_app.activeScans);
     InterlockedIncrement(&g_app.totalScannedDrives);
     LogMessage("Scan drive start: root=%s max_depth=%d", request->root, request->maxDepth);
     ScanFolder(request->root, 0, request->maxDepth, &stats);
@@ -2081,9 +2092,13 @@ static void StartScanDrive(char letter, int maxDepth)
     request->root[3] = '\0';
     request->maxDepth = maxDepth;
     LogMessage("Scan drive queued: root=%s max_depth=%d", request->root, maxDepth);
+    InterlockedIncrement(&g_app.activeScans);
     thread = CreateThread(NULL, 0, ScanDriveThread, request, 0, NULL);
-    if (thread) CloseHandle(thread);
-    else {
+    if (thread) {
+        CloseHandle(thread);
+        PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+    } else {
+        InterlockedDecrement(&g_app.activeScans);
         LogMessage("Scan drive thread create failed: root=%s error=%lu", request->root, GetLastError());
         HeapFree(GetProcessHeap(), 0, request);
     }
@@ -2196,9 +2211,8 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize)
     processing = g_app.processing;
     LeaveCriticalSection(&g_app.lock);
 
-    if (active > 0 && (processing || pending > 0)) status = "Scanning/uploading";
+    if (active > 0) status = "Scanning";
     else if (processing || pending > 0) status = "Uploading";
-    else if (active > 0) status = "Scanning";
 
     SbSnprintf(tip, tipSize, "SpiceBush: %s. %ld %s found, %ld already uploaded, %ld waiting.",
         status,
@@ -2371,7 +2385,7 @@ static int ShutdownRequested(void)
 static void UpdateStatsPauseButton(void)
 {
     if (!g_app.statsPauseButton) return;
-    SetWindowTextA(g_app.statsPauseButton, UploadsPaused() ? "Resume" : "Pause");
+    SetWindowTextIfChanged(g_app.statsPauseButton, UploadsPaused() ? "Resume" : "Pause");
     EnableWindow(g_app.statsPauseButton, !ShutdownRequested());
 }
 
@@ -2643,9 +2657,8 @@ static void RefreshStats(void)
 
     if (found > 0) progress = ((uploaded + alreadyUploaded) * 100L) / found;
     if (progress > 100) progress = 100;
-    if (active > 0 && (processing || pending > 0)) status = "Scanning and uploading";
+    if (active > 0) status = "Scanning";
     else if (processing || pending > 0) status = "Uploading";
-    else if (active > 0) status = "Scanning";
 
     FormatCount(found, foundText, sizeof(foundText));
     FormatCount(uploaded, uploadedText, sizeof(uploadedText));
@@ -2666,37 +2679,37 @@ static void RefreshStats(void)
         SafeCopy(serverLimitText, sizeof(serverLimitText), "Not checked");
     }
 
-    SetWindowTextA(g_app.statsLabels[0], "SwallowTail RAW CR2 Photo Uploads");
+    SetWindowTextIfChanged(g_app.statsLabels[0], "SwallowTail RAW CR2 Photo Uploads");
     SbSnprintf(text, sizeof(text), "Status: %s", status);
-    SetWindowTextA(g_app.statsLabels[1], text);
+    SetWindowTextIfChanged(g_app.statsLabels[1], text);
     SbSnprintf(text, sizeof(text), "Upload progress: %ld%%", progress);
-    SetWindowTextA(g_app.statsLabels[2], text);
+    SetWindowTextIfChanged(g_app.statsLabels[2], text);
     SbSnprintf(text, sizeof(text), "Upload queue: %s waiting", queueText);
-    SetWindowTextA(g_app.statsLabels[3], text);
-    SetWindowTextA(g_app.statsLabels[4], "");
+    SetWindowTextIfChanged(g_app.statsLabels[3], text);
+    SetWindowTextIfChanged(g_app.statsLabels[4], "");
     SbSnprintf(text, sizeof(text), "Files found: %s", foundText);
-    SetWindowTextA(g_app.statsLabels[5], text);
+    SetWindowTextIfChanged(g_app.statsLabels[5], text);
     SbSnprintf(text, sizeof(text), "Uploaded this session: %s", uploadedText);
-    SetWindowTextA(g_app.statsLabels[6], text);
+    SetWindowTextIfChanged(g_app.statsLabels[6], text);
     SbSnprintf(text, sizeof(text), "Already uploaded: %s", alreadyText);
-    SetWindowTextA(g_app.statsLabels[7], text);
+    SetWindowTextIfChanged(g_app.statsLabels[7], text);
     SbSnprintf(text, sizeof(text), "Waiting to upload: %s", pendingText);
-    SetWindowTextA(g_app.statsLabels[8], text);
+    SetWindowTextIfChanged(g_app.statsLabels[8], text);
     SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
-    SetWindowTextA(g_app.statsLabels[9], text);
+    SetWindowTextIfChanged(g_app.statsLabels[9], text);
     SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedOversizeText);
-    SetWindowTextA(g_app.statsLabels[10], text);
-    SetWindowTextA(g_app.statsLabels[11], "");
+    SetWindowTextIfChanged(g_app.statsLabels[10], text);
+    SetWindowTextIfChanged(g_app.statsLabels[11], "");
     SbSnprintf(text, sizeof(text), "Drives scanned this session: %s", scannedText);
-    SetWindowTextA(g_app.statsLabels[12], text);
+    SetWindowTextIfChanged(g_app.statsLabels[12], text);
     SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
-    SetWindowTextA(g_app.statsLabels[13], text);
+    SetWindowTextIfChanged(g_app.statsLabels[13], text);
     SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
-    SetWindowTextA(g_app.statsLabels[14], text);
+    SetWindowTextIfChanged(g_app.statsLabels[14], text);
     SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
-    SetWindowTextA(g_app.statsLabels[15], text);
+    SetWindowTextIfChanged(g_app.statsLabels[15], text);
     SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
-    SetWindowTextA(g_app.statsLabels[16], text);
+    SetWindowTextIfChanged(g_app.statsLabels[16], text);
 }
 
 typedef struct RegisterRequest {
