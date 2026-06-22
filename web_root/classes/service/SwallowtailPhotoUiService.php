@@ -17,30 +17,11 @@ final class SwallowtailPhotoUiService
         logDetails();
     }
 
-    public function schemaAvailable(): bool
-    {
-        logDetails();
-
-        foreach ([
-            'photos',
-            'event_photos',
-            'event_permissions',
-            'events',
-            'photo_audit',
-        ] as $table) {
-            if (!InterfaceDB::tableExists($table)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     public function accessiblePhotos(int $userId, int $page = 1, int $perPage = 24): array
     {
         logDetails();
 
-        if ($userId <= 0 || !$this->schemaAvailable()) {
+        if ($userId <= 0) {
             return $this->emptyPaginated($page, $perPage);
         }
 
@@ -86,7 +67,7 @@ final class SwallowtailPhotoUiService
     {
         logDetails();
 
-        if ($userId <= 0 || !$this->schemaAvailable()) {
+        if ($userId <= 0) {
             return [];
         }
 
@@ -204,7 +185,7 @@ final class SwallowtailPhotoUiService
     {
         logDetails();
 
-        if ($photoId <= 0 || $userId <= 0 || !$this->schemaAvailable()) {
+        if ($photoId <= 0 || $userId <= 0) {
             return false;
         }
 

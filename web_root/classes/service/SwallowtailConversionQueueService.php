@@ -26,7 +26,7 @@ final class SwallowtailConversionQueueService
 
     public function enqueueRawConversionJobs(int $photoId, string $priority = 'normal'): array
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+        if ($photoId <= 0) {
             return [];
         }
 
@@ -131,7 +131,7 @@ final class SwallowtailConversionQueueService
         ?int $outputWidth = null,
         ?int $outputHeight = null
     ): ?int {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+        if ($photoId <= 0) {
             return null;
         }
 
@@ -217,10 +217,6 @@ final class SwallowtailConversionQueueService
 
     public function queuedJobs(int $limit = 50): array
     {
-        if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
-            return [];
-        }
-
         $limit = max(1, min(200, $limit));
 
         return InterfaceDB::fetchAll(
@@ -292,7 +288,7 @@ final class SwallowtailConversionQueueService
 
     private function setPhotoConversionState(int $photoId, string $state): void
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photos')) {
+        if ($photoId <= 0) {
             return;
         }
 

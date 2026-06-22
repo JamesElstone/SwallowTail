@@ -16,7 +16,7 @@ final class SwallowtailEventAccessService
 
     public function userCanViewPhoto(int $userId, int $photoId): bool
     {
-        if ($userId <= 0 || $photoId <= 0 || !$this->tablesAvailable()) {
+        if ($userId <= 0 || $photoId <= 0) {
             return false;
         }
 
@@ -49,7 +49,7 @@ final class SwallowtailEventAccessService
 
     public function userCanDownloadAllAccessible(int $userId): bool
     {
-        if ($userId <= 0 || !InterfaceDB::tableExists('event_permissions')) {
+        if ($userId <= 0) {
             return false;
         }
 
@@ -71,7 +71,7 @@ final class SwallowtailEventAccessService
 
     private function permissionValue(int $userId, int $eventId, string $column): int
     {
-        if ($userId <= 0 || $eventId <= 0 || !$this->tablesAvailable()) {
+        if ($userId <= 0 || $eventId <= 0) {
             return 0;
         }
 
@@ -102,9 +102,4 @@ final class SwallowtailEventAccessService
         return (int)$value;
     }
 
-    private function tablesAvailable(): bool
-    {
-        return InterfaceDB::tableExists('event_permissions')
-            && InterfaceDB::tableExists('event_photos');
-    }
 }

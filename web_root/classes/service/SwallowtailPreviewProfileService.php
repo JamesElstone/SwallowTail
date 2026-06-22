@@ -331,7 +331,7 @@ final class SwallowtailPreviewProfileService
 
     private function latestProfileVersion(int $photoId): int
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+        if ($photoId <= 0) {
             return 0;
         }
 

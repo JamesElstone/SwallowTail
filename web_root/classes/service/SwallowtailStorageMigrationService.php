@@ -17,10 +17,6 @@ final class SwallowtailStorageMigrationService
 
     public function enqueue(string $sourceBaseLocation, ?string $destinationBaseLocation, ?string $zpoolName, ?string $datasetName, ?int $requestedByUserId): ?int
     {
-        if (!InterfaceDB::tableExists('storage_migration_jobs')) {
-            return null;
-        }
-
         $sourceBaseLocation = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, trim($sourceBaseLocation)), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
         $destinationBaseLocation = $destinationBaseLocation === null || trim($destinationBaseLocation) === ''
             ? null
@@ -56,10 +52,6 @@ final class SwallowtailStorageMigrationService
 
     public function enqueueIfPhotosExist(string $sourceBaseLocation, ?string $destinationBaseLocation, ?string $zpoolName, ?string $datasetName, ?int $requestedByUserId): ?int
     {
-        if (!InterfaceDB::tableExists('photos')) {
-            return null;
-        }
-
         $count = InterfaceDB::countWhere('photos', 'storage_base_location', $this->normaliseBase($sourceBaseLocation));
         if ($count <= 0) {
             return null;
@@ -70,10 +62,6 @@ final class SwallowtailStorageMigrationService
 
     public function processNextJob(): bool
     {
-        if (!InterfaceDB::tableExists('storage_migration_jobs') || !InterfaceDB::tableExists('photos')) {
-            return false;
-        }
-
         $job = InterfaceDB::fetchOne(
             "SELECT * FROM storage_migration_jobs
              WHERE status IN ('queued', 'failed')

@@ -26,13 +26,6 @@ final class SwallowtailConversionStatusApiService
             ], 405);
         }
 
-        if (!$this->photoLibraryService->schemaAvailable()) {
-            return ResponseFramework::json([
-                'success' => false,
-                'errors' => ['SwallowTail photo database tables are not available. Run the database migrations.'],
-            ], 503);
-        }
-
         if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
             return $this->photoLibraryService->uploadTokenLockoutResponse();
         }
@@ -101,10 +94,6 @@ final class SwallowtailConversionStatusApiService
     private function jobsForPhoto(int $photoId): array
     {
         $jobs = $this->emptyImageMap(['job_id' => null, 'status' => 'not_queued']);
-        if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
-            return $jobs;
-        }
-
         $rows = InterfaceDB::fetchAll(
             "SELECT id, image_type, status
              FROM photo_conversion_jobs

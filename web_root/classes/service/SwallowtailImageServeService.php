@@ -20,7 +20,7 @@ final class SwallowtailImageServeService
 
     public function derivativeImage(int $photoId, string $imageType, int $userId): ?array
     {
-        if ($photoId <= 0 || $userId <= 0 || !$this->tablesAvailable()) {
+        if ($photoId <= 0 || $userId <= 0) {
             return null;
         }
 
@@ -57,13 +57,6 @@ final class SwallowtailImageServeService
             'last_modified' => gmdate('D, d M Y H:i:s', $modifiedAt) . ' GMT',
             'photo_id' => $photoId,
         ];
-    }
-
-    private function tablesAvailable(): bool
-    {
-        return InterfaceDB::tableExists('photos')
-            && InterfaceDB::tableExists('event_photos')
-            && InterfaceDB::tableExists('event_permissions');
     }
 
     private function normaliseImageType(string $imageType): string

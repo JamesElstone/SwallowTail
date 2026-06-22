@@ -135,10 +135,6 @@ final class SwallowtailStorageService
 
     public function setZpoolDataset(string $zpoolName, string $datasetName): void
     {
-        if (!InterfaceDB::tableExists('storage_location_properties')) {
-            throw new RuntimeException('Storage location properties table is not available. Run the database migrations.');
-        }
-
         $zpoolName = trim($zpoolName);
         $datasetName = trim($datasetName);
         if ($zpoolName === '' || $datasetName === '') {
@@ -494,10 +490,6 @@ final class SwallowtailStorageService
 
     public function setLocationExcluded(string $storageBaseLocation, bool $isExcluded): void
     {
-        if (!InterfaceDB::tableExists('storage_location_properties')) {
-            throw new RuntimeException('Storage location properties table is not available. Run the database migrations.');
-        }
-
         $storageBaseLocation = $this->normaliseAbsoluteDirectory($storageBaseLocation);
         $existingId = InterfaceDB::fetchColumn(
             'SELECT id FROM storage_location_properties WHERE storage_base_location = :storage_base_location LIMIT 1',
@@ -1027,14 +1019,6 @@ final class SwallowtailStorageService
 
     private function locationProperties(): array
     {
-        try {
-            if (!InterfaceDB::tableExists('storage_location_properties')) {
-                return [];
-            }
-        } catch (Throwable) {
-            return [];
-        }
-
         $properties = [];
         foreach (InterfaceDB::fetchAll('SELECT storage_base_location, is_excluded, is_zfs, dataset_name FROM storage_location_properties') as $row) {
             $isZfs = !empty($row['is_zfs']);

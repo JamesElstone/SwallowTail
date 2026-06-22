@@ -55,10 +55,6 @@ final class _browse_galleryCard extends CardBaseFramework
         $userId = $this->currentUserId();
         $service = new SwallowtailPhotoUiService();
 
-        if (!$service->schemaAvailable()) {
-            return '<div class="panel-soft warn">SwallowTail photo tables are not available. Run the database migrations.</div>';
-        }
-
         $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), 24);
         $rows = (array)($gallery['rows'] ?? []);
 

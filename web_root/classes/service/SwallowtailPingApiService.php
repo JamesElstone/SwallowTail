@@ -24,13 +24,6 @@ final class SwallowtailPingApiService
             ], 405);
         }
 
-        if (!$this->photoLibraryService->schemaAvailable()) {
-            return ResponseFramework::json([
-                'success' => false,
-                'errors' => ['SwallowTail photo database tables are not available. Run the database migrations.'],
-            ], 503);
-        }
-
         if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
             return $this->photoLibraryService->uploadTokenLockoutResponse();
         }

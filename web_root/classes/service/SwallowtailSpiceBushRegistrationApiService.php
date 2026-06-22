@@ -23,10 +23,6 @@ final class SwallowtailSpiceBushRegistrationApiService
             return $this->error(['SpiceBush registration API expects POST.'], 405);
         }
 
-        if (!$this->photoLibraryService->schemaAvailable()) {
-            return $this->error(['SwallowTail photo database tables are not available. Run the database migrations.'], 503);
-        }
-
         $username = trim((string)$request->post('username', (string)$request->post('email_address', '')));
         $password = (string)$request->post('password', '');
         $deviceId = $this->deviceIdFromRequest($request);

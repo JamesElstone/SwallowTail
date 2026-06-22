@@ -11,36 +11,10 @@ final class SwallowtailPhotoLibraryService
 {
     public const QUICK_HASH_ALGORITHM = 'fnv1a64';
 
-    public function schemaAvailable(): bool
-    {
-        foreach ($this->requiredTables() as $table) {
-            if (!InterfaceDB::tableExists($table)) {
-                return false;
-            }
-        }
-
-        return InterfaceDB::columnExists('photos', 'original_quick_hash');
-    }
-
-    public function requiredTables(): array
-    {
-        return [
-            'events',
-            'photos',
-            'event_photos',
-            'event_permissions',
-            'api_upload_tokens',
-            'api_upload_token_cidrs',
-            'photo_audit',
-            'photo_conversion_jobs',
-            'storage_location_properties',
-        ];
-    }
-
     public function photoByChecksum(string $sha256): ?array
     {
         $sha256 = strtolower(trim($sha256));
-        if ($sha256 === '' || !InterfaceDB::tableExists('photos')) {
+        if ($sha256 === '') {
             return null;
         }
 
@@ -55,9 +29,6 @@ final class SwallowtailPhotoLibraryService
     public function photoByQuickHash(string $quickHash, ?int $bytes = null): ?array
     {
         $quickHash = $this->normaliseQuickHash($quickHash);
-        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::columnExists('photos', 'original_quick_hash')) {
-            return null;
-        }
 
         $where = 'original_quick_hash = :quick_hash';
         $params = ['quick_hash' => $quickHash];
@@ -91,7 +62,7 @@ final class SwallowtailPhotoLibraryService
 
     public function photoById(int $photoId): ?array
     {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photos')) {
+        if ($photoId <= 0) {
             return null;
         }
 
@@ -105,8 +76,6 @@ final class SwallowtailPhotoLibraryService
 
     public function recordRawUpload(array $upload): array
     {
-        $this->assertSchemaAvailable();
-
         $sha256 = strtolower(trim((string)($upload['sha256'] ?? '')));
         $quickHash = $this->normaliseOptionalQuickHash($upload['quick_hash'] ?? null);
         $existing = $this->photoByChecksum($sha256);
@@ -212,8 +181,6 @@ final class SwallowtailPhotoLibraryService
 
     public function createEvent(string $name, ?int $createdByUserId = null, string $slug = ''): array
     {
-        $this->assertSchemaAvailable();
-
         $name = trim($name);
         if ($name === '') {
             throw new InvalidArgumentException('Event name must not be empty.');
@@ -247,8 +214,6 @@ final class SwallowtailPhotoLibraryService
 
     public function assignPhotoToEvent(int $photoId, int $eventId, ?int $assignedByUserId = null): void
     {
-        $this->assertSchemaAvailable();
-
         InterfaceDB::prepareExecute(
             "INSERT INTO event_photos (
                 event_id,
@@ -271,8 +236,6 @@ final class SwallowtailPhotoLibraryService
 
     public function grantEventPermission(int $eventId, int $userId, array $permissions, ?int $grantedByUserId = null): void
     {
-        $this->assertSchemaAvailable();
-
         InterfaceDB::prepareExecute(
             "INSERT INTO event_permissions (
                 event_id,
@@ -313,8 +276,6 @@ final class SwallowtailPhotoLibraryService
         array $cidrs = []
     ): array
     {
-        $this->assertSchemaAvailable();
-
         $token = 'stup_' . rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         $tokenHash = hash('sha256', $token);
         $normalisedCidrs = $this->normaliseCidrs($cidrs);
@@ -356,13 +317,6 @@ final class SwallowtailPhotoLibraryService
 
     public function authenticateUploadToken(string $token, ?string $remoteAddress = null): ?array
     {
-        if (
-            !InterfaceDB::tableExists('api_upload_tokens')
-            || !InterfaceDB::tableExists('api_upload_token_cidrs')
-        ) {
-            return null;
-        }
-
         $token = trim($token);
         if ($token === '') {
             return null;
@@ -412,13 +366,6 @@ final class SwallowtailPhotoLibraryService
 
     public function explainUploadTokenAuthenticationFailure(string $token, ?string $remoteAddress = null): string
     {
-        if (
-            !InterfaceDB::tableExists('api_upload_tokens')
-            || !InterfaceDB::tableExists('api_upload_token_cidrs')
-        ) {
-            return 'SwallowTail photo database tables are not available. Run the database migrations.';
-        }
-
         $token = trim($token);
         if ($token === '') {
             return 'Bearer upload token was missing.';
@@ -534,21 +481,19 @@ final class SwallowtailPhotoLibraryService
         $actionType = trim($actionType) !== '' ? trim($actionType) : 'upload_token_used';
         $this->recordUploadTokenActivity($affectedUserId, $actionType, $success, $reason, $metadata, $auditDetails);
 
-        if (InterfaceDB::tableExists('user_account_audit') && InterfaceDB::tableExists('users')) {
-            (new UserHistoryStore())->recordAccountAudit(
-                $affectedUserId,
-                null,
-                $actionType,
-                $reason,
-                $auditDetails,
-                $metadata
-            );
-        }
+        (new UserHistoryStore())->recordAccountAudit(
+            $affectedUserId,
+            null,
+            $actionType,
+            $reason,
+            $auditDetails,
+            $metadata
+        );
     }
 
     public function markUploadTokenUsed(int $tokenId): void
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
+        if ($tokenId <= 0) {
             return;
         }
 
@@ -560,10 +505,6 @@ final class SwallowtailPhotoLibraryService
 
     private function uploadTokenForAudit(string $token): ?array
     {
-        if (!InterfaceDB::tableExists('api_upload_tokens')) {
-            return null;
-        }
-
         $token = trim($token);
         if ($token === '') {
             return null;
@@ -677,25 +618,13 @@ final class SwallowtailPhotoLibraryService
 
     public function listUploadTokens(): array
     {
-        if (!InterfaceDB::tableExists('api_upload_tokens')) {
-            return [];
-        }
-
-        $hasUsersTable = InterfaceDB::tableExists('users');
-        $userJoinSql = $hasUsersTable
-            ? "LEFT JOIN users created_by_user
-                ON created_by_user.id = token.created_by_user_id"
-            : '';
-        $userColumnsSql = $hasUsersTable
-            ? ', created_by_user.display_name AS created_by_user_display_name,
-                 created_by_user.email_address AS created_by_user_email_address'
-            : ", '' AS created_by_user_display_name,
-                 '' AS created_by_user_email_address";
-
         $rows = InterfaceDB::fetchAll(
-            "SELECT token.*" . $userColumnsSql . "
+            "SELECT token.*,
+                    created_by_user.display_name AS created_by_user_display_name,
+                    created_by_user.email_address AS created_by_user_email_address
              FROM api_upload_tokens token
-             " . $userJoinSql . "
+             LEFT JOIN users created_by_user
+                ON created_by_user.id = token.created_by_user_id
              ORDER BY token.is_active DESC, token.created_at DESC, token.id DESC"
         );
         $tokens = [];
@@ -717,7 +646,7 @@ final class SwallowtailPhotoLibraryService
 
     public function uploadTokenById(int $tokenId): ?array
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
+        if ($tokenId <= 0) {
             return null;
         }
 
@@ -738,8 +667,6 @@ final class SwallowtailPhotoLibraryService
 
     public function updateUploadToken(int $tokenId, array $changes): array
     {
-        $this->assertSchemaAvailable();
-
         if ($tokenId <= 0 || $this->uploadTokenById($tokenId) === null) {
             throw new InvalidArgumentException('Upload token was not found.');
         }
@@ -784,16 +711,14 @@ final class SwallowtailPhotoLibraryService
 
     public function deleteUploadToken(int $tokenId): void
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_tokens')) {
+        if ($tokenId <= 0) {
             return;
         }
 
-        if (InterfaceDB::tableExists('api_upload_token_cidrs')) {
-            InterfaceDB::prepareExecute(
-                'DELETE FROM api_upload_token_cidrs WHERE token_id = :token_id',
-                ['token_id' => $tokenId]
-            );
-        }
+        InterfaceDB::prepareExecute(
+            'DELETE FROM api_upload_token_cidrs WHERE token_id = :token_id',
+            ['token_id' => $tokenId]
+        );
 
         InterfaceDB::prepareExecute(
             'DELETE FROM api_upload_tokens WHERE id = :id',
@@ -862,7 +787,7 @@ final class SwallowtailPhotoLibraryService
         array $details = [],
         array $requestMetadata = []
     ): void {
-        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_audit')) {
+        if ($photoId <= 0) {
             return;
         }
 
@@ -900,13 +825,6 @@ final class SwallowtailPhotoLibraryService
                 'user_agent' => $this->normaliseOptionalString($requestMetadata['user_agent'] ?? null, 1000),
             ]
         );
-    }
-
-    private function assertSchemaAvailable(): void
-    {
-        if (!$this->schemaAvailable()) {
-            throw new RuntimeException('SwallowTail photo database tables are not available. Run the database migrations.');
-        }
     }
 
     private function nullablePositiveInt(mixed $value): ?int
@@ -999,7 +917,7 @@ final class SwallowtailPhotoLibraryService
 
     private function cidrsForUploadToken(int $tokenId): array
     {
-        if ($tokenId <= 0 || !InterfaceDB::tableExists('api_upload_token_cidrs')) {
+        if ($tokenId <= 0) {
             return [];
         }
 
