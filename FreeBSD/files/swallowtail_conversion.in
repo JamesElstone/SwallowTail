@@ -25,7 +25,7 @@ load_rc_config "$name"
 : ${swallowtail_conversion_app_config:="${swallowtail_conversion_project_root}/secure/app.php"}
 : ${swallowtail_conversion_worker_user:="swallowtail"}
 : ${swallowtail_conversion_worker_group:="swallowtail"}
-: ${swallowtail_conversion_log:="/var/log/swallowtail_conversion.log"}
+: ${swallowtail_conversion_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_conversion.log"}
 : ${swallowtail_conversion_redis_host:="127.0.0.1"}
 : ${swallowtail_conversion_redis_port:="6379"}
 : ${swallowtail_conversion_redis_urgent_queue:="swallowtail:conversion:urgent"}
@@ -91,6 +91,9 @@ swallowtail_conversion_precmd()
 		"${swallowtail_conversion_rawtherapee_home}" \
 		"${swallowtail_conversion_work_dir}" \
 		/var/run/swallowtail
+	install -d -o "${swallowtail_conversion_worker_user}" \
+		-g "${swallowtail_conversion_worker_group}" -m 2775 \
+		"$(dirname "${swallowtail_conversion_log}")"
 
 	if [ ! -f "${swallowtail_conversion_log}" ]; then
 		install -o "${swallowtail_conversion_worker_user}" \

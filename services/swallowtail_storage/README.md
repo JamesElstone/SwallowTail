@@ -26,7 +26,7 @@ installed rc.d script. Override these with `sysrc` if needed:
 sysrc swallowtail_storage_php=/usr/local/bin/php
 sysrc swallowtail_storage_interval_seconds=300
 sysrc swallowtail_storage_migration_limit=10
-sysrc swallowtail_storage_log=/var/log/swallowtail_storage.log
+sysrc swallowtail_storage_log=/var/log/swallowtail/swallowtail_storage.log
 sysrc swallowtail_storage_log_level=INFO
 ```
 

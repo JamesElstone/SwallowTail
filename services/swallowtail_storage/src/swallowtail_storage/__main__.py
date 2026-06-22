@@ -24,7 +24,7 @@ def main() -> int:
     parser.add_argument("--php", default=_env("PHP", "/usr/local/bin/php"), help="PHP executable")
     parser.add_argument("--interval-seconds", type=int, default=_env_int("INTERVAL_SECONDS", 300), help="Storage refresh interval")
     parser.add_argument("--migration-limit", type=int, default=_env_int("MIGRATION_LIMIT", 10), help="Migration jobs to process per refresh")
-    parser.add_argument("--log-file", default=_env("LOG_FILE", "/var/log/swallowtail_storage.log"), help="Log file path")
+    parser.add_argument("--log-file", default=_env("LOG_FILE", "/var/log/swallowtail/swallowtail_storage.log"), help="Log file path")
     parser.add_argument("--log-level", default=_env("LOG_LEVEL", "INFO"), help="Log level")
     parser.add_argument("--once", action="store_true", help="Refresh storage cache and process migrations once")
     parser.add_argument("--status", action="store_true", help="Print storage cache status and exit")

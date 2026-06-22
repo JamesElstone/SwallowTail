@@ -332,8 +332,8 @@ ServerName swallowtail.example.invalid:80
         SetHandler "proxy:fcgi://127.0.0.1:9001"
     </FilesMatch>
 
-    ErrorLog "/var/log/httpd-swallowtail-error.log"
-    CustomLog "/var/log/httpd-swallowtail-access.log" combined
+    ErrorLog "/var/log/swallowtail/httpd-swallowtail-error.log"
+    CustomLog "/var/log/swallowtail/httpd-swallowtail-access.log" combined
 </VirtualHost>
 EOF
 ```

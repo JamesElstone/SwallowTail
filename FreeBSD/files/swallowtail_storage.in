@@ -25,7 +25,7 @@ load_rc_config "$name"
 : ${swallowtail_storage_worker_group:="swallowtail"}
 : ${swallowtail_storage_interval_seconds:="300"}
 : ${swallowtail_storage_migration_limit:="10"}
-: ${swallowtail_storage_log:="/var/log/swallowtail_storage.log"}
+: ${swallowtail_storage_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_storage.log"}
 : ${swallowtail_storage_log_level:="INFO"}
 pidfile="/var/run/swallowtail/storage.pid"
 procname="${swallowtail_storage_python}"
@@ -54,6 +54,9 @@ swallowtail_storage_precmd()
 	install -d -o "${swallowtail_storage_worker_user}" \
 		-g "${swallowtail_storage_worker_group}" -m 0750 \
 		/var/run/swallowtail
+	install -d -o "${swallowtail_storage_worker_user}" \
+		-g "${swallowtail_storage_worker_group}" -m 2775 \
+		"$(dirname "${swallowtail_storage_log}")"
 
 	if [ ! -f "${swallowtail_storage_log}" ]; then
 		install -o "${swallowtail_storage_worker_user}" \

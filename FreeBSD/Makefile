@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	25
+PORTREVISION=	26
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -45,6 +45,7 @@ SWALLOWTAIL_HTTP_PORT?=	80
 SWALLOWTAIL_PHP_FPM_LISTEN?=	127.0.0.1:9001
 SWALLOWTAIL_UPLOAD_MAX_FILESIZE?=	128M
 SWALLOWTAIL_POST_MAX_SIZE?=	128M
+SWALLOWTAIL_LOG_DIR?=	/var/log/swallowtail
 
 PROJECT_DIRS=	db_schema \
 		services \
@@ -64,6 +65,7 @@ SUB_FILES=	pkg-install \
 SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 		PYTHON_CMD=${PYTHON_CMD} \
 		SWALLOWTAIL_ROOT=${SWALLOWTAIL_ROOT} \
+		SWALLOWTAIL_LOG_DIR=${SWALLOWTAIL_LOG_DIR} \
 		SWALLOWTAIL_SERVER_NAME=${SWALLOWTAIL_SERVER_NAME} \
 		SWALLOWTAIL_HTTP_PORT=${SWALLOWTAIL_HTTP_PORT} \
 		SWALLOWTAIL_PHP_FPM_LISTEN=${SWALLOWTAIL_PHP_FPM_LISTEN} \
@@ -74,6 +76,7 @@ SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 
 PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
 		etc/newsyslog.conf.d/swallowtail_conversion.conf \
+		etc/newsyslog.conf.d/swallowtail_apache.conf \
 		etc/php/ext-30-pdo_odbc.ini \
 		etc/php-fpm.d/swallowtail.conf \
 		etc/apache24/Includes/swallowtail.conf.sample \
@@ -102,6 +105,7 @@ do-install:
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/apache24/Includes
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php-fpm.d
+	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_LOG_DIR}/trace
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}
 	${MKDIR} ${STAGEDIR}${SWALLOWTAIL_ROOT}/secure
 	for dir in ${PROJECT_DIRS}; do \
@@ -133,6 +137,8 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_storage.conf
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_conversion.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_conversion.conf
+	${INSTALL_DATA} ${FILESDIR}/swallowtail_apache.newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_apache.conf
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php
 	${INSTALL_DATA} ${FILESDIR}/ext-30-pdo_odbc.ini \
 		${STAGEDIR}${PREFIX}/etc/php/ext-30-pdo_odbc.ini
@@ -179,6 +185,8 @@ post-install:
 	${ECHO_CMD} "@dir(www,swallowtail,2750) swallowtail/secure" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,www,0770) swallowtail/tmp" >> ${TMPPLIST}
 	${ECHO_CMD} "@dir(www,www,0770) swallowtail/web_root/tests/tmp" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(swallowtail,swallowtail,2775) ${SWALLOWTAIL_LOG_DIR}/trace" >> ${TMPPLIST}
+	${ECHO_CMD} "@dir(swallowtail,swallowtail,2775) ${SWALLOWTAIL_LOG_DIR}" >> ${TMPPLIST}
 	cd ${STAGEDIR}${PREFIX} && ${FIND} swallowtail -type d | ${SORT} -r | \
 		${SED} -e '/^swallowtail\/secure$$/d' \
 		-e '/^swallowtail\/tmp$$/d' \

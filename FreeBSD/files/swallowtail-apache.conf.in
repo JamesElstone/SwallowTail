@@ -20,7 +20,7 @@ ServerName %%SWALLOWTAIL_SERVER_NAME%%:%%SWALLOWTAIL_HTTP_PORT%%
         SetHandler "proxy:fcgi://%%SWALLOWTAIL_PHP_FPM_LISTEN%%"
     </FilesMatch>
 
-    ErrorLog "/var/log/httpd-swallowtail-error.log"
+    ErrorLog "%%SWALLOWTAIL_LOG_DIR%%/httpd-swallowtail-error.log"
     LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\" duration_us=%D forwarded_for=\"%{X-Forwarded-For}i\" forwarded_proto=\"%{X-Forwarded-Proto}i\"" swallowtail_combined_timed
-    CustomLog "/var/log/httpd-swallowtail-access.log" swallowtail_combined_timed
+    CustomLog "%%SWALLOWTAIL_LOG_DIR%%/httpd-swallowtail-access.log" swallowtail_combined_timed
 </VirtualHost>

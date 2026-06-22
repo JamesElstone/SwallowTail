@@ -96,7 +96,7 @@ def default_config() -> AppConfig:
             temp_retention_hours=24,
         ),
         logging=LoggingConfig(
-            file="/var/log/swallowtail_conversion.log",
+            file="/var/log/swallowtail/swallowtail_conversion.log",
             level="INFO",
         ),
     )

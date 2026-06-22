@@ -26,6 +26,7 @@ files/swallowtail_conversion.in
 files/swallowtail_conversion.newsyslog.conf
 files/swallowtail_storage.in
 files/swallowtail_storage.newsyslog.conf
+files/swallowtail_apache.newsyslog.conf
 files/swallowtail-apache.conf.in
 files/swallowtail-php-fpm.conf.in
 '

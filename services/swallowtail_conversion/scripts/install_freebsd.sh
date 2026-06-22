@@ -7,7 +7,8 @@ PHP=${PHP:-/usr/local/bin/php}
 PREFIX=${PREFIX:-/usr/local}
 RC_FILE="/usr/local/etc/rc.d/swallowtail_conversion"
 STALE_RUNNER_FILE="/usr/local/libexec/swallowtail_conversion_worker"
-LOG_FILE="/var/log/swallowtail_conversion.log"
+LOG_DIR="/var/log/swallowtail"
+LOG_FILE="${LOG_DIR}/swallowtail_conversion.log"
 NEWSYSLOG_FILE="/usr/local/etc/newsyslog.conf.d/swallowtail_conversion.conf"
 TEMPLATE_DIR="${PROJECT_ROOT}/FreeBSD/files"
 APP_CONFIG_FILE="${PROJECT_ROOT}/secure/app.php"
@@ -24,8 +25,9 @@ if ! pw usershow swallowtail >/dev/null 2>&1; then
 fi
 
 mkdir -p /var/db/swallowtail_conversion /var/tmp/swallowtail_conversion
-mkdir -p /var/run/swallowtail
-chown -R swallowtail:swallowtail /var/db/swallowtail_conversion /var/tmp/swallowtail_conversion /var/run/swallowtail
+mkdir -p /var/run/swallowtail "${LOG_DIR}/trace"
+chown -R swallowtail:swallowtail /var/db/swallowtail_conversion /var/tmp/swallowtail_conversion /var/run/swallowtail "${LOG_DIR}"
+chmod 2775 "${LOG_DIR}" "${LOG_DIR}/trace"
 touch "${LOG_FILE}"
 chown swallowtail:swallowtail "${LOG_FILE}"
 chmod 0640 "${LOG_FILE}"
@@ -36,6 +38,7 @@ sed \
   -e "s#%%PYTHON_CMD%%#${PYTHON}#g" \
   -e "s#%%PHP_CMD%%#${PHP}#g" \
   -e "s#%%PREFIX%%#${PREFIX}#g" \
+  -e "s#%%SWALLOWTAIL_LOG_DIR%%#${LOG_DIR}#g" \
   "${TEMPLATE_DIR}/swallowtail_conversion.in" \
   > "${RC_FILE}"
 chmod 0555 "${RC_FILE}"
