@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailRawUploadApiService
 {
+    private const RAW_UPLOAD_READ_CHUNK_BYTES = 64 * 1024;
     private const RAW_UPLOAD_WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
 
     public function __construct(
@@ -407,6 +408,7 @@ final class SwallowtailRawUploadApiService
         $bytesCopied = 0;
         $writeBuffer = '';
         $writeBufferBytes = 0;
+        $previousChunkSize = null;
         $readMs = 0;
         $hashMs = 0;
         $writeMs = 0;
@@ -415,9 +417,16 @@ final class SwallowtailRawUploadApiService
         $emptyReadCount = 0;
         $maxChunkBytes = 0;
         $hash = hash_init('sha256');
+        if (function_exists('stream_set_chunk_size')) {
+            try {
+                $previousChunkSize = @stream_set_chunk_size($source, self::RAW_UPLOAD_READ_CHUNK_BYTES);
+            } catch (ValueError) {
+                $previousChunkSize = null;
+            }
+        }
         while (!feof($source)) {
             $readStartedAt = microtime(true);
-            $chunk = fread($source, 1024 * 1024);
+            $chunk = fread($source, self::RAW_UPLOAD_READ_CHUNK_BYTES);
             $readMs += $this->elapsedMs($readStartedAt);
             $readCount++;
             if ($chunk === false) {
@@ -490,6 +499,8 @@ final class SwallowtailRawUploadApiService
             'path' => $temporaryFile,
             'bytes' => $bytesCopied,
             'sha256' => $sha256,
+            'requested_read_chunk_bytes' => self::RAW_UPLOAD_READ_CHUNK_BYTES,
+            'previous_stream_chunk_bytes' => is_int($previousChunkSize) ? $previousChunkSize : null,
             'read_ms' => $readMs,
             'hash_ms' => $hashMs,
             'write_ms' => $writeMs,
