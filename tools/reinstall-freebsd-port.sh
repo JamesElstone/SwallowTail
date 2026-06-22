@@ -30,6 +30,7 @@ files/swallowtail-apache.conf.in
 files/swallowtail-php-fpm.conf.in
 '
 SERVICE_NAMES='swallowtail_conversion swallowtail_storage'
+WEB_SERVICE_NAMES='php_fpm apache24'
 
 case "$PORT_DIR" in
 	""|"/")
@@ -113,6 +114,10 @@ echo "==> make in $PORT_DIR"
 
 echo "==> make reinstall in $PORT_DIR"
 ( cd "$PORT_DIR" && make reinstall )
+
+for service_name in $WEB_SERVICE_NAMES; do
+	restart_or_start_service "$service_name"
+done
 
 for service_name in $SERVICE_NAMES; do
 	restart_or_start_service "$service_name"
