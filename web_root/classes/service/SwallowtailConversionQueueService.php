@@ -11,6 +11,11 @@ final class SwallowtailConversionQueueService
 {
     private const IMAGE_TYPES = ['embedded', 'filtered', 'thumbnail', 'original'];
     private const PRIORITIES = ['low', 'normal', 'high'];
+    private const ENQUEUE_ATTEMPTS = 3;
+
+    public function __construct(private readonly ?Closure $redisNotifier = null)
+    {
+    }
 
     public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
     {
@@ -30,41 +35,54 @@ final class SwallowtailConversionQueueService
             return [];
         }
 
-        $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
-        if ($photo === null) {
-            return [];
-        }
+        $notifyAfterCommit = !InterfaceDB::inTransaction();
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $priority): array {
+            $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
+            if ($photo === null) {
+                return [];
+            }
 
-        $storage = new SwallowtailStorageService();
-        $sha256 = (string)($photo['original_sha256'] ?? '');
-        $base = (string)($photo['storage_base_location'] ?? '');
-        $sourcePath = $storage->imagePath($base, $sha256, 'source');
-        $jobs = [];
+            $storage = new SwallowtailStorageService();
+            $sha256 = (string)($photo['original_sha256'] ?? '');
+            $base = (string)($photo['storage_base_location'] ?? '');
+            $sourcePath = $storage->imagePath($base, $sha256, 'source');
+            $jobs = [];
 
-        foreach ([
-            'embedded' => 'high',
-            'thumbnail' => $priority,
-            'original' => 'normal',
-        ] as $imageType => $jobPriority) {
-            $outputPath = $storage->imagePath($base, $sha256, $imageType);
-            $dimensions = $this->dimensionsForImageType($imageType);
-            $jobId = $this->enqueueImageJob(
-                $photoId,
-                $imageType,
-                $sourcePath,
-                $outputPath,
-                null,
-                1,
-                $jobPriority,
-                null,
-                $dimensions['width'],
-                $dimensions['height']
-            );
+            foreach ([
+                'embedded' => 'high',
+                'thumbnail' => $priority,
+                'original' => 'normal',
+            ] as $imageType => $jobPriority) {
+                $outputPath = $storage->imagePath($base, $sha256, $imageType);
+                $dimensions = $this->dimensionsForImageType($imageType);
+                $jobId = $this->enqueueImageJob(
+                    $photoId,
+                    $imageType,
+                    $sourcePath,
+                    $outputPath,
+                    null,
+                    1,
+                    $jobPriority,
+                    null,
+                    $dimensions['width'],
+                    $dimensions['height']
+                );
 
-            $jobs[$imageType] = [
-                'job_id' => $jobId,
-                'status' => $jobId !== null ? 'queued' : 'not_queued',
-            ];
+                $jobs[$imageType] = [
+                    'job_id' => $jobId,
+                    'image_type' => $imageType,
+                    'priority' => $jobPriority,
+                    'status' => $jobId !== null ? 'queued' : 'not_queued',
+                ];
+            }
+
+            $this->setPhotoConversionState($photoId, 'processing');
+
+            return $jobs;
+        });
+
+        if ($notifyAfterCommit) {
+            $this->notifyRedisForJobs($jobs);
         }
 
         return $jobs;
@@ -78,45 +96,67 @@ final class SwallowtailConversionQueueService
         ?int $outputWidth = null,
         ?int $outputHeight = null
     ): ?int {
-        $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
-        if ($photo === null) {
-            return null;
+        $notifyAfterCommit = !InterfaceDB::inTransaction();
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $profilePath, $profileVersion, $requestedByUserId, $outputWidth, $outputHeight): array {
+            $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
+            if ($photo === null) {
+                return [];
+            }
+
+            $storage = new SwallowtailStorageService();
+            $sha256 = (string)($photo['original_sha256'] ?? '');
+            $base = (string)($photo['storage_base_location'] ?? '');
+            $filteredPath = $storage->imagePath($base, $sha256, 'filtered');
+            $sourcePath = $storage->imagePath($base, $sha256, 'source');
+
+            $filteredJobId = $this->enqueueImageJob(
+                $photoId,
+                'filtered',
+                $sourcePath,
+                $filteredPath,
+                $profilePath,
+                $profileVersion,
+                'high',
+                $requestedByUserId,
+                $outputWidth,
+                $outputHeight
+            );
+
+            $thumb = $this->dimensionsForImageType('thumbnail');
+            $thumbnailJobId = $this->enqueueImageJob(
+                $photoId,
+                'thumbnail',
+                $sourcePath,
+                $storage->imagePath($base, $sha256, 'thumbnail'),
+                $profilePath,
+                $profileVersion,
+                'normal',
+                $requestedByUserId,
+                $thumb['width'],
+                $thumb['height']
+            );
+
+            $this->setPhotoConversionState($photoId, 'processing');
+
+            return [
+                'filtered' => [
+                    'job_id' => $filteredJobId,
+                    'image_type' => 'filtered',
+                    'priority' => 'high',
+                ],
+                'thumbnail' => [
+                    'job_id' => $thumbnailJobId,
+                    'image_type' => 'thumbnail',
+                    'priority' => 'normal',
+                ],
+            ];
+        });
+
+        if ($notifyAfterCommit) {
+            $this->notifyRedisForJobs($jobs);
         }
 
-        $storage = new SwallowtailStorageService();
-        $sha256 = (string)($photo['original_sha256'] ?? '');
-        $base = (string)($photo['storage_base_location'] ?? '');
-        $filteredPath = $storage->imagePath($base, $sha256, 'filtered');
-        $sourcePath = $storage->imagePath($base, $sha256, 'source');
-
-        $filteredJobId = $this->enqueueImageJob(
-            $photoId,
-            'filtered',
-            $sourcePath,
-            $filteredPath,
-            $profilePath,
-            $profileVersion,
-            'high',
-            $requestedByUserId,
-            $outputWidth,
-            $outputHeight
-        );
-
-        $thumb = $this->dimensionsForImageType('thumbnail');
-        $this->enqueueImageJob(
-            $photoId,
-            'thumbnail',
-            $sourcePath,
-            $storage->imagePath($base, $sha256, 'thumbnail'),
-            $profilePath,
-            $profileVersion,
-            'normal',
-            $requestedByUserId,
-            $thumb['width'],
-            $thumb['height']
-        );
-
-        return $filteredJobId;
+        return $this->nullablePositiveInt($jobs['filtered']['job_id'] ?? null);
     }
 
     public function enqueueImageJob(
@@ -162,7 +202,6 @@ final class SwallowtailConversionQueueService
         );
 
         if ($existingJobId !== false && $existingJobId !== null) {
-            $this->setPhotoConversionState($photoId, 'processing');
             return (int)$existingJobId;
         }
 
@@ -209,8 +248,6 @@ final class SwallowtailConversionQueueService
         );
 
         $jobId = $this->lastInsertId();
-        $this->setPhotoConversionState($photoId, 'processing');
-        $this->notifyRedis($jobId, $imageType, $priority);
 
         return $jobId;
     }
@@ -244,6 +281,12 @@ final class SwallowtailConversionQueueService
 
     private function notifyRedis(int $jobId, string $imageType, string $priority): void
     {
+        if ($this->redisNotifier instanceof Closure) {
+            ($this->redisNotifier)($jobId, $imageType, $priority);
+
+            return;
+        }
+
         $host = trim((string)AppConfigurationStore::get('swallowtail.redis.host', '127.0.0.1'));
         $port = (int)AppConfigurationStore::get('swallowtail.redis.port', 6379);
         $urgentQueue = trim((string)AppConfigurationStore::get('swallowtail.redis.urgent_queue', 'swallowtail:conversion:urgent'));
@@ -274,16 +317,62 @@ final class SwallowtailConversionQueueService
             fwrite($socket, $command);
             fgets($socket);
             fclose($socket);
-
-            InterfaceDB::prepareExecute(
-                'UPDATE photo_conversion_jobs SET redis_notified_at = CURRENT_TIMESTAMP WHERE id = :id',
-                ['id' => $jobId]
-            );
         } catch (Throwable) {
             if (isset($socket) && is_resource($socket)) {
                 fclose($socket);
             }
         }
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $jobs
+     */
+    private function notifyRedisForJobs(array $jobs): void
+    {
+        foreach ($jobs as $job) {
+            $jobId = $this->nullablePositiveInt($job['job_id'] ?? null);
+            if ($jobId === null) {
+                continue;
+            }
+
+            $this->notifyRedis(
+                $jobId,
+                (string)($job['image_type'] ?? ''),
+                (string)($job['priority'] ?? 'normal')
+            );
+        }
+    }
+
+    private function withRetryableQueueTransaction(callable $callback): array
+    {
+        if (InterfaceDB::inTransaction()) {
+            return InterfaceDB::transaction($callback);
+        }
+
+        for ($attempt = 1; $attempt <= self::ENQUEUE_ATTEMPTS; $attempt++) {
+            try {
+                return InterfaceDB::transaction($callback);
+            } catch (RuntimeException $exception) {
+                if ($attempt >= self::ENQUEUE_ATTEMPTS || !$this->isRetryableDatabaseConcurrencyException($exception)) {
+                    throw $exception;
+                }
+
+                usleep(50000 * $attempt);
+            }
+        }
+
+        return [];
+    }
+
+    private function isRetryableDatabaseConcurrencyException(RuntimeException $exception): bool
+    {
+        $code = (string)$exception->getCode();
+        $message = $exception->getMessage();
+
+        return $code === '40001'
+            || str_contains($message, 'SQLSTATE[40001]')
+            || str_contains($message, 'Deadlock found when trying to get lock')
+            || str_contains($message, 'SQLExecute[1213]');
     }
 
     private function setPhotoConversionState(int $photoId, string $state): void

@@ -2783,4 +2783,43 @@ $harness->check(SwallowtailConversionQueueService::class, 'does not require Redi
     @unlink($source);
 });
 
+$harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only after RAW conversion batch is durable', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $notificationCount = 0;
+    $queue = new SwallowtailConversionQueueService(static function (int $jobId) use ($harness, &$notificationCount): void {
+        $notificationCount++;
+        $job = InterfaceDB::fetchOne(
+            'SELECT photo_id FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
+            ['id' => $jobId]
+        );
+        $harness->assertTrue(is_array($job));
+        $photoId = (int)($job['photo_id'] ?? 0);
+        $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', $photoId));
+        $photo = InterfaceDB::fetchOne(
+            'SELECT conversion_state FROM photos WHERE id = :id LIMIT 1',
+            ['id' => $photoId]
+        );
+        $harness->assertSame('processing', (string)($photo['conversion_state'] ?? ''));
+    });
+
+    $ingest = new SwallowtailPhotoIngestService(
+        new SwallowtailStorageService(),
+        new SwallowtailPhotoLibraryService(),
+        $queue
+    );
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(3, $notificationCount);
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+
+    @unlink($source);
+});
 
