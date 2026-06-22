@@ -13,6 +13,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
+
 typedef struct SbUrl {
     int secure;
     char host[256];
@@ -308,15 +310,21 @@ int sb_http_upload_file(
     SbConnection conn;
     FILE *file = NULL;
     struct stat st;
-    unsigned char buffer[65536];
+    unsigned char *buffer = NULL;
     size_t got;
     int ok = 0;
 
     if (stat(path, &st) != 0 || !parse_url(url_text, &url)) {
         return 0;
     }
+    memset(&conn, 0, sizeof(conn));
+    buffer = (unsigned char *)malloc(RAW_UPLOAD_BUFFER_BYTES);
+    if (buffer == NULL) {
+        return 0;
+    }
     file = fopen(path, "rb");
     if (file == NULL) {
+        free(buffer);
         return 0;
     }
     if (!connection_open(&url, &conn)) {
@@ -327,7 +335,7 @@ int sb_http_upload_file(
     if (!send_request_headers(&conn, "POST", &url, headers, (unsigned long long)st.st_size)) {
         goto done;
     }
-    while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+    while ((got = fread(buffer, 1, RAW_UPLOAD_BUFFER_BYTES, file)) > 0) {
         if (!connection_write(&conn, buffer, got)) {
             goto done;
         }
@@ -338,6 +346,7 @@ int sb_http_upload_file(
     ok = read_response(&conn, status, response, response_size);
 done:
     fclose(file);
+    free(buffer);
     connection_close(&conn);
     return ok;
 }

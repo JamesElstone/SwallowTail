@@ -47,6 +47,7 @@
 #define RAW_UPLOAD_OK 1
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
 #define RAW_UPLOAD_FAILED_PERMANENT 3
+#define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
 
 typedef unsigned __int64 U64;
 
@@ -1788,12 +1789,16 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     INTERNET_BUFFERSA buffers;
     DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
     DWORD got, wrote, status = 0, statusSize = sizeof(DWORD), used = 0;
+    DWORD uploadStart = 0, headerMs = 0, bodyMs = 0, endRequestMs = 0, responseMs = 0;
+    DWORD phaseStart = 0, writeRemaining = 0;
     BOOL readOk;
-    BYTE buf[65536];
+    BYTE *buf = NULL;
+    BYTE *writePtr = NULL;
     int ok = 0;
     int duplicate = 0;
     int result = RAW_UPLOAD_RETRY;
     DWORD photoId = 0;
+    U64 throughputMbpsX10 = 0;
     const char *slash = strrchr(path, '\\');
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
     SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
@@ -1819,6 +1824,13 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken));
 
+    buf = (BYTE *)HeapAlloc(GetProcessHeap(), 0, RAW_UPLOAD_BUFFER_BYTES);
+    if (!buf) {
+        LogMessage("Raw upload failed before send: could not allocate upload buffer bytes=%lu error=%lu",
+            (unsigned long)RAW_UPLOAD_BUFFER_BYTES,
+            GetLastError());
+        goto done;
+    }
     file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         LogMessage("Raw upload failed before send: could not open file path=%s error=%lu", path, GetLastError());
@@ -1844,6 +1856,8 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     buffers.lpcszHeader = headers;
     buffers.dwHeadersLength = lstrlenA(headers);
     buffers.dwBufferTotal = (DWORD)sizeBytes;
+    uploadStart = GetTickCount();
+    phaseStart = uploadStart;
     if (!HttpSendRequestExA(request, &buffers, NULL, 0, 0)) {
         LogMessage("Raw upload failed before body send: HttpSendRequestEx error=%lu header_length=%u total_bytes=%I64u",
             GetLastError(),
@@ -1851,25 +1865,52 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
             sizeBytes);
         goto done;
     }
-    while ((readOk = ReadFile(file, buf, sizeof(buf), &got, NULL)) && got > 0) {
-        if (!InternetWriteFile(request, buf, got, &wrote) || wrote != got) {
-            LogMessage("Raw upload failed during body send: wrote=%lu expected=%lu error=%lu", wrote, got, GetLastError());
-            goto done;
+    headerMs = GetTickCount() - phaseStart;
+    phaseStart = GetTickCount();
+    while ((readOk = ReadFile(file, buf, RAW_UPLOAD_BUFFER_BYTES, &got, NULL)) && got > 0) {
+        writePtr = buf;
+        writeRemaining = got;
+        while (writeRemaining > 0) {
+            wrote = 0;
+            if (!InternetWriteFile(request, writePtr, writeRemaining, &wrote) || wrote == 0) {
+                LogMessage("Raw upload failed during body send: wrote=%lu expected_remaining=%lu error=%lu", wrote, writeRemaining, GetLastError());
+                goto done;
+            }
+            writePtr += wrote;
+            writeRemaining -= wrote;
         }
     }
+    bodyMs = GetTickCount() - phaseStart;
     if (!readOk) {
         LogMessage("Raw upload failed during file read: path=%s error=%lu", path, GetLastError());
         goto done;
     }
+    phaseStart = GetTickCount();
     if (!HttpEndRequestA(request, NULL, 0, 0)) {
         LogMessage("Raw upload failed after body send: HttpEndRequest error=%lu", GetLastError());
         goto done;
     }
+    endRequestMs = GetTickCount() - phaseStart;
+    phaseStart = GetTickCount();
     HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &statusSize, NULL);
     while (used + 1 < sizeof(response) && InternetReadFile(request, response + used, sizeof(response) - used - 1, &got) && got > 0) {
         used += got;
         response[used] = '\0';
     }
+    responseMs = GetTickCount() - phaseStart;
+    if (bodyMs > 0) {
+        throughputMbpsX10 = (sizeBytes * 80ULL) / ((U64)bodyMs * 1000ULL);
+    }
+    LogMessage("Raw upload timings: filename=%s bytes=%I64u buffer_bytes=%lu send_headers_ms=%lu body_ms=%lu end_request_ms=%lu response_ms=%lu throughput_mbps=%I64u.%I64u",
+        filename,
+        sizeBytes,
+        (unsigned long)RAW_UPLOAD_BUFFER_BYTES,
+        headerMs,
+        bodyMs,
+        endRequestMs,
+        responseMs,
+        throughputMbpsX10 / 10ULL,
+        throughputMbpsX10 % 10ULL);
     ok = (status == 200 || status == 201) && strstr(response, "\"success\":true") != NULL;
     if (ok) {
         JsonDwordValue(response, "photo_id", &photoId);
@@ -1897,6 +1938,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     }
 done:
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+    if (buf) HeapFree(GetProcessHeap(), 0, buf);
     if (request) InternetCloseHandle(request);
     if (connect) InternetCloseHandle(connect);
     if (internet) InternetCloseHandle(internet);
