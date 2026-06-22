@@ -20,6 +20,7 @@ final class SwallowtailRawUploadApiService
 
     public function handleUpload(RequestFramework $request, array $files = [], string $inputStream = 'php://input'): ResponseFramework
     {
+        $requestStartedAt = microtime(true);
 
         if ($request->method() !== 'POST') {
 
@@ -66,33 +67,72 @@ final class SwallowtailRawUploadApiService
         $verifiedSha256 = null;
         $upload = $this->uploadFileFromRequest($files);
         $maxRawBytes = null;
+        $rawBodyUpload = $upload === null;
+        $rawTiming = [
+            'mode' => $rawBodyUpload ? 'raw_body' : 'multipart',
+            'content_length' => $this->contentLength($request),
+            'filename' => $this->filenameFromRequest($request),
+            'status' => 'started',
+        ];
 
         if ($upload === null) {
             $maxRawBytes = $this->photoIngestService->maxRawBodyBytes();
             if ($this->contentLengthExceedsRawLimit($request, $maxRawBytes)) {
+                $rawTiming['status'] = 'rejected_limit_content_length';
+                $rawTiming['max_raw_bytes'] = $maxRawBytes;
+                $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                $this->logRawUploadTiming($rawTiming);
 
                 return $this->rawUploadLimitResponse();
             }
 
             try {
                 $expectedSha256 = $this->sha256FromRequest($request);
+                $rawTiming['sha256'] = $expectedSha256;
+                $rawTiming['max_raw_bytes'] = $maxRawBytes;
+                $stagingStartedAt = microtime(true);
                 $staging = $this->storageService->rawUploadStagingFileForChecksum(
                     $expectedSha256,
                     $this->contentLength($request) ?? 0
                 );
+                $rawTiming['staging_ms'] = $this->elapsedMs($stagingStartedAt);
                 $temporaryFile = (string)$staging['temporary_path'];
                 $temporaryStorageBaseLocation = (string)$staging['storage_base_location'];
+                $rawTiming['storage_base_location'] = $temporaryStorageBaseLocation;
+                $copyStartedAt = microtime(true);
                 $copied = $this->copyInputStreamToTemporaryFile($inputStream, $temporaryFile, $maxRawBytes, $expectedSha256);
+                $rawTiming['copy_total_ms'] = $this->elapsedMs($copyStartedAt);
+                $rawTiming['copy_bytes'] = (int)$copied['bytes'];
+                $rawTiming['copy_read_ms'] = (int)$copied['read_ms'];
+                $rawTiming['copy_hash_ms'] = (int)$copied['hash_ms'];
+                $rawTiming['copy_write_ms'] = (int)$copied['write_ms'];
+                $rawTiming['copy_read_count'] = (int)$copied['read_count'];
+                $rawTiming['copy_write_count'] = (int)$copied['write_count'];
+                $rawTiming['copy_empty_read_count'] = (int)$copied['empty_read_count'];
+                $rawTiming['copy_max_chunk_bytes'] = (int)$copied['max_chunk_bytes'];
                 $verifiedSha256 = (string)$copied['sha256'];
             } catch (LengthException) {
+                $rawTiming['status'] = 'rejected_limit_stream';
+                $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                $this->logRawUploadTiming($rawTiming);
 
                 return $this->rawUploadLimitResponse();
             } catch (InvalidArgumentException | UnexpectedValueException $exception) {
+                $rawTiming['status'] = 'rejected_validation';
+                $rawTiming['error'] = $exception->getMessage();
+                $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                $this->logRawUploadTiming($rawTiming);
+
                 return ResponseFramework::json([
                     'success' => false,
                     'errors' => [$exception->getMessage()],
                 ], 400);
             } catch (RuntimeException $exception) {
+                $rawTiming['status'] = 'failed_storage';
+                $rawTiming['error'] = $exception->getMessage();
+                $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                $this->logRawUploadTiming($rawTiming);
+
                 return ResponseFramework::json([
                     'success' => false,
                     'errors' => [$this->publicStorageError($exception)],
@@ -118,6 +158,7 @@ final class SwallowtailRawUploadApiService
             $originalFilename = (string)($upload['name'] ?? $this->filenameFromRequest($request));
 
             try {
+                $ingestStartedAt = microtime(true);
                 $result = $this->photoIngestService->ingestLocalRawFile(
                     (string)$upload['tmp_name'],
                     $originalFilename,
@@ -136,7 +177,17 @@ final class SwallowtailRawUploadApiService
                         ],
                     ]
                 );
+                if ($rawBodyUpload) {
+                    $rawTiming['ingest_ms'] = $this->elapsedMs($ingestStartedAt);
+                }
             } catch (RuntimeException $exception) {
+                if ($rawBodyUpload) {
+                    $rawTiming['status'] = 'failed_ingest_runtime';
+                    $rawTiming['error'] = $exception->getMessage();
+                    $rawTiming['ingest_ms'] = $this->elapsedMs($ingestStartedAt ?? $requestStartedAt);
+                    $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                    $this->logRawUploadTiming($rawTiming);
+                }
                 $reason = $this->publicStorageError($exception);
                 $diagnostics = $this->storageFailureDiagnostics($exception, $request, $uploadToken, $upload, $originalFilename, $maxRawBytes, $temporaryFile !== null);
                 $this->photoLibraryService->recordUploadTokenUsage(
@@ -158,6 +209,12 @@ final class SwallowtailRawUploadApiService
             }
 
             if (empty($result['success'])) {
+                if ($rawBodyUpload) {
+                    $rawTiming['status'] = 'failed_ingest_validation';
+                    $rawTiming['error'] = (string)(($result['errors'] ?? [])[0] ?? 'RAW upload validation failed.');
+                    $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                    $this->logRawUploadTiming($rawTiming);
+                }
                 $this->photoLibraryService->recordUploadTokenUsage(
                     $uploadToken,
                     $token,
@@ -192,6 +249,15 @@ final class SwallowtailRawUploadApiService
                     'duplicate' => !empty($result['duplicate']),
                 ]
             );
+
+            if ($rawBodyUpload) {
+                $rawTiming['status'] = !empty($result['duplicate']) ? 'success_duplicate' : 'success_created';
+                $rawTiming['photo_id'] = (int)($result['photo_id'] ?? 0);
+                $rawTiming['duplicate'] = !empty($result['duplicate']);
+                $rawTiming['http_status'] = !empty($result['duplicate']) ? 200 : 201;
+                $rawTiming['total_ms'] = $this->elapsedMs($requestStartedAt);
+                $this->logRawUploadTiming($rawTiming);
+            }
 
             return ResponseFramework::json($this->publicUploadResponse($result), !empty($result['duplicate']) ? 200 : 201);
         } finally {
@@ -280,6 +346,21 @@ final class SwallowtailRawUploadApiService
         return is_file($path) ? max(0, (int)filesize($path)) : null;
     }
 
+    private function elapsedMs(float $startedAt): int
+    {
+        return max(0, (int)round((microtime(true) - $startedAt) * 1000));
+    }
+
+    private function logRawUploadTiming(array $details): void
+    {
+        $payload = json_encode($details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($payload === false) {
+            $payload = '{"status":"json_encode_failed"}';
+        }
+
+        error_log('SwallowTail raw upload timing: ' . $payload);
+    }
+
     private function contentLength(RequestFramework $request): ?int
     {
         $value = trim((string)$request->server('CONTENT_LENGTH', (string)$request->header('Content-Length', '')));
@@ -326,9 +407,19 @@ final class SwallowtailRawUploadApiService
         $bytesCopied = 0;
         $writeBuffer = '';
         $writeBufferBytes = 0;
+        $readMs = 0;
+        $hashMs = 0;
+        $writeMs = 0;
+        $readCount = 0;
+        $writeCount = 0;
+        $emptyReadCount = 0;
+        $maxChunkBytes = 0;
         $hash = hash_init('sha256');
         while (!feof($source)) {
+            $readStartedAt = microtime(true);
             $chunk = fread($source, 1024 * 1024);
+            $readMs += $this->elapsedMs($readStartedAt);
+            $readCount++;
             if ($chunk === false) {
                 fclose($source);
                 fclose($destination);
@@ -337,11 +428,15 @@ final class SwallowtailRawUploadApiService
             }
 
             if ($chunk === '') {
+                $emptyReadCount++;
                 continue;
             }
 
             $chunkBytes = strlen($chunk);
+            $maxChunkBytes = max($maxChunkBytes, $chunkBytes);
+            $hashStartedAt = microtime(true);
             hash_update($hash, $chunk);
+            $hashMs += $this->elapsedMs($hashStartedAt);
 
             if ($bytesCopied + $chunkBytes > $maxBytes) {
                 fclose($source);
@@ -352,24 +447,34 @@ final class SwallowtailRawUploadApiService
 
             $writeBuffer .= $chunk;
             $writeBufferBytes += $chunkBytes;
-            if ($writeBufferBytes >= self::RAW_UPLOAD_WRITE_BUFFER_BYTES && !$this->writeRawBodyBuffer($destination, $writeBuffer)) {
-                fclose($source);
-                fclose($destination);
-                @unlink($temporaryFile);
-                throw new RuntimeException('Unable to write RAW upload stream.');
-            }
             if ($writeBufferBytes >= self::RAW_UPLOAD_WRITE_BUFFER_BYTES) {
+                $writeStartedAt = microtime(true);
+                $writeOk = $this->writeRawBodyBuffer($destination, $writeBuffer);
+                $writeMs += $this->elapsedMs($writeStartedAt);
+                $writeCount++;
+                if (!$writeOk) {
+                    fclose($source);
+                    fclose($destination);
+                    @unlink($temporaryFile);
+                    throw new RuntimeException('Unable to write RAW upload stream.');
+                }
                 $writeBuffer = '';
                 $writeBufferBytes = 0;
             }
 
             $bytesCopied += $chunkBytes;
         }
-        if ($writeBufferBytes > 0 && !$this->writeRawBodyBuffer($destination, $writeBuffer)) {
-            fclose($source);
-            fclose($destination);
-            @unlink($temporaryFile);
-            throw new RuntimeException('Unable to write RAW upload stream.');
+        if ($writeBufferBytes > 0) {
+            $writeStartedAt = microtime(true);
+            $writeOk = $this->writeRawBodyBuffer($destination, $writeBuffer);
+            $writeMs += $this->elapsedMs($writeStartedAt);
+            $writeCount++;
+            if (!$writeOk) {
+                fclose($source);
+                fclose($destination);
+                @unlink($temporaryFile);
+                throw new RuntimeException('Unable to write RAW upload stream.');
+            }
         }
 
         fclose($source);
@@ -385,6 +490,13 @@ final class SwallowtailRawUploadApiService
             'path' => $temporaryFile,
             'bytes' => $bytesCopied,
             'sha256' => $sha256,
+            'read_ms' => $readMs,
+            'hash_ms' => $hashMs,
+            'write_ms' => $writeMs,
+            'read_count' => $readCount,
+            'write_count' => $writeCount,
+            'empty_read_count' => $emptyReadCount,
+            'max_chunk_bytes' => $maxChunkBytes,
         ];
     }
 
