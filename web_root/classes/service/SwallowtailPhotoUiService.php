@@ -175,15 +175,21 @@ final class SwallowtailPhotoUiService
 
         $params = ['photo_id' => $photoId];
         $where = 'photo.id = :photo_id AND ' . $this->accessWhereSql($userId, $params, 'photo');
+        $this->tracePhotoAssetRowLookupStart();
         $photo = InterfaceDB::fetchOne('SELECT * FROM photos photo WHERE ' . $where . ' LIMIT 1', $params);
         if (!is_array($photo)) {
+            $this->tracePhotoAssetRowNotFound();
             return null;
         }
+        $this->tracePhotoAssetRowLookupComplete();
 
+        $this->tracePhotoAssetImageInfoStart();
         $info = $this->storageService->imageInfo($photo, $type);
         if ($info === null) {
+            $this->tracePhotoAssetImageInfoMissing();
             return null;
         }
+        $this->tracePhotoAssetImageInfoComplete();
 
         return [
             'path' => (string)$info['absolute_path'],
@@ -209,6 +215,36 @@ final class SwallowtailPhotoUiService
             'SELECT 1 FROM photos photo WHERE ' . $where . ' LIMIT 1',
             $params
         );
+    }
+
+    private function tracePhotoAssetRowLookupStart(): void
+    {
+        logDetails();
+    }
+
+    private function tracePhotoAssetRowLookupComplete(): void
+    {
+        logDetails();
+    }
+
+    private function tracePhotoAssetRowNotFound(): void
+    {
+        logDetails();
+    }
+
+    private function tracePhotoAssetImageInfoStart(): void
+    {
+        logDetails();
+    }
+
+    private function tracePhotoAssetImageInfoComplete(): void
+    {
+        logDetails();
+    }
+
+    private function tracePhotoAssetImageInfoMissing(): void
+    {
+        logDetails();
     }
 
     private function photoImages(array $photo): array
