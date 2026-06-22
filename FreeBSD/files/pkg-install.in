@@ -1,5 +1,28 @@
 #!/bin/sh
 
+SWALLOWTAIL_ROOT="%%SWALLOWTAIL_ROOT%%"
+PHP_CMD="%%PHP_CMD%%"
+
+swallowtail_run_migrations()
+{
+	config_path="${SWALLOWTAIL_ROOT}/secure/app.php"
+	migrate_script="${SWALLOWTAIL_ROOT}/tools/bin/migrateDb.sh"
+	php_dir=${PHP_CMD%/*}
+
+	if [ ! -f "${config_path}" ]; then
+		echo "SwallowTail database migrations skipped: ${config_path} is not configured yet."
+		return 0
+	fi
+
+	if [ ! -x "${migrate_script}" ]; then
+		echo "SwallowTail database migrations skipped: ${migrate_script} is not executable."
+		return 0
+	fi
+
+	echo "Running SwallowTail database migrations."
+	PATH="${php_dir}:${PATH}" "${migrate_script}"
+}
+
 case "$2" in
 PRE-INSTALL)
 	if ! pw groupshow swallowtail >/dev/null 2>&1; then
@@ -18,5 +41,8 @@ PRE-INSTALL)
 		&& ! id -nG www | tr ' ' '\n' | grep -Fx swallowtail >/dev/null 2>&1; then
 		pw groupmod swallowtail -m www
 	fi
+	;;
+POST-INSTALL)
+	swallowtail_run_migrations
 	;;
 esac
