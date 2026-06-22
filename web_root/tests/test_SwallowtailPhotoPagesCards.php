@@ -378,6 +378,21 @@ $harness->check(_gallery::class, 'browse gallery thumbnails link to picture view
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
 
+$harness->check(_gallery::class, 'browse gallery status icons match upload icon stroke', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'statusIconSvg');
+    $method->setAccessible(true);
+
+    foreach (['ready', 'processing', 'failed'] as $status) {
+        $html = (string)$method->invoke($card, $status);
+
+        $harness->assertTrue(str_contains($html, 'viewBox="0 0 24 24"'));
+        $harness->assertTrue(str_contains($html, 'stroke-width="1.8"'));
+        $harness->assertTrue(str_contains($html, 'stroke-linecap="round"'));
+        $harness->assertTrue(str_contains($html, 'stroke-linejoin="round"'));
+    }
+});
+
 $harness->check(_gallery::class, 'browse gallery falls back to embedded previews', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'photoTile');

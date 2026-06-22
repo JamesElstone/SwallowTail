@@ -133,10 +133,12 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function statusIconSvg(string $status): string
     {
+        $attributes = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+
         return match ($status) {
-            'ready' => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1"/><path d="M10 18.5 L16 24.5 L27 12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            'failed' => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1"/><path d="M12 12 L24 24 M24 12 L12 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            default => '<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false"><path d="M8 25 A15 15 0 0 1 11 9" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/><path d="M28 11 A15 15 0 0 1 25 27" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/><path d="M28 11 L33 12 L30 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 25 L3 24 L6 20" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            'ready' => '<svg ' . $attributes . '><circle cx="12" cy="12" r="9"/><path d="m7 12.5 3.25 3.25L17 8.75"/></svg>',
+            'failed' => '<svg ' . $attributes . '><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/><path d="m15.5 8.5-7 7"/></svg>',
+            default => '<svg ' . $attributes . '><path d="M18.5 8.5A8 8 0 0 0 5.8 7"/><path d="M18.5 8.5h-4"/><path d="M18.5 8.5v-4"/><path d="M5.5 15.5A8 8 0 0 0 18.2 17"/><path d="M5.5 15.5h4"/><path d="M5.5 15.5v4"/></svg>',
         };
     }
 
