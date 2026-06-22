@@ -23,6 +23,7 @@ return array (
   'trace' =>
   array (
     'log_path' => '',
+    'raw_upload_timing' => false,
   ),
   'navigation' => 
   array (

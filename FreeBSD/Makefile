@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	27
+PORTREVISION=	28
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net

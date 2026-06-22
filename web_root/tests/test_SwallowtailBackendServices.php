@@ -2325,6 +2325,66 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     @unlink($source);
 });
 
+$harness->check(SwallowtailRawUploadApiService::class, 'keeps raw upload timing out of PHP error logs by default', function () use ($harness): void {
+    $method = new ReflectionMethod(SwallowtailRawUploadApiService::class, 'logRawUploadTiming');
+    $service = new SwallowtailRawUploadApiService();
+    $logFile = swallowtail_backend_test_temp_file('swallowtail-raw-upload-timing-log-');
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    $originalLogErrors = ini_get('log_errors');
+    $originalErrorLog = ini_get('error_log');
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        AppConfigurationStore::set('trace.raw_upload_timing', false);
+        ini_set('log_errors', '1');
+        ini_set('error_log', $logFile);
+
+        $method->invoke($service, ['status' => 'test_disabled']);
+
+        $harness->assertSame('', (string)file_get_contents($logFile));
+    } finally {
+        ini_set('log_errors', is_string($originalLogErrors) ? $originalLogErrors : '');
+        ini_set('error_log', is_string($originalErrorLog) ? $originalErrorLog : '');
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        @unlink($logFile);
+    }
+});
+
+$harness->check(SwallowtailRawUploadApiService::class, 'writes raw upload timing to PHP error logs when trace option is enabled', function () use ($harness): void {
+    $method = new ReflectionMethod(SwallowtailRawUploadApiService::class, 'logRawUploadTiming');
+    $service = new SwallowtailRawUploadApiService();
+    $logFile = swallowtail_backend_test_temp_file('swallowtail-raw-upload-timing-log-');
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    $originalLogErrors = ini_get('log_errors');
+    $originalErrorLog = ini_get('error_log');
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        AppConfigurationStore::set('trace.raw_upload_timing', true);
+        ini_set('log_errors', '1');
+        ini_set('error_log', $logFile);
+
+        $method->invoke($service, ['status' => 'test_enabled']);
+
+        $content = (string)file_get_contents($logFile);
+        $harness->assertTrue(str_contains($content, 'SwallowTail raw upload timing: '));
+        $harness->assertTrue(str_contains($content, '"status":"test_enabled"'));
+    } finally {
+        ini_set('log_errors', is_string($originalLogErrors) ? $originalLogErrors : '');
+        ini_set('error_log', is_string($originalErrorLog) ? $originalErrorLog : '');
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        @unlink($logFile);
+    }
+});
+
 $harness->check(SwallowtailRawUploadApiService::class, 'raw body uploads ignore multipart upload_max_filesize limit', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
@@ -2822,4 +2882,3 @@ $harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only a
 
     @unlink($source);
 });
-

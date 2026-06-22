@@ -258,6 +258,7 @@ final class AppConfigurationStore
             ],
             'trace' => [
                 'log_path' => '',
+                'raw_upload_timing' => false,
             ],
             'navigation' => [
                 'default_order' => [],

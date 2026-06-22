@@ -354,6 +354,10 @@ final class SwallowtailRawUploadApiService
 
     private function logRawUploadTiming(array $details): void
     {
+        if (!AppConfigurationStore::get('trace.raw_upload_timing', false)) {
+            return;
+        }
+
         $payload = json_encode($details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if ($payload === false) {
             $payload = '{"status":"json_encode_failed"}';

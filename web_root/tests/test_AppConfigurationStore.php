@@ -65,6 +65,7 @@ $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled b
     $defaults = $method->invoke(null);
 
     $harness->assertSame('', $defaults['trace']['log_path'] ?? null);
+    $harness->assertSame(false, $defaults['trace']['raw_upload_timing'] ?? null);
 });
 
 $harness->check(AppConfigurationStore::class, 'updates database connection settings without dropping other db options', function () use ($harness): void {
