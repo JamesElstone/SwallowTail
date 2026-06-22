@@ -442,15 +442,8 @@ final class SwallowtailStorageService
     {
         logDetails();
 
-        $base = trim((string)($photo['storage_base_location'] ?? ''));
-        $checksum = trim((string)($photo['original_sha256'] ?? ''));
-        if ($base === '' || $checksum === '') {
-            return null;
-        }
-
-        try {
-            $path = $this->imagePath($base, $checksum, $imageType);
-        } catch (Throwable) {
+        $path = $this->imagePathForPhoto($photo, $imageType);
+        if ($path === null) {
             return null;
         }
 
@@ -470,6 +463,33 @@ final class SwallowtailStorageService
             'modified_at' => (int)filemtime($path),
             'image_type' => $imageType,
         ];
+    }
+
+    public function imageReady(array $photo, string $imageType): bool
+    {
+        logDetails();
+
+        $path = $this->imagePathForPhoto($photo, $imageType);
+        if ($path === null || !is_file($path) || !is_readable($path)) {
+            return false;
+        }
+
+        return (int)filesize($path) > 0;
+    }
+
+    private function imagePathForPhoto(array $photo, string $imageType): ?string
+    {
+        $base = trim((string)($photo['storage_base_location'] ?? ''));
+        $checksum = trim((string)($photo['original_sha256'] ?? ''));
+        if ($base === '' || $checksum === '') {
+            return null;
+        }
+
+        try {
+            return $this->imagePath($base, $checksum, $imageType);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     public function setLocationExcluded(string $storageBaseLocation, bool $isExcluded): void

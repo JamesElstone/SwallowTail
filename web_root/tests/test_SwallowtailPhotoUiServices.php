@@ -529,6 +529,64 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame(3, (int)$clampedGallery['pagination']['last_item']);
 });
 
+$harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery preview readiness', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $storage = new SwallowtailStorageService();
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+    $photos = [
+        ['thumb.CR2', str_repeat('e', 64), ['thumbnail', 'embedded']],
+        ['embedded.CR2', str_repeat('f', 64), ['embedded']],
+        ['pending.CR2', str_repeat('9', 64), []],
+    ];
+
+    foreach ($photos as $photo) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location,
+                uploaded_by_user_id,
+                uploaded_via
+            ) VALUES (
+                :filename,
+                'cr2',
+                100,
+                :sha256,
+                :storage_base_location,
+                902,
+                'web'
+            )",
+            [
+                'filename' => $photo[0],
+                'sha256' => $photo[1],
+                'storage_base_location' => $baseLocation,
+            ]
+        );
+
+        foreach ($photo[2] as $imageType) {
+            $absolute = $storage->imagePath($baseLocation, (string)$photo[1], (string)$imageType);
+            $storage->ensureDirectoryForPath($absolute);
+            file_put_contents($absolute, "\xff\xd8\xff\xd9", LOCK_EX);
+        }
+    }
+
+    $rowsByName = [];
+    foreach ((new SwallowtailPhotoUiService())->accessiblePhotos(902)['rows'] as $row) {
+        $rowsByName[(string)($row['original_filename'] ?? '')] = $row;
+    }
+
+    $harness->assertSame(true, (bool)$rowsByName['thumb.CR2']['thumbnail_ready']);
+    $harness->assertSame(false, (bool)$rowsByName['thumb.CR2']['embedded_ready']);
+    $harness->assertSame(false, array_key_exists('original_ready', $rowsByName['thumb.CR2']));
+    $harness->assertSame(false, array_key_exists('filtered_ready', $rowsByName['thumb.CR2']));
+    $harness->assertSame(false, (bool)$rowsByName['embedded.CR2']['thumbnail_ready']);
+    $harness->assertSame(true, (bool)$rowsByName['embedded.CR2']['embedded_ready']);
+    $harness->assertSame(false, (bool)$rowsByName['pending.CR2']['thumbnail_ready']);
+    $harness->assertSame(false, (bool)$rowsByName['pending.CR2']['embedded_ready']);
+});
+
 $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized private image assets', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
     $storage = new SwallowtailStorageService();

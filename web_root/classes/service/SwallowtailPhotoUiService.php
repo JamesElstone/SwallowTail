@@ -77,7 +77,7 @@ final class SwallowtailPhotoUiService
         );
 
         return [
-            'rows' => array_map([$this, 'normalisePhotoRow'], $rows),
+            'rows' => array_map([$this, 'normaliseGalleryPhotoRow'], $rows),
             'pagination' => $pagination,
         ];
     }
@@ -268,6 +268,20 @@ final class SwallowtailPhotoUiService
         } catch (Throwable) {
             return false;
         }
+    }
+
+    private function normaliseGalleryPhotoRow(array $row): array
+    {
+        logDetails();
+
+        $row['id'] = (int)($row['id'] ?? 0);
+        $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
+        $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
+        $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
+        $row['thumbnail_ready'] = $this->storageService->imageReady($row, 'thumbnail');
+        $row['embedded_ready'] = !$row['thumbnail_ready'] && $this->storageService->imageReady($row, 'embedded');
+
+        return $row;
     }
 
     private function normalisePhotoRow(array $row): array
