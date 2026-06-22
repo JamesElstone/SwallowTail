@@ -14,10 +14,13 @@ final class SwallowtailPhotoUiService
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
     ) {
+        logDetails();
     }
 
     public function schemaAvailable(): bool
     {
+        logDetails();
+
         foreach ([
             'photos',
             'event_photos',
@@ -35,6 +38,8 @@ final class SwallowtailPhotoUiService
 
     public function accessiblePhotos(int $userId, int $page = 1, int $perPage = 24): array
     {
+        logDetails();
+
         if ($userId <= 0 || !$this->schemaAvailable()) {
             return $this->emptyPaginated($page, $perPage);
         }
@@ -79,6 +84,8 @@ final class SwallowtailPhotoUiService
 
     public function recentUploads(int $userId, int $limit = 8): array
     {
+        logDetails();
+
         if ($userId <= 0 || !$this->schemaAvailable()) {
             return [];
         }
@@ -116,6 +123,8 @@ final class SwallowtailPhotoUiService
 
     public function photoDetails(int $photoId, int $userId): ?array
     {
+        logDetails();
+
         if ($photoId <= 0 || $userId <= 0 || !$this->schemaAvailable()) {
             return null;
         }
@@ -153,6 +162,8 @@ final class SwallowtailPhotoUiService
 
     public function photoAsset(int $photoId, int $userId, string $type): ?array
     {
+        logDetails();
+
         if ($photoId <= 0 || $userId <= 0 || !$this->schemaAvailable()) {
             return null;
         }
@@ -185,6 +196,8 @@ final class SwallowtailPhotoUiService
 
     public function userCanViewPhoto(int $photoId, int $userId): bool
     {
+        logDetails();
+
         if ($photoId <= 0 || $userId <= 0 || !$this->schemaAvailable()) {
             return false;
         }
@@ -200,6 +213,8 @@ final class SwallowtailPhotoUiService
 
     private function photoImages(array $photo): array
     {
+        logDetails();
+
         $images = [];
         foreach (self::IMAGE_TYPES as $type) {
             $info = $this->storageService->imageInfo($photo, $type);
@@ -218,6 +233,8 @@ final class SwallowtailPhotoUiService
 
     private function accessWhereSql(int $userId, array &$params, string $photoAlias): string
     {
+        logDetails();
+
         if ($this->isAdminUser($userId)) {
             return $photoAlias . ".upload_state = 'uploaded'";
         }
@@ -244,6 +261,8 @@ final class SwallowtailPhotoUiService
 
     private function isAdminUser(int $userId): bool
     {
+        logDetails();
+
         try {
             return (new RoleAssignmentService())->isAdminUser($userId);
         } catch (Throwable) {
@@ -253,6 +272,8 @@ final class SwallowtailPhotoUiService
 
     private function normalisePhotoRow(array $row): array
     {
+        logDetails();
+
         $row['id'] = (int)($row['id'] ?? 0);
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
@@ -269,6 +290,8 @@ final class SwallowtailPhotoUiService
 
     private function pagination(int $total, int $page, int $perPage): array
     {
+        logDetails();
+
         $totalPages = max(1, (int)ceil($total / $perPage));
         $page = min(max(1, $page), $totalPages);
 
@@ -286,6 +309,8 @@ final class SwallowtailPhotoUiService
 
     private function emptyPaginated(int $page, int $perPage): array
     {
+        logDetails();
+
         return [
             'rows' => [],
             'pagination' => $this->pagination(0, max(1, $page), max(1, $perPage)),
@@ -294,6 +319,8 @@ final class SwallowtailPhotoUiService
 
     private function nullableInt(mixed $value): ?int
     {
+        logDetails();
+
         if ($value === null || $value === '') {
             return null;
         }
@@ -303,6 +330,8 @@ final class SwallowtailPhotoUiService
 
     private function assetFilename(string $originalFilename, string $type): string
     {
+        logDetails();
+
         $basename = pathinfo($originalFilename, PATHINFO_FILENAME);
         $basename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string)$basename) ?? 'photo';
         $basename = trim($basename, '.-');

@@ -235,6 +235,8 @@ final class SwallowtailStorageService
 
     public function imagePath(string $storageBaseLocation, string $checksum, string $imageType): string
     {
+        logDetails();
+
         $checksum = $this->normaliseChecksum($checksum);
         $imageType = $this->normaliseImageType($imageType);
         $extension = match ($imageType) {
@@ -438,6 +440,8 @@ final class SwallowtailStorageService
 
     public function imageInfo(array $photo, string $imageType): ?array
     {
+        logDetails();
+
         $base = trim((string)($photo['storage_base_location'] ?? ''));
         $checksum = trim((string)($photo['original_sha256'] ?? ''));
         if ($base === '' || $checksum === '') {

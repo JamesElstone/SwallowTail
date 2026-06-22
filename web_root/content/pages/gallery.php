@@ -11,21 +11,29 @@ final class _gallery extends PageContextFramework
 {
     public function id(): string
     {
+        logDetails();
+
         return 'gallery';
     }
 
     public function title(): string
     {
+        logDetails();
+
         return 'Gallery';
     }
 
     public function subtitle(): string
     {
+        logDetails();
+
         return 'Browse accessible SwallowTail thumbnails.';
     }
 
     public function cards(): array
     {
+        logDetails();
+
         return [
             'browse_gallery',
         ];
@@ -36,6 +44,8 @@ final class _gallery extends PageContextFramework
         PageServiceFramework $services,
         ActionResultFramework $actionResult
     ): array {
+        logDetails();
+
         return [
             'page' => [
                 'page_id' => 'gallery',
