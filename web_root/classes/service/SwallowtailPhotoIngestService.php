@@ -104,25 +104,19 @@ final class SwallowtailPhotoIngestService
             ];
         }
 
-        $this->traceSha256Start();
-        $sha256 = hash_file('sha256', $sourcePath);
-        if (!is_string($sha256) || $sha256 === '') {
-            throw new RuntimeException('Unable to checksum RAW file.');
+        $sha256 = $this->contextSha256($context);
+        if ($sha256 === null) {
+            $this->traceSha256Start();
+            $sha256 = hash_file('sha256', $sourcePath);
+            if (!is_string($sha256) || $sha256 === '') {
+                throw new RuntimeException('Unable to checksum RAW file.');
+            }
+            $sha256 = strtolower($sha256);
+            $this->traceSha256Complete();
         }
-        $sha256 = strtolower($sha256);
-        $this->traceSha256Complete();
 
         $this->traceQuickHashResolveStart();
         $quickHash = $this->contextQuickHash($context);
-        if ($quickHash === null) {
-            $this->traceQuickHashCalculateStart();
-            $quickHash = hash_file(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM, $sourcePath);
-            if (!is_string($quickHash) || $quickHash === '') {
-                throw new RuntimeException('Unable to quick-checksum RAW file.');
-            }
-            $quickHash = strtolower($quickHash);
-            $this->traceQuickHashCalculateComplete();
-        }
         $this->traceQuickHashResolveComplete();
 
         $expectedSha256 = strtolower(trim((string)($context['expected_sha256'] ?? '')));
@@ -168,7 +162,8 @@ final class SwallowtailPhotoIngestService
         $stored = $this->storageService->storeSourceFile(
             $sourcePath,
             $sha256,
-            !empty($context['move_source'])
+            !empty($context['move_source']),
+            $this->contextStorageBaseLocation($context)
         );
         $this->traceStorageStoreComplete();
 
@@ -296,6 +291,23 @@ final class SwallowtailPhotoIngestService
         }
 
         return preg_match('/^[a-f0-9]{16}$/', $quickHash) === 1 ? $quickHash : null;
+    }
+
+    private function contextSha256(array $context): ?string
+    {
+        $sha256 = strtolower(trim((string)($context['sha256'] ?? '')));
+        if ($sha256 === '') {
+            return null;
+        }
+
+        return preg_match('/^[a-f0-9]{64}$/', $sha256) === 1 ? $sha256 : null;
+    }
+
+    private function contextStorageBaseLocation(array $context): ?string
+    {
+        $location = trim((string)($context['storage_base_location'] ?? ''));
+
+        return $location !== '' ? $location : null;
     }
 
     private function traceIngestLocalRawFileStart(): void

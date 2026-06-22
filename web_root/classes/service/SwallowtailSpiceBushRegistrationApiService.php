@@ -98,7 +98,7 @@ final class SwallowtailSpiceBushRegistrationApiService
             'ping_url' => $apiUrl . '/ping.php',
             'raw_upload_url' => $apiUrl . '/raw-upload.php',
             'quick_checksum_url' => $apiUrl . '/quick-checksum.php',
-            'quick_checksum_algorithm' => SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM,
+            'quick_checksum_algorithm' => SwallowtailPhotoLibraryService::UPLOAD_CHECKSUM_ALGORITHM,
             'cidrs' => (array)$token['cidrs'],
         ]);
     }

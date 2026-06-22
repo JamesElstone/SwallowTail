@@ -9,12 +9,13 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoLibraryService
 {
-    public const QUICK_HASH_ALGORITHM = 'fnv1a64';
+    public const UPLOAD_CHECKSUM_ALGORITHM = 'sha256';
 
     public function photoByChecksum(string $sha256): ?array
     {
-        $sha256 = strtolower(trim($sha256));
-        if ($sha256 === '') {
+        try {
+            $sha256 = $this->normaliseSha256($sha256);
+        } catch (InvalidArgumentException) {
             return null;
         }
 
@@ -24,6 +25,16 @@ final class SwallowtailPhotoLibraryService
         );
 
         return is_array($row) ? $row : null;
+    }
+
+    public function photoByChecksumAndSize(string $sha256, ?int $bytes = null): ?array
+    {
+        $photo = $this->photoByChecksum($sha256);
+        if ($photo === null || $bytes === null) {
+            return $photo;
+        }
+
+        return (int)($photo['original_bytes'] ?? 0) === $bytes ? $photo : null;
     }
 
     public function photoByQuickHash(string $quickHash, ?int $bytes = null): ?array
@@ -58,6 +69,16 @@ final class SwallowtailPhotoLibraryService
         }
 
         return $quickHash;
+    }
+
+    public function normaliseSha256(string $sha256): string
+    {
+        $sha256 = strtolower(trim($sha256));
+        if (preg_match('/^[a-f0-9]{64}$/', $sha256) !== 1) {
+            throw new InvalidArgumentException('SHA-256 checksum must be 64 hexadecimal characters.');
+        }
+
+        return $sha256;
     }
 
     public function photoById(int $photoId): ?array

@@ -74,30 +74,20 @@ caller uploads the full file.
 Endpoint:
 
 ```http
-GET /api/quick-checksum.php?hash=<fnv1a64>&size_bytes=<bytes>
+GET /api/quick-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>
 Authorization: Bearer <upload-token>
 ```
 
 `hash` is required. `size_bytes` is optional but recommended because matching
-the lightweight hash and byte size reduces the chance of a false positive.
+the SHA-256 checksum and byte size avoids a stale or partial client-side match.
 
-The fixed quick checksum algorithm is `fnv1a64`, returned as 16 lowercase
-hexadecimal characters. It is FNV-1a 64-bit:
-
-1. Start with offset basis `0xcbf29ce484222325`.
-2. For each input byte, XOR the byte into the hash.
-3. Multiply by prime `0x100000001b3`.
-4. Keep the low 64 bits after each multiply.
-5. Format the final 64-bit value as 16 lowercase hex characters.
-
-This is intentionally not a cryptographic checksum. SwallowTail still computes
-and stores SHA-256 during upload. The quick checksum is for cheap preflight
-deduplication on small hardware clients.
+The fixed quick checksum algorithm is `sha256`, returned as 64 lowercase
+hexadecimal characters. Older `fnv1a64` quick-check requests are rejected.
 
 Example with `curl`:
 
 ```sh
-curl "https://swallowtail.example.test/api/quick-checksum.php?hash=8f7e1c2d3a4b5960&size_bytes=31457280" \
+curl "https://swallowtail.example.test/api/quick-checksum.php?algorithm=sha256&hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&size_bytes=31457280" \
   -H "Authorization: Bearer stup_example"
 ```
 
@@ -107,8 +97,8 @@ Existing file response:
 {
   "success": true,
   "exists": true,
-  "algorithm": "fnv1a64",
-  "hash": "8f7e1c2d3a4b5960",
+  "algorithm": "sha256",
+  "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "size_bytes": 31457280,
   "matched_on": "hash_size",
   "photo_id": 123
@@ -121,16 +111,16 @@ Missing file response:
 {
   "success": true,
   "exists": false,
-  "algorithm": "fnv1a64",
-  "hash": "8f7e1c2d3a4b5960",
+  "algorithm": "sha256",
+  "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "size_bytes": 31457280,
   "matched_on": "hash_size",
   "photo_id": null
 }
 ```
 
-The optional `algorithm=fnv1a64` query parameter may be supplied, but other
-algorithm names are rejected.
+The optional `algorithm=sha256` query parameter may be supplied. Missing
+`algorithm` defaults to `sha256`; other algorithm names are rejected.
 
 ## Upload CR2
 
@@ -157,7 +147,7 @@ Authorization: Bearer <upload-token>
 Content-Type: application/octet-stream
 X-Swallowtail-Filename: IMG_0001.CR2
 X-Swallowtail-Device-ID: esp32-bridge-001
-X-Swallowtail-Checksum-SHA256: <optional lowercase sha256>
+X-Swallowtail-Checksum-SHA256: <required lowercase sha256 for raw body uploads>
 
 <CR2 bytes>
 ```
@@ -209,7 +199,7 @@ New uploads return HTTP `201`.
   "duplicate": false,
   "photo_id": 123,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "quick_hash": "8f7e1c2d3a4b5960",
+  "quick_hash": "",
   "storage_base_location": "/storage/1",
   "conversion_job_id": 456,
   "conversion_jobs": {
@@ -230,7 +220,7 @@ Duplicate uploads return HTTP `200`. No second original is stored.
   "duplicate": true,
   "photo_id": 123,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "quick_hash": "8f7e1c2d3a4b5960",
+  "quick_hash": "",
   "warnings": []
 }
 ```
@@ -344,7 +334,7 @@ Invalid quick checksum request:
 ```json
 {
   "success": false,
-  "errors": ["Unsupported quick checksum algorithm. Use fnv1a64."]
+  "errors": ["Unsupported quick checksum algorithm. Use sha256."]
 }
 ```
 
@@ -365,14 +355,13 @@ Common HTTP status codes:
 For a small hardware bridge, prefer raw body upload:
 
 1. Download the `.CR2` file from the camera.
-2. Compute the FNV-1a 64-bit quick checksum and record the file size.
-3. Call `GET /api/quick-checksum.php?hash=<fnv1a64>&size_bytes=<bytes>`.
+2. Compute the SHA-256 checksum and record the file size.
+3. Call `GET /api/quick-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>`.
 4. If the response has `exists: true`, skip the upload and keep the returned
    `photo_id` if needed.
-5. If the response has `exists: false`, compute SHA-256 while streaming if
-   practical.
+5. If the response has `exists: false`, keep the SHA-256 for the upload header.
 6. Open `POST /api/raw-upload.php`.
-7. Send `Authorization`, `X-Swallowtail-Filename`, and optionally
+7. Send `Authorization`, `X-Swallowtail-Filename`, and
    `X-Swallowtail-Checksum-SHA256`.
 8. Stream the CR2 bytes as the request body.
 9. Store the returned `photo_id`.
@@ -429,7 +418,7 @@ Successful response:
   "ping_url": "https://swallowtail.example.test/api/ping.php",
   "raw_upload_url": "https://swallowtail.example.test/api/raw-upload.php",
   "quick_checksum_url": "https://swallowtail.example.test/api/quick-checksum.php",
-  "quick_checksum_algorithm": "fnv1a64",
+  "quick_checksum_algorithm": "sha256",
   "cidrs": ["203.0.113.15/32"]
 }
 ```

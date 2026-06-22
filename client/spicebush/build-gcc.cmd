@@ -26,7 +26,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-"%CC%" -Wall -Wextra -Os -std=c99 -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -mwindows -o work\SpiceBush-gcc.exe spicebush_win.c work\spicebush-gcc.res -lshell32 -luser32 -lgdi32 -ladvapi32 -lwininet
+"%CC%" -Wall -Wextra -Os -std=c99 -DWINVER=0x0501 -D_WIN32_WINNT=0x0501 -mwindows -o work\SpiceBush-gcc.exe spicebush_win.c spicebush_shared.c work\spicebush-gcc.res -lshell32 -luser32 -lgdi32 -ladvapi32 -lwininet
 set BUILD_STATUS=%ERRORLEVEL%
 if "%BUILD_STATUS%"=="0" (
     del /q work\spicebush-gcc.res >nul 2>nul

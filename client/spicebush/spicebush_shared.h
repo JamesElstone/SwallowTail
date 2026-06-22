@@ -24,11 +24,12 @@ typedef struct SpiceBushConfig {
     char api_url[SB_TEXT];
     char upload_token[SB_TEXT];
     char device_id[128];
+    char hash_algorithm[16];
     sb_u64 server_max_raw_upload_bytes;
 } SpiceBushConfig;
 
 typedef struct SpiceBushUploadedRecord {
-    char hash[17];
+    char hash[65];
     sb_u64 size_bytes;
     unsigned long photo_id;
     char status[32];
@@ -56,11 +57,12 @@ void sb_trim_trailing_slashes(char *text);
 const char *sb_basename(const char *path);
 int sb_mkdir_if_needed(const char *path);
 
-int sb_compute_fnv1a64(const char *path, char *hex, size_t hex_size, sb_u64 *size_bytes);
+int sb_compute_sha256(const char *path, char *hex, size_t hex_size, sb_u64 *size_bytes);
 int sb_uploaded_lookup(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, SpiceBushUploadedRecord *record);
 int sb_uploaded_contains(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes);
 int sb_mark_uploaded(const SpiceBushConfig *config, const char *hash, sb_u64 size_bytes, unsigned long photo_id, const char *status, const char *path);
 int sb_migrate_uploaded_cache(SpiceBushConfig *config);
+int sb_reset_hash_state_if_needed(SpiceBushConfig *config, int *deleted_files, int *legacy_rows);
 
 int sb_scan_tree(const char *root, int max_depth, SpiceBushScanCallback callback, void *context);
 

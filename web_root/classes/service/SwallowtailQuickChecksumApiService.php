@@ -63,16 +63,16 @@ final class SwallowtailQuickChecksumApiService
             $metadata
         );
 
-        $algorithm = strtolower(trim((string)$request->query('algorithm', SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM)));
-        if ($algorithm !== SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM) {
+        $algorithm = strtolower(trim((string)$request->query('algorithm', SwallowtailPhotoLibraryService::UPLOAD_CHECKSUM_ALGORITHM)));
+        if ($algorithm !== SwallowtailPhotoLibraryService::UPLOAD_CHECKSUM_ALGORITHM) {
             return ResponseFramework::json([
                 'success' => false,
-                'errors' => ['Unsupported quick checksum algorithm. Use fnv1a64.'],
+                'errors' => ['Unsupported quick checksum algorithm. Use sha256.'],
             ], 400);
         }
 
         try {
-            $quickHash = $this->photoLibraryService->normaliseQuickHash((string)$request->query('hash', ''));
+            $sha256 = $this->photoLibraryService->normaliseSha256((string)$request->query('hash', ''));
             $sizeBytes = $this->sizeBytesFromRequest($request);
         } catch (InvalidArgumentException $exception) {
             return ResponseFramework::json([
@@ -81,14 +81,14 @@ final class SwallowtailQuickChecksumApiService
             ], 400);
         }
 
-        $photo = $this->photoLibraryService->photoByQuickHash($quickHash, $sizeBytes);
+        $photo = $this->photoLibraryService->photoByChecksumAndSize($sha256, $sizeBytes);
         $this->photoLibraryService->markUploadTokenUsed((int)$uploadToken['id']);
 
         return ResponseFramework::json([
             'success' => true,
             'exists' => $photo !== null,
             'algorithm' => $algorithm,
-            'hash' => $quickHash,
+            'hash' => $sha256,
             'size_bytes' => $sizeBytes,
             'matched_on' => $sizeBytes === null ? 'hash' : 'hash_size',
             'photo_id' => is_array($photo) ? (int)($photo['id'] ?? 0) : null,

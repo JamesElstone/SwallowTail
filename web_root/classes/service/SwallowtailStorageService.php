@@ -229,6 +229,30 @@ final class SwallowtailStorageService
         return $locations[0];
     }
 
+    public function rawUploadStagingFileForChecksum(string $checksum, int $requiredBytes = 0): array
+    {
+        $location = $this->writableLocationForChecksum($checksum, $requiredBytes);
+        $baseLocation = (string)$location['storage_base_location'];
+        $temporaryDirectory = $this->dataRoot($baseLocation) . 'tmp' . DIRECTORY_SEPARATOR;
+        $this->ensureDirectoryForPath($temporaryDirectory . '.placeholder');
+
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $path = $temporaryDirectory . 'swallowtail-raw-' . bin2hex(random_bytes(16)) . '_source.cr2';
+            $handle = @fopen($path, 'xb');
+            if (is_resource($handle)) {
+                fclose($handle);
+
+                return [
+                    'temporary_path' => $path,
+                    'storage_base_location' => $baseLocation,
+                    'temporary_directory' => $temporaryDirectory,
+                ];
+            }
+        }
+
+        throw new RuntimeException('Unable to allocate storage-local RAW upload staging file.');
+    }
+
     public function imagePath(string $storageBaseLocation, string $checksum, string $imageType): string
     {
         logDetails();
@@ -338,7 +362,7 @@ final class SwallowtailStorageService
         return $targets;
     }
 
-    public function storeSourceFile(string $sourcePath, string $checksum, bool $move = false): array
+    public function storeSourceFile(string $sourcePath, string $checksum, bool $move = false, ?string $preferredBaseLocation = null): array
     {
         $this->traceStoreSourceFileStart();
 
@@ -351,6 +375,14 @@ final class SwallowtailStorageService
         $sourceBytes = (int)filesize($sourcePath);
         $this->traceStoreSourceLocationsStart();
         $locations = $this->writableLocationsForChecksum($checksum, $this->storageLocations($sourceBytes));
+        if ($preferredBaseLocation !== null && trim($preferredBaseLocation) !== '') {
+            $preferredBaseLocation = $this->normaliseAbsoluteDirectory($preferredBaseLocation);
+            usort($locations, static function (array $a, array $b) use ($preferredBaseLocation): int {
+                $aPreferred = (string)($a['storage_base_location'] ?? '') === $preferredBaseLocation;
+                $bPreferred = (string)($b['storage_base_location'] ?? '') === $preferredBaseLocation;
+                return $aPreferred === $bPreferred ? 0 : ($aPreferred ? -1 : 1);
+            });
+        }
         $this->traceStoreSourceLocationsComplete();
         if ($locations === []) {
             $this->traceStoreSourceNoWritableLocation();

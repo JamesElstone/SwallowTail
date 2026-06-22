@@ -15,6 +15,8 @@
 #endif
 
 static void sb_trim(char *text);
+static int sb_is_sha256_hash(const char *hash);
+static int sb_is_legacy_fnv_hash(const char *hash);
 
 void sb_safe_copy(char *dst, size_t dst_size, const char *src)
 {
@@ -107,23 +109,194 @@ int sb_mkdir_if_needed(const char *path)
 #endif
 }
 
-int sb_compute_fnv1a64(const char *path, char *hex, size_t hex_size, sb_u64 *size_bytes)
+typedef struct SbSha256 {
+    unsigned int state[8];
+    unsigned int bitcount_high;
+    unsigned int bitcount_low;
+    unsigned char buffer[64];
+} SbSha256;
+
+static unsigned int sb_rotr32(unsigned int value, unsigned int bits)
+{
+    return (value >> bits) | (value << (32U - bits));
+}
+
+static unsigned int sb_load_be32(const unsigned char *bytes)
+{
+    return ((unsigned int)bytes[0] << 24)
+        | ((unsigned int)bytes[1] << 16)
+        | ((unsigned int)bytes[2] << 8)
+        | (unsigned int)bytes[3];
+}
+
+static void sb_store_be32(unsigned char *bytes, unsigned int value)
+{
+    bytes[0] = (unsigned char)(value >> 24);
+    bytes[1] = (unsigned char)(value >> 16);
+    bytes[2] = (unsigned char)(value >> 8);
+    bytes[3] = (unsigned char)value;
+}
+
+static void sb_sha256_transform(SbSha256 *ctx, const unsigned char block[64])
+{
+    static const unsigned int k[64] = {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
+        0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
+        0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+        0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
+        0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
+        0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
+        0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
+        0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+        0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
+    };
+    unsigned int w[64];
+    unsigned int a, b, c, d, e, f, g, h;
+    unsigned int i;
+
+    for (i = 0; i < 16; i++) {
+        w[i] = sb_load_be32(block + (i * 4));
+    }
+    for (i = 16; i < 64; i++) {
+        unsigned int s0 = sb_rotr32(w[i - 15], 7) ^ sb_rotr32(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        unsigned int s1 = sb_rotr32(w[i - 2], 17) ^ sb_rotr32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+
+    a = ctx->state[0];
+    b = ctx->state[1];
+    c = ctx->state[2];
+    d = ctx->state[3];
+    e = ctx->state[4];
+    f = ctx->state[5];
+    g = ctx->state[6];
+    h = ctx->state[7];
+
+    for (i = 0; i < 64; i++) {
+        unsigned int s1 = sb_rotr32(e, 6) ^ sb_rotr32(e, 11) ^ sb_rotr32(e, 25);
+        unsigned int ch = (e & f) ^ ((~e) & g);
+        unsigned int temp1 = h + s1 + ch + k[i] + w[i];
+        unsigned int s0 = sb_rotr32(a, 2) ^ sb_rotr32(a, 13) ^ sb_rotr32(a, 22);
+        unsigned int maj = (a & b) ^ (a & c) ^ (b & c);
+        unsigned int temp2 = s0 + maj;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
+}
+
+static void sb_sha256_init(SbSha256 *ctx)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->state[0] = 0x6a09e667U;
+    ctx->state[1] = 0xbb67ae85U;
+    ctx->state[2] = 0x3c6ef372U;
+    ctx->state[3] = 0xa54ff53aU;
+    ctx->state[4] = 0x510e527fU;
+    ctx->state[5] = 0x9b05688cU;
+    ctx->state[6] = 0x1f83d9abU;
+    ctx->state[7] = 0x5be0cd19U;
+}
+
+static void sb_sha256_update(SbSha256 *ctx, const unsigned char *data, size_t len)
+{
+    unsigned int used = (ctx->bitcount_low >> 3) & 63U;
+    unsigned int bits = (unsigned int)(len << 3);
+    ctx->bitcount_low += bits;
+    if (ctx->bitcount_low < bits) {
+        ctx->bitcount_high++;
+    }
+    ctx->bitcount_high += (unsigned int)(len >> 29);
+
+    if (used != 0) {
+        unsigned int available = 64U - used;
+        if (len < available) {
+            memcpy(ctx->buffer + used, data, len);
+            return;
+        }
+        memcpy(ctx->buffer + used, data, available);
+        sb_sha256_transform(ctx, ctx->buffer);
+        data += available;
+        len -= available;
+    }
+
+    while (len >= 64) {
+        sb_sha256_transform(ctx, data);
+        data += 64;
+        len -= 64;
+    }
+
+    if (len > 0) {
+        memcpy(ctx->buffer, data, len);
+    }
+}
+
+static void sb_sha256_final(SbSha256 *ctx, unsigned char digest[32])
+{
+    unsigned char length[8];
+    unsigned int used = (ctx->bitcount_low >> 3) & 63U;
+    unsigned int pad_len;
+    unsigned int i;
+
+    sb_store_be32(length, ctx->bitcount_high);
+    sb_store_be32(length + 4, ctx->bitcount_low);
+    ctx->buffer[used++] = 0x80U;
+    if (used > 56U) {
+        memset(ctx->buffer + used, 0, 64U - used);
+        sb_sha256_transform(ctx, ctx->buffer);
+        used = 0;
+    }
+    pad_len = 56U - used;
+    memset(ctx->buffer + used, 0, pad_len);
+    memcpy(ctx->buffer + 56, length, sizeof(length));
+    sb_sha256_transform(ctx, ctx->buffer);
+
+    for (i = 0; i < 8; i++) {
+        sb_store_be32(digest + (i * 4), ctx->state[i]);
+    }
+}
+
+int sb_compute_sha256(const char *path, char *hex, size_t hex_size, sb_u64 *size_bytes)
 {
     unsigned char buffer[65536];
+    unsigned char digest[32];
     size_t got;
     FILE *file = fopen(path, "rb");
-    sb_u64 hash = 14695981039346656037ULL;
     sb_u64 total = 0;
     size_t i;
+    static const char digits[] = "0123456789abcdef";
+    SbSha256 ctx;
 
-    if (file == NULL) {
+    if (file == NULL || hex_size < 65) {
+        if (file != NULL) {
+            fclose(file);
+        }
         return 0;
     }
+    sb_sha256_init(&ctx);
     while ((got = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        for (i = 0; i < got; i++) {
-            hash ^= (sb_u64)buffer[i];
-            hash *= 1099511628211ULL;
-        }
+        sb_sha256_update(&ctx, buffer, got);
         total += (sb_u64)got;
     }
     if (ferror(file)) {
@@ -131,9 +304,42 @@ int sb_compute_fnv1a64(const char *path, char *hex, size_t hex_size, sb_u64 *siz
         return 0;
     }
     fclose(file);
-    snprintf(hex, hex_size, "%016llx", (unsigned long long)hash);
+    sb_sha256_final(&ctx, digest);
+    for (i = 0; i < sizeof(digest); i++) {
+        hex[i * 2] = digits[(digest[i] >> 4) & 15];
+        hex[(i * 2) + 1] = digits[digest[i] & 15];
+    }
+    hex[64] = '\0';
     if (size_bytes != NULL) {
         *size_bytes = total;
+    }
+    return 1;
+}
+
+static int sb_is_sha256_hash(const char *hash)
+{
+    size_t i;
+    if (hash == NULL || strlen(hash) != 64) {
+        return 0;
+    }
+    for (i = 0; i < 64; i++) {
+        if (!isxdigit((unsigned char)hash[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int sb_is_legacy_fnv_hash(const char *hash)
+{
+    size_t i;
+    if (hash == NULL || strlen(hash) != 16) {
+        return 0;
+    }
+    for (i = 0; i < 16; i++) {
+        if (!isxdigit((unsigned char)hash[i])) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -220,7 +426,7 @@ int sb_uploaded_lookup(const SpiceBushConfig *config, const char *hash, sb_u64 s
     while (fgets(line, sizeof(line), file) != NULL) {
         SpiceBushUploadedRecord candidate;
         sb_parse_uploaded_line(line, &candidate);
-        if (strcmp(candidate.hash, hash) == 0 && candidate.size_bytes == size_bytes) {
+        if (sb_is_sha256_hash(candidate.hash) && strcmp(candidate.hash, hash) == 0 && candidate.size_bytes == size_bytes) {
             if (record != NULL) {
                 *record = candidate;
             }
@@ -242,6 +448,9 @@ int sb_mark_uploaded(const SpiceBushConfig *config, const char *hash, sb_u64 siz
     FILE *file;
     char bucket_path[SB_PATH];
 
+    if (!sb_is_sha256_hash(hash)) {
+        return 0;
+    }
     if (sb_uploaded_contains(config, hash, size_bytes)) {
         return 1;
     }
@@ -279,7 +488,7 @@ int sb_migrate_uploaded_cache(SpiceBushConfig *config)
     while (fgets(line, sizeof(line), file) != NULL) {
         SpiceBushUploadedRecord record;
         sb_parse_uploaded_line(line, &record);
-        if (record.hash[0] == '\0' || record.size_bytes == 0) {
+        if (!sb_is_sha256_hash(record.hash) || record.size_bytes == 0) {
             continue;
         }
         if (record.status[0] == '\0') {
@@ -294,6 +503,133 @@ int sb_migrate_uploaded_cache(SpiceBushConfig *config)
     remove(migrated);
     rename(config->uploaded_path, migrated);
     return migrated_count;
+}
+
+static int sb_count_legacy_rows_in_file(const char *path)
+{
+    FILE *file;
+    char line[SB_PATH + 256];
+    int count = 0;
+
+    file = fopen(path, "r");
+    if (file == NULL) {
+        return 0;
+    }
+    while (fgets(line, sizeof(line), file) != NULL) {
+        SpiceBushUploadedRecord record;
+        sb_parse_uploaded_line(line, &record);
+        if (sb_is_legacy_fnv_hash(record.hash)) {
+            count++;
+        }
+    }
+    fclose(file);
+    return count;
+}
+
+static int sb_clear_uploaded_cache(const SpiceBushConfig *config)
+{
+    int deleted = 0;
+
+    if (config->uploaded_path[0] != '\0' && remove(config->uploaded_path) == 0) {
+        deleted++;
+    }
+
+#ifndef _WIN32
+    if (config->uploaded_dir[0] != '\0') {
+        DIR *dir = opendir(config->uploaded_dir);
+        struct dirent *entry;
+        if (dir != NULL) {
+            while ((entry = readdir(dir)) != NULL) {
+                char path[SB_PATH];
+                if (entry->d_name[0] == '.') {
+                    continue;
+                }
+                if (!sb_ends_with_nocase(entry->d_name, ".tsv")) {
+                    continue;
+                }
+                sb_path_join(path, sizeof(path), config->uploaded_dir, entry->d_name, '/');
+                if (remove(path) == 0) {
+                    deleted++;
+                }
+            }
+            closedir(dir);
+        }
+    }
+#endif
+
+    return deleted;
+}
+
+static int sb_count_legacy_uploaded_rows(const SpiceBushConfig *config)
+{
+    int count = 0;
+
+    if (config->uploaded_path[0] != '\0') {
+        count += sb_count_legacy_rows_in_file(config->uploaded_path);
+    }
+
+#ifndef _WIN32
+    if (config->uploaded_dir[0] != '\0') {
+        DIR *dir = opendir(config->uploaded_dir);
+        struct dirent *entry;
+        if (dir != NULL) {
+            while ((entry = readdir(dir)) != NULL) {
+                char path[SB_PATH];
+                if (entry->d_name[0] == '.') {
+                    continue;
+                }
+                if (!sb_ends_with_nocase(entry->d_name, ".tsv")) {
+                    continue;
+                }
+                sb_path_join(path, sizeof(path), config->uploaded_dir, entry->d_name, '/');
+                count += sb_count_legacy_rows_in_file(path);
+            }
+            closedir(dir);
+        }
+    }
+#endif
+
+    return count;
+}
+
+int sb_reset_hash_state_if_needed(SpiceBushConfig *config, int *deleted_files, int *legacy_rows)
+{
+    int deleted = 0;
+    int legacy = sb_count_legacy_uploaded_rows(config);
+    int needs_reset = strcmp(config->hash_algorithm, "sha256") != 0 || legacy > 0;
+    FILE *next_id;
+
+    if (deleted_files != NULL) {
+        *deleted_files = 0;
+    }
+    if (legacy_rows != NULL) {
+        *legacy_rows = legacy;
+    }
+    if (!needs_reset) {
+        return 0;
+    }
+
+    if (config->queue_path[0] != '\0' && remove(config->queue_path) == 0) {
+        deleted++;
+    }
+    if (config->queue_done_path[0] != '\0' && remove(config->queue_done_path) == 0) {
+        deleted++;
+    }
+    if (config->queue_next_id_path[0] != '\0' && remove(config->queue_next_id_path) == 0) {
+        deleted++;
+    }
+    deleted += sb_clear_uploaded_cache(config);
+
+    next_id = fopen(config->queue_next_id_path, "w");
+    if (next_id != NULL) {
+        fputs("1\n", next_id);
+        fclose(next_id);
+    }
+    sb_safe_copy(config->hash_algorithm, sizeof(config->hash_algorithm), "sha256");
+    if (deleted_files != NULL) {
+        *deleted_files = deleted;
+    }
+    return 1;
 }
 
 int sb_scan_tree(const char *root, int max_depth, SpiceBushScanCallback callback, void *context)
@@ -388,6 +724,8 @@ int sb_load_config(SpiceBushConfig *config)
             sb_safe_copy(config->upload_token, sizeof(config->upload_token), value);
         } else if (strcmp(key, "device_id") == 0) {
             sb_safe_copy(config->device_id, sizeof(config->device_id), value);
+        } else if (strcmp(key, "hash_algorithm") == 0) {
+            sb_safe_copy(config->hash_algorithm, sizeof(config->hash_algorithm), value);
         } else if (strcmp(key, "server_max_raw_upload_bytes") == 0) {
             config->server_max_raw_upload_bytes = (sb_u64)strtoull(value, NULL, 10);
         }
@@ -407,6 +745,7 @@ int sb_save_config(const SpiceBushConfig *config)
     fprintf(file, "api_url=%s\n", config->api_url);
     fprintf(file, "upload_token=%s\n", config->upload_token);
     fprintf(file, "device_id=%s\n", config->device_id);
+    fprintf(file, "hash_algorithm=sha256\n");
     fprintf(file, "server_max_raw_upload_bytes=%llu\n", (unsigned long long)config->server_max_raw_upload_bytes);
     fclose(file);
     return 1;

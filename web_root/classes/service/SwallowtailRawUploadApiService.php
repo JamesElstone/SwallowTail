@@ -12,6 +12,7 @@ final class SwallowtailRawUploadApiService
     public function __construct(
         private readonly SwallowtailPhotoIngestService $photoIngestService = new SwallowtailPhotoIngestService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
+        private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
     ) {
     }
 
@@ -73,6 +74,8 @@ final class SwallowtailRawUploadApiService
         }
 
         $temporaryFile = null;
+        $temporaryStorageBaseLocation = null;
+        $verifiedSha256 = null;
         $this->traceUploadSourceResolveStart();
         $upload = $this->uploadFileFromRequest($files);
         $this->traceUploadSourceResolveComplete();
@@ -89,13 +92,31 @@ final class SwallowtailRawUploadApiService
             $this->traceRawBodyLimitComplete();
 
             try {
+                $expectedSha256 = $this->sha256FromRequest($request);
+                $staging = $this->storageService->rawUploadStagingFileForChecksum(
+                    $expectedSha256,
+                    $this->contentLength($request) ?? 0
+                );
+                $temporaryFile = (string)$staging['temporary_path'];
+                $temporaryStorageBaseLocation = (string)$staging['storage_base_location'];
                 $this->traceRawBodyCopyStart();
-                $temporaryFile = $this->copyInputStreamToTemporaryFile($inputStream, $maxRawBytes);
+                $copied = $this->copyInputStreamToTemporaryFile($inputStream, $temporaryFile, $maxRawBytes, $expectedSha256);
+                $verifiedSha256 = (string)$copied['sha256'];
                 $this->traceRawBodyCopyComplete();
             } catch (LengthException) {
                 $this->traceRawBodyLimitExceeded();
 
                 return $this->rawUploadLimitResponse();
+            } catch (InvalidArgumentException | UnexpectedValueException $exception) {
+                return ResponseFramework::json([
+                    'success' => false,
+                    'errors' => [$exception->getMessage()],
+                ], 400);
+            } catch (RuntimeException $exception) {
+                return ResponseFramework::json([
+                    'success' => false,
+                    'errors' => [$this->publicStorageError($exception)],
+                ], 503);
             }
             $upload = [
                 'tmp_name' => $temporaryFile,
@@ -133,7 +154,9 @@ final class SwallowtailRawUploadApiService
                         'upload_token_id' => (int)$uploadToken['id'],
                         'max_raw_bytes' => $maxRawBytes,
                         'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
-                        'quick_hash' => $this->quickHashFromRequest($request),
+                        'sha256' => $verifiedSha256,
+                        'storage_base_location' => $temporaryStorageBaseLocation,
+                        'quick_hash' => '',
                         'request_metadata' => [
                             'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
                             'ip_address' => (string)$request->remoteAddress(),
@@ -315,23 +338,21 @@ final class SwallowtailRawUploadApiService
         return $filename !== '' ? $filename : 'upload.CR2';
     }
 
-    private function quickHashFromRequest(RequestFramework $request): string
+    private function sha256FromRequest(RequestFramework $request): string
     {
-        $quickHash = trim((string)$request->header(
-            'X-Swallowtail-Quick-Checksum-FNV1A64',
-            (string)$request->post('quick_hash', (string)$request->query('quick_hash', ''))
-        ));
-
-        return preg_match('/^[A-Fa-f0-9]{16}$/', $quickHash) === 1 ? strtolower($quickHash) : '';
-    }
-
-    private function copyInputStreamToTemporaryFile(string $inputStream, int $maxBytes): string
-    {
-        $temporaryFile = tempnam(sys_get_temp_dir(), 'swallowtail-raw-');
-        if (!is_string($temporaryFile)) {
-            throw new RuntimeException('Unable to allocate temporary RAW upload file.');
+        $sha256 = strtolower(trim((string)$request->header(
+            'X-Swallowtail-Checksum-SHA256',
+            (string)$request->post('sha256', (string)$request->query('sha256', ''))
+        )));
+        if (preg_match('/^[a-f0-9]{64}$/', $sha256) !== 1) {
+            throw new InvalidArgumentException('X-Swallowtail-Checksum-SHA256 must be a 64-character hexadecimal SHA-256 checksum.');
         }
 
+        return $sha256;
+    }
+
+    private function copyInputStreamToTemporaryFile(string $inputStream, string $temporaryFile, int $maxBytes, string $expectedSha256): array
+    {
         $source = @fopen($inputStream, 'rb');
         $destination = @fopen($temporaryFile, 'wb');
 
@@ -347,6 +368,7 @@ final class SwallowtailRawUploadApiService
         }
 
         $bytesCopied = 0;
+        $hash = hash_init('sha256');
         while (!feof($source)) {
             $chunk = fread($source, 1024 * 1024);
             if ($chunk === false) {
@@ -361,6 +383,7 @@ final class SwallowtailRawUploadApiService
             }
 
             $chunkBytes = strlen($chunk);
+            hash_update($hash, $chunk);
             if ($bytesCopied + $chunkBytes > $maxBytes) {
                 fclose($source);
                 fclose($destination);
@@ -381,7 +404,17 @@ final class SwallowtailRawUploadApiService
         fclose($source);
         fclose($destination);
 
-        return $temporaryFile;
+        $sha256 = strtolower(hash_final($hash));
+        if (!hash_equals($expectedSha256, $sha256)) {
+            @unlink($temporaryFile);
+            throw new UnexpectedValueException('Uploaded RAW checksum did not match the expected SHA-256 value.');
+        }
+
+        return [
+            'path' => $temporaryFile,
+            'bytes' => $bytesCopied,
+            'sha256' => $sha256,
+        ];
     }
 
     private function contentLengthExceedsRawLimit(RequestFramework $request, int $maxBytes): bool

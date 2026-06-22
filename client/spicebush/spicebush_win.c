@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "spicebush_shared.h"
+
 #define APP_NAME "SpiceBush"
 #define WM_TRAYICON (WM_APP + 10)
 #define WM_REFRESH_STATS (WM_APP + 11)
@@ -118,6 +120,7 @@ typedef struct AppState {
     char apiUrl[MAX_TEXT];
     char uploadToken[MAX_TEXT];
     char deviceId[128];
+    char hashAlgorithm[16];
     char balloonTitle[128];
     char balloonMessage[256];
 } AppState;
@@ -138,6 +141,7 @@ static void LogMessage(const char *format, ...);
 static void BuildTrayTooltip(char *tip, DWORD tipSize);
 static void UpdateTrayTooltip(HWND hwnd);
 static void MigrateUploadedCache(void);
+static void EnsureSha256HashState(void);
 static void CompactQueueIfNeeded(void);
 static int UploadsPaused(void);
 static int ShutdownRequested(void);
@@ -430,8 +434,10 @@ static void EnsureAppStorage(void)
         WritePrivateProfileStringA("spicebush", "api_url", "", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "upload_token", "", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
+        WritePrivateProfileStringA("spicebush", "hash_algorithm", "sha256", g_app.iniPath);
         WritePrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", "0", g_app.iniPath);
     }
+    EnsureSha256HashState();
 }
 
 static void LoadConfig(void)
@@ -441,6 +447,7 @@ static void LoadConfig(void)
     GetPrivateProfileStringA("spicebush", "api_url", "", g_app.apiUrl, sizeof(g_app.apiUrl), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "upload_token", "", g_app.uploadToken, sizeof(g_app.uploadToken), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.deviceId, sizeof(g_app.deviceId), g_app.iniPath);
+    GetPrivateProfileStringA("spicebush", "hash_algorithm", "", g_app.hashAlgorithm, sizeof(g_app.hashAlgorithm), g_app.iniPath);
     GetPrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", "0", serverLimit, sizeof(serverLimit), g_app.iniPath);
     g_app.serverMaxRawUploadBytes = ParseU64(serverLimit);
     g_app.serverMaxRawUploadState = g_app.serverMaxRawUploadBytes > 0 ? 1 : 0;
@@ -448,12 +455,13 @@ static void LoadConfig(void)
         WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
         LogMessage("Normalised legacy device_id prefix; device_id=%s", g_app.deviceId);
     }
-    LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s server_max_raw_upload_bytes=%I64u",
+    LogMessage("Loaded config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s hash_algorithm=%s server_max_raw_upload_bytes=%I64u",
         g_app.siteUrl,
         g_app.apiUrl,
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken),
         g_app.deviceId,
+        g_app.hashAlgorithm,
         g_app.serverMaxRawUploadBytes);
 }
 
@@ -465,13 +473,16 @@ static void SaveConfig(void)
     WritePrivateProfileStringA("spicebush", "api_url", g_app.apiUrl, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "upload_token", g_app.uploadToken, g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "device_id", g_app.deviceId, g_app.iniPath);
+    WritePrivateProfileStringA("spicebush", "hash_algorithm", "sha256", g_app.iniPath);
     WritePrivateProfileStringA("spicebush", "server_max_raw_upload_bytes", serverLimit, g_app.iniPath);
-    LogMessage("Saved config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s server_max_raw_upload_bytes=%I64u",
+    SafeCopy(g_app.hashAlgorithm, sizeof(g_app.hashAlgorithm), "sha256");
+    LogMessage("Saved config: site_url=%s api_url=%s token_present=%s token_length=%u device_id=%s hash_algorithm=%s server_max_raw_upload_bytes=%I64u",
         g_app.siteUrl,
         g_app.apiUrl,
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken),
         g_app.deviceId,
+        g_app.hashAlgorithm,
         g_app.serverMaxRawUploadBytes);
 }
 
@@ -532,6 +543,26 @@ static int IsHexChar(char ch)
     return (ch >= '0' && ch <= '9')
         || (ch >= 'a' && ch <= 'f')
         || (ch >= 'A' && ch <= 'F');
+}
+
+static int IsLegacyFnvHash(const char *hash)
+{
+    int i;
+    if (!hash || lstrlenA(hash) != 16) return 0;
+    for (i = 0; i < 16; i++) {
+        if (!IsHexChar(hash[i])) return 0;
+    }
+    return 1;
+}
+
+static int IsSha256Hash(const char *hash)
+{
+    int i;
+    if (!hash || lstrlenA(hash) != 64) return 0;
+    for (i = 0; i < 64; i++) {
+        if (!IsHexChar(hash[i])) return 0;
+    }
+    return 1;
 }
 
 static char LowerHexChar(char ch)
@@ -692,11 +723,12 @@ static int UploadedContains(const char *hash, U64 sizeBytes)
             char ch = buffer[i];
             if (ch == '\r') continue;
             if (ch == '\n') {
-                char storedHash[32], status[32], path[MAX_PATH];
+                char storedHash[80], status[32], path[MAX_PATH];
                 U64 storedSize = 0;
                 DWORD photoId = 0;
                 line[lineLen] = '\0';
                 if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), path, sizeof(path))
+                    && IsSha256Hash(storedHash)
                     && lstrcmpiA(storedHash, hash) == 0
                     && storedSize == sizeBytes) found = 1;
                 lineLen = 0;
@@ -706,16 +738,17 @@ static int UploadedContains(const char *hash, U64 sizeBytes)
         }
     }
     if (!found && lineLen > 0) {
-        char storedHash[32], status[32], path[MAX_PATH];
+        char storedHash[80], status[32], path[MAX_PATH];
         U64 storedSize = 0;
         DWORD photoId = 0;
         line[lineLen] = '\0';
         if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), path, sizeof(path))
+            && IsSha256Hash(storedHash)
             && lstrcmpiA(storedHash, hash) == 0
             && storedSize == sizeBytes) found = 1;
     }
     CloseHandle(file);
-    if (found) LogMessage("Local uploaded bucket dedupe hit: bucket=%s hash=%s size=%I64u", bucket, hash, sizeBytes);
+    if (found) LogMessage("Local uploaded bucket dedupe hit: bucket=%s sha256=%s size=%I64u", bucket, hash, sizeBytes);
     return found;
 }
 
@@ -723,14 +756,18 @@ static void MarkUploadedStatus(const char *hash, U64 sizeBytes, DWORD photoId, c
 {
     char bucket[MAX_PATH];
     char line[MAX_PATH + 256];
+    if (!IsSha256Hash(hash)) {
+        LogMessage("Ignored uploaded bucket write with non-SHA-256 hash: hash=%s", hash ? hash : "");
+        return;
+    }
     if (UploadedContains(hash, sizeBytes)) return;
     if (!UploadedBucketPath(hash, bucket, sizeof(bucket))) {
-        LogMessage("Could not build uploaded bucket path: hash=%s", hash);
+        LogMessage("Could not build uploaded bucket path: sha256=%s", hash);
         return;
     }
     SbSnprintf(line, sizeof(line), "%s\t%I64u\t%lu\t%s\t%s\r\n", hash, sizeBytes, (unsigned long)photoId, status, path);
     AppendLine(bucket, line);
-    LogMessage("Marked uploaded bucket: hash=%s size=%I64u photo_id=%lu status=%s path=%s", hash, sizeBytes, (unsigned long)photoId, status, path);
+    LogMessage("Marked uploaded bucket: sha256=%s size=%I64u photo_id=%lu status=%s path=%s", hash, sizeBytes, (unsigned long)photoId, status, path);
 }
 
 static DWORD ClearUploadedHistoryCache(void)
@@ -774,6 +811,135 @@ static DWORD ClearUploadedHistoryCache(void)
     return deleted;
 }
 
+static int UploadedCacheFileHasLegacyFnvRows(const char *path, DWORD *legacyRows)
+{
+    HANDLE file;
+    char buffer[4096], line[MAX_PATH + 256];
+    DWORD got, i, lineLen = 0;
+    int found = 0;
+
+    file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    while (ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
+        for (i = 0; i < got; i++) {
+            char ch = buffer[i];
+            if (ch == '\r') continue;
+            if (ch == '\n') {
+                char storedHash[80], status[32], source[MAX_PATH];
+                U64 storedSize = 0;
+                DWORD photoId = 0;
+                line[lineLen] = '\0';
+                if (lineLen > 0
+                    && ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), source, sizeof(source))
+                    && IsLegacyFnvHash(storedHash)) {
+                    found = 1;
+                    if (legacyRows) (*legacyRows)++;
+                }
+                lineLen = 0;
+            } else if (lineLen + 1 < sizeof(line)) {
+                line[lineLen++] = ch;
+            }
+        }
+    }
+    if (lineLen > 0) {
+        char storedHash[80], status[32], source[MAX_PATH];
+        U64 storedSize = 0;
+        DWORD photoId = 0;
+        line[lineLen] = '\0';
+        if (ParseUploadedLine(line, storedHash, sizeof(storedHash), &storedSize, &photoId, status, sizeof(status), source, sizeof(source))
+            && IsLegacyFnvHash(storedHash)) {
+            found = 1;
+            if (legacyRows) (*legacyRows)++;
+        }
+    }
+    CloseHandle(file);
+    return found;
+}
+
+static int UploadedCacheHasLegacyFnvRows(DWORD *legacyRows)
+{
+    char pattern[MAX_PATH];
+    char path[MAX_PATH];
+    WIN32_FIND_DATAA data;
+    HANDLE find;
+    int found = 0;
+
+    if (legacyRows) *legacyRows = 0;
+    if (UploadedCacheFileHasLegacyFnvRows(g_app.uploadedPath, legacyRows)) {
+        found = 1;
+    }
+
+    PathJoin(pattern, sizeof(pattern), g_app.uploadedDir, "*.tsv");
+    find = FindFirstFileA(pattern, &data);
+    if (find == INVALID_HANDLE_VALUE) return found;
+    do {
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        PathJoin(path, sizeof(path), g_app.uploadedDir, data.cFileName);
+        if (UploadedCacheFileHasLegacyFnvRows(path, legacyRows)) {
+            found = 1;
+        }
+    } while (FindNextFileA(find, &data));
+    FindClose(find);
+    return found;
+}
+
+static DWORD DeleteQueueStateFiles(void)
+{
+    DWORD deleted = 0;
+    DWORD failed = 0;
+    const char *paths[3];
+    int i;
+
+    paths[0] = g_app.queuePath;
+    paths[1] = g_app.queueDonePath;
+    paths[2] = g_app.queueNextIdPath;
+    for (i = 0; i < 3; i++) {
+        if (GetFileAttributesA(paths[i]) == INVALID_FILE_ATTRIBUTES) continue;
+        if (DeleteFileA(paths[i])) {
+            deleted++;
+            LogMessage("Deleted legacy queue state file: path=%s", paths[i]);
+        } else {
+            failed++;
+            LogMessage("Could not delete legacy queue state file: path=%s error=%lu", paths[i], GetLastError());
+        }
+    }
+    LogMessage("Legacy queue state clear complete: deleted=%lu failed=%lu", (unsigned long)deleted, (unsigned long)failed);
+    return deleted;
+}
+
+static void EnsureSha256HashState(void)
+{
+    char hashAlgorithm[16];
+    DWORD legacyRows = 0;
+    DWORD deletedQueueFiles = 0;
+    DWORD deletedUploadedFiles = 0;
+    int missingOrOldMarker;
+    int hasLegacyRows;
+
+    GetPrivateProfileStringA("spicebush", "hash_algorithm", "", hashAlgorithm, sizeof(hashAlgorithm), g_app.iniPath);
+    missingOrOldMarker = lstrcmpiA(hashAlgorithm, "sha256") != 0;
+    hasLegacyRows = UploadedCacheHasLegacyFnvRows(&legacyRows);
+    if (!missingOrOldMarker && !hasLegacyRows) {
+        SafeCopy(g_app.hashAlgorithm, sizeof(g_app.hashAlgorithm), "sha256");
+        return;
+    }
+
+    LogMessage(
+        "Legacy hash state detected; resetting queue and uploaded cache for SHA-256: marker=%s legacy_rows=%lu",
+        hashAlgorithm[0] ? hashAlgorithm : "(missing)",
+        (unsigned long)legacyRows);
+    deletedQueueFiles = DeleteQueueStateFiles();
+    deletedUploadedFiles = ClearUploadedHistoryCache();
+    g_app.nextQueueId = 1;
+    SaveNextQueueId();
+    WritePrivateProfileStringA("spicebush", "hash_algorithm", "sha256", g_app.iniPath);
+    SafeCopy(g_app.hashAlgorithm, sizeof(g_app.hashAlgorithm), "sha256");
+    LogMessage(
+        "SHA-256 state reset complete: queue_files_deleted=%lu uploaded_files_deleted=%lu next_queue_id=1",
+        (unsigned long)deletedQueueFiles,
+        (unsigned long)deletedUploadedFiles);
+}
+
 static void MigrateUploadedCache(void)
 {
     HANDLE file;
@@ -792,7 +958,7 @@ static void MigrateUploadedCache(void)
             char ch = buffer[i];
             if (ch == '\r') continue;
             if (ch == '\n') {
-                char storedHash[32], status[32], source[MAX_PATH];
+                char storedHash[80], status[32], source[MAX_PATH];
                 U64 storedSize = 0;
                 DWORD photoId = 0;
                 line[lineLen] = '\0';
@@ -810,7 +976,7 @@ static void MigrateUploadedCache(void)
         }
     }
     if (lineLen > 0) {
-        char storedHash[32], status[32], source[MAX_PATH];
+        char storedHash[80], status[32], source[MAX_PATH];
         U64 storedSize = 0;
         DWORD photoId = 0;
         line[lineLen] = '\0';
@@ -1153,26 +1319,11 @@ static void CompactQueueIfNeeded(void)
     LogMessage("Queue compaction complete: pending=%lu done_size=%I64u", (unsigned long)pendingCount, doneSize);
 }
 
-static int ComputeFnv1a64(const char *path, char *hex, DWORD hexSize, U64 *sizeBytes)
+static int ComputeSha256(const char *path, char *hex, DWORD hexSize, U64 *sizeBytes)
 {
-    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-    BYTE buffer[65536];
-    DWORD got, i;
-    U64 hash = 14695981039346656037ULL;
-    U64 prime = 1099511628211ULL;
-    U64 total = 0;
-    if (file == INVALID_HANDLE_VALUE) return 0;
-    while (ReadFile(file, buffer, sizeof(buffer), &got, NULL) && got > 0) {
-        for (i = 0; i < got; i++) {
-            hash ^= (U64)buffer[i];
-            hash *= prime;
-        }
-        total += got;
-    }
-    CloseHandle(file);
-    SbSnprintf(hex, hexSize - 1, "%016I64x", hash);
-    hex[hexSize - 1] = '\0';
-    if (sizeBytes) *sizeBytes = total;
+    sb_u64 sharedSize = 0;
+    if (!sb_compute_sha256(path, hex, (size_t)hexSize, &sharedSize)) return 0;
+    if (sizeBytes) *sizeBytes = (U64)sharedSize;
     return 1;
 }
 
@@ -1488,7 +1639,7 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
     if (photoId) *photoId = 0;
     if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') return 0;
     UrlEncode(hash, encodedHash, sizeof(encodedHash));
-    SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
+    SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=sha256&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
     url[sizeof(url) - 1] = '\0';
     SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
@@ -1501,15 +1652,15 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
         g_app.uploadToken[0] != '\0' ? "yes" : "no",
         (unsigned)lstrlenA(g_app.uploadToken));
     if (!HttpSimpleRequest("GET", url, headers, NULL, 0, &status, response, sizeof(response))) {
-        LogMessage("Quick checksum request failed before response: hash=%s size=%I64u", hash, sizeBytes);
+        LogMessage("Quick checksum request failed before response: sha256=%s size=%I64u", hash, sizeBytes);
         return 0;
     }
     if (status == 200 && JsonBoolValue(response, "exists", &exists) && exists) {
         JsonDwordValue(response, "photo_id", photoId);
-        LogMessage("Server dedupe hit: hash=%s size=%I64u photo_id=%lu", hash, sizeBytes, photoId ? (unsigned long)*photoId : 0);
+        LogMessage("Server dedupe hit: sha256=%s size=%I64u photo_id=%lu", hash, sizeBytes, photoId ? (unsigned long)*photoId : 0);
         return 1;
     }
-    LogMessage("Server dedupe miss or unavailable: status=%lu hash=%s size=%I64u", status, hash, sizeBytes);
+    LogMessage("Server dedupe miss or unavailable: status=%lu sha256=%s size=%I64u", status, hash, sizeBytes);
     return 0;
 }
 
@@ -1645,7 +1796,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         "X-SwallowTail-Upload-Token: %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
-        "X-Swallowtail-Quick-Checksum-FNV1A64: %s\r\n"
+        "X-Swallowtail-Checksum-SHA256: %s\r\n"
         "X-Swallowtail-Device-ID: %s\r\n"
         "X-Requested-With: XMLHttpRequest\r\n",
         g_app.uploadToken, g_app.uploadToken, filename, hash, g_app.deviceId);
@@ -1712,7 +1863,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         JsonDwordValue(response, "photo_id", &photoId);
         JsonBoolValue(response, "duplicate", &duplicate);
     }
-    LogMessage("Raw upload completed: status=%lu ok=%s response_bytes=%lu path=%s hash=%s size=%I64u",
+    LogMessage("Raw upload completed: status=%lu ok=%s response_bytes=%lu path=%s sha256=%s size=%I64u",
         status,
         ok ? "yes" : "no",
         used,
@@ -1746,7 +1897,7 @@ done:
 
 static void ProcessPath(DWORD queueId, const char *path)
 {
-    char hash[32];
+    char hash[65];
     U64 sizeBytes = 0;
     U64 maxRawUploadBytes = 0;
     int serverMaxRawUploadState = 0;
@@ -1754,17 +1905,17 @@ static void ProcessPath(DWORD queueId, const char *path)
     DWORD photoId = 0;
     DWORD start = GetTickCount();
     LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
-    if (!ComputeFnv1a64(path, hash, sizeof(hash), &sizeBytes)) {
+    if (!ComputeSha256(path, hash, sizeof(hash), &sizeBytes)) {
         InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process failed: could not hash path=%s", path);
+        LogMessage("Process failed: could not calculate SHA-256 path=%s", path);
         AppendQueueDone(queueId, "failed_permanent");
         CompactQueueIfNeeded();
         return;
     }
-    LogMessage("Process hash complete: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+    LogMessage("Process SHA-256 complete: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
     if (UploadedContains(hash, sizeBytes)) {
         InterlockedIncrement(&g_app.totalSkippedLocal);
-        LogMessage("Process skipped local dedupe: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process skipped local dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "local_duplicate");
         CompactQueueIfNeeded();
         return;
@@ -1772,7 +1923,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     if (CheckServerKnowsFile(hash, sizeBytes, &photoId)) {
         MarkUploadedStatus(hash, sizeBytes, photoId, "server_known", path);
         InterlockedIncrement(&g_app.totalKnown);
-        LogMessage("Process skipped server dedupe: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process skipped server dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "server_known");
         CompactQueueIfNeeded();
         return;
@@ -1794,7 +1945,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     }
     if (serverMaxRawUploadState > 0 && maxRawUploadBytes > 0 && sizeBytes > maxRawUploadBytes) {
         InterlockedIncrement(&g_app.totalRejectedOversize);
-        LogMessage("Process rejected over upload limit: path=%s hash=%s size=%I64u max_raw_upload_bytes=%I64u",
+        LogMessage("Process rejected over upload limit: path=%s sha256=%s size=%I64u max_raw_upload_bytes=%I64u",
             path,
             hash,
             sizeBytes,
@@ -1811,22 +1962,22 @@ static void ProcessPath(DWORD queueId, const char *path)
         g_app.totalUploadMillis += elapsed;
         LeaveCriticalSection(&g_app.lock);
         InterlockedIncrement(&g_app.totalUploaded);
-        LogMessage("Process uploaded: path=%s hash=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
+        LogMessage("Process uploaded: path=%s sha256=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
         AppendQueueDone(queueId, "uploaded");
         CompactQueueIfNeeded();
     } else if (uploadResult == RAW_UPLOAD_REJECT_OVERSIZE) {
         InterlockedIncrement(&g_app.totalRejectedOversize);
-        LogMessage("Process rejected after upload limit response: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process rejected after upload limit response: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "rejected_oversize");
         CompactQueueIfNeeded();
     } else if (uploadResult == RAW_UPLOAD_FAILED_PERMANENT) {
         InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process upload failed permanently; not requeueing: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process upload failed permanently; not requeueing: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "failed_permanent");
         CompactQueueIfNeeded();
     } else {
         InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process upload failed; requeueing: path=%s hash=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process upload failed; requeueing: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         QueueRequeue(queueId, path);
         Sleep(5000);
     }

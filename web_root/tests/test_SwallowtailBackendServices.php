@@ -1047,7 +1047,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW upl
     @unlink($second);
 });
 
-$harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR2 quick checksum already exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR2 SHA-256 checksum already exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
     $library = new SwallowtailPhotoLibraryService();
@@ -1064,14 +1064,14 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
         new SwallowtailConversionQueueService()
     ))->ingestLocalRawFile($source, 'IMG_0009.CR2');
 
-    $quickHash = (string)($result['quick_hash'] ?? '');
+    $sha256 = (string)($result['sha256'] ?? '');
     $sourceBytes = (int)filesize($source);
-    $harness->assertSame(16, strlen($quickHash));
-    $harness->assertTrue($library->photoByQuickHash($quickHash, $sourceBytes) !== null);
+    $harness->assertSame(64, strlen($sha256));
+    $harness->assertTrue($library->photoByChecksumAndSize($sha256, $sourceBytes) !== null);
 
     $service = new SwallowtailQuickChecksumApiService($library);
     $foundRequest = new RequestFramework(
-        ['hash' => $quickHash, 'size_bytes' => (string)$sourceBytes],
+        ['algorithm' => 'sha256', 'hash' => $sha256, 'size_bytes' => (string)$sourceBytes],
         [],
         ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
         [],
@@ -1084,11 +1084,11 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
     $harness->assertTrue(is_array($foundPayload));
     $harness->assertTrue(!empty($foundPayload['success']));
     $harness->assertTrue(!empty($foundPayload['exists']));
-    $harness->assertSame('fnv1a64', (string)($foundPayload['algorithm'] ?? ''));
+    $harness->assertSame('sha256', (string)($foundPayload['algorithm'] ?? ''));
     $harness->assertSame((int)$result['photo_id'], (int)($foundPayload['photo_id'] ?? 0));
 
     $missingRequest = new RequestFramework(
-        ['hash' => $quickHash, 'size_bytes' => (string)($sourceBytes + 1)],
+        ['algorithm' => 'sha256', 'hash' => $sha256, 'size_bytes' => (string)($sourceBytes + 1)],
         [],
         ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
         [],
@@ -1102,8 +1102,23 @@ $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR
     $harness->assertTrue(!empty($missingPayload['success']));
     $harness->assertTrue(empty($missingPayload['exists']));
 
+    $fnvAlgorithmRequest = new RequestFramework(
+        ['algorithm' => 'fnv1a64', 'hash' => substr($sha256, 0, 16)],
+        [],
+        ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
+        [],
+        ['Authorization' => 'Bearer ' . $token['token']],
+        null,
+        []
+    );
+    $fnvAlgorithmPayload = json_decode($service->handleCheck($fnvAlgorithmRequest)->body(), true);
+
+    $harness->assertTrue(is_array($fnvAlgorithmPayload));
+    $harness->assertTrue(empty($fnvAlgorithmPayload['success']));
+    $harness->assertTrue(str_contains(implode(' ', (array)($fnvAlgorithmPayload['errors'] ?? [])), 'Unsupported quick checksum algorithm'));
+
     $badAlgorithmRequest = new RequestFramework(
-        ['algorithm' => 'crc32', 'hash' => $quickHash],
+        ['algorithm' => 'crc32', 'hash' => $sha256],
         [],
         ['REQUEST_METHOD' => 'GET', 'REMOTE_ADDR' => '203.0.113.15'],
         [],
@@ -1992,16 +2007,16 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
-    $quickHash = hash_file(SwallowtailPhotoLibraryService::QUICK_HASH_ALGORITHM, $source);
-    if (!is_string($quickHash)) {
-        throw new RuntimeException('Unable to quick hash RAW fixture.');
+    $sha256 = hash_file('sha256', $source);
+    if (!is_string($sha256)) {
+        throw new RuntimeException('Unable to SHA-256 hash RAW fixture.');
     }
 
     $response = $swallowtailInvokeRawUploadApi([
         'HTTP_AUTHORIZATION' => 'Bearer ' . $token['token'],
         'HTTP_USER_AGENT' => 'spicebush-test',
         'HTTP_X_SWALLOWTAIL_DEVICE_ID' => 'DESKTOP-C6R0CCD',
-        'HTTP_X_SWALLOWTAIL_QUICK_CHECKSUM_FNV1A64' => $quickHash,
+        'HTTP_X_SWALLOWTAIL_CHECKSUM_SHA256' => $sha256,
     ], [
         'raw_file' => [
             'tmp_name' => $source,
@@ -2016,7 +2031,8 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
-    $harness->assertSame($quickHash, (string)($payload['quick_hash'] ?? ''));
+    $harness->assertSame($sha256, (string)($payload['sha256'] ?? ''));
+    $harness->assertSame('', (string)($payload['quick_hash'] ?? ''));
     $harness->assertCount(3, (array)($payload['conversion_jobs'] ?? []));
     $harness->assertTrue((int)(($payload['conversion_jobs']['thumbnail'] ?? [])['job_id'] ?? 0) > 0);
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
@@ -2026,7 +2042,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     if ($checksum !== '') {
         $row = InterfaceDB::fetchOne('SELECT storage_base_location, original_quick_hash FROM photos WHERE original_sha256 = :checksum LIMIT 1', ['checksum' => $checksum]);
         if (is_array($row)) {
-            $harness->assertSame($quickHash, (string)($row['original_quick_hash'] ?? ''));
+            $harness->assertSame('', (string)($row['original_quick_hash'] ?? ''));
             $swallowtailCleanupStorageFiles((string)($row['storage_base_location'] ?? ''), $checksum);
         }
     }
@@ -2202,6 +2218,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
+    $sha256 = hash_file('sha256', $source);
+    if (!is_string($sha256)) {
+        throw new RuntimeException('Unable to SHA-256 hash RAW fixture.');
+    }
     $request = new RequestFramework(
         [],
         [],
@@ -2210,6 +2230,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
         [
             'Authorization' => 'Bearer ' . $token['token'],
             'X-Swallowtail-Filename' => 'IMG_0004.CR2',
+            'X-Swallowtail-Checksum-SHA256' => $sha256,
             'User-Agent' => 'swallowtail-test',
         ],
         null,
@@ -2226,7 +2247,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'stops raw body streaming
         ),
         $library
     );
-    $temporaryPattern = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'swallowtail-raw-*';
+    $storage = new SwallowtailStorageService();
+    $staging = $storage->rawUploadStagingFileForChecksum($sha256, filesize($source));
+    $temporaryPattern = rtrim(dirname((string)$staging['temporary_path']), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . '*_source.cr2';
+    @unlink((string)$staging['temporary_path']);
     $before = glob($temporaryPattern) ?: [];
     sort($before);
     $response = $service->handleUpload($request, [], $source);
@@ -2256,6 +2280,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
+    $sha256 = hash_file('sha256', $source);
+    if (!is_string($sha256)) {
+        throw new RuntimeException('Unable to SHA-256 hash RAW fixture.');
+    }
     $request = new RequestFramework(
         [],
         [],
@@ -2264,6 +2292,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
         [
             'Authorization' => 'Bearer ' . $token['token'],
             'X-Swallowtail-Filename' => 'IMG_0004.CR2',
+            'X-Swallowtail-Checksum-SHA256' => $sha256,
             'User-Agent' => 'swallowtail-test',
         ],
         null,
@@ -2287,8 +2316,13 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
+    $harness->assertSame($sha256, (string)($payload['sha256'] ?? ''));
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
+    $row = InterfaceDB::fetchOne('SELECT storage_base_location FROM photos WHERE original_sha256 = :sha256 LIMIT 1', ['sha256' => $sha256]);
+    $harness->assertTrue(is_array($row));
+    $temporaryPattern = rtrim((string)($row['storage_base_location'] ?? ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . SwallowtailStorageService::DATA_DIRECTORY . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . '*_source.cr2';
+    $harness->assertSame([], glob($temporaryPattern) ?: []);
 
     @unlink($source);
 });
@@ -2305,6 +2339,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'raw body uploads ignore 
     }
 
     $swallowtailWriteRawFixture($source, 'cr2');
+    $sha256 = hash_file('sha256', $source);
+    if (!is_string($sha256)) {
+        throw new RuntimeException('Unable to SHA-256 hash RAW fixture.');
+    }
     $request = new RequestFramework(
         [],
         [],
@@ -2313,6 +2351,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'raw body uploads ignore 
         [
             'Authorization' => 'Bearer ' . $token['token'],
             'X-Swallowtail-Filename' => 'SPICEBUSH_0004.CR2',
+            'X-Swallowtail-Checksum-SHA256' => $sha256,
             'User-Agent' => 'spicebush-test',
         ],
         null,
@@ -2336,6 +2375,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'raw body uploads ignore 
     $harness->assertTrue(is_array($payload));
     $harness->assertTrue(!empty($payload['success']));
     $harness->assertSame('uploaded', $payload['status'] ?? null);
+    $harness->assertSame($sha256, (string)($payload['sha256'] ?? ''));
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
 
     @unlink($source);

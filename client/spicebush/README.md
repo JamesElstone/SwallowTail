@@ -12,12 +12,12 @@ FreeBSD base systems without bundling a runtime. It uses:
 - `%APPDATA%\SpiceBush\queue.tsv` for queued work and
   `%APPDATA%\SpiceBush\queue-done.tsv` for completed queue journal entries.
 - `~/.spicebush/queue.tsv` and `~/.spicebush/queue-done.tsv` on FreeBSD.
-- `%APPDATA%\SpiceBush\uploaded\xx.tsv` bucket files for quick hashes that
+- `%APPDATA%\SpiceBush\uploaded\xx.tsv` bucket files for SHA-256 checksums that
   uploaded or were already known by SwallowTail.
 - `~/.spicebush/uploaded/xx.tsv` bucket files on FreeBSD.
 - WinINet/SChannel for Windows HTTP/HTTPS.
 - FreeBSD base OpenSSL for FreeBSD HTTP/HTTPS. No ports are required.
-- FNV-1a 64-bit quick checksums to match `GET /api/quick-checksum.php`.
+- Portable SHA-256 checksums to match `GET /api/quick-checksum.php`.
 
 ## Layout
 
@@ -164,10 +164,14 @@ Show textual statistics for the current run:
 - Existing-drive scans recurse through the selected drive. This is intentionally
   available only from the Statistics window because it can take time on large
   disks.
-- The local uploaded cache is bucketed by the first two quick-hash hex
-  characters. Each bucket stores quick hash, size, SwallowTail `photo_id`,
+- The local uploaded cache is bucketed by the first two SHA-256 hex
+  characters. Each bucket stores SHA-256, size, SwallowTail `photo_id`,
   upload status, and source path. SwallowTail still computes and deduplicates
   the full upload server-side.
+- On first run after upgrading from the FNV-era cache format, SpiceBush deletes
+  its local queue and uploaded-cache TSV files, resets `queue-next-id.txt` to
+  `1`, writes `hash_algorithm=sha256`, and leaves `spicebush.ini`, tokens, and
+  source CR2 files untouched.
 - The queue journal is append-oriented so large queues do not rewrite the whole
   queue file after every processed CR2. Windows compacts the journal
   periodically.

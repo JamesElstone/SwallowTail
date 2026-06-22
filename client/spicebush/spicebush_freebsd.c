@@ -119,8 +119,26 @@ static void init_config(SpiceBushConfig *config)
 
     if (!sb_load_config(config)) {
         sb_save_config(config);
-    } else if (sb_normalise_device_id(config->device_id, sizeof(config->device_id))) {
-        sb_save_config(config);
+        sb_load_config(config);
+    }
+    {
+        int deleted_files = 0;
+        int legacy_rows = 0;
+        int changed = 0;
+        if (sb_reset_hash_state_if_needed(config, &deleted_files, &legacy_rows)) {
+            printf(
+                "SpiceBush reset legacy hash state for SHA-256: deleted_files=%d legacy_rows=%d\n",
+                deleted_files,
+                legacy_rows
+            );
+            changed = 1;
+        }
+        if (sb_normalise_device_id(config->device_id, sizeof(config->device_id))) {
+            changed = 1;
+        }
+        if (changed) {
+            sb_save_config(config);
+        }
     }
 }
 
@@ -291,7 +309,7 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     snprintf(
         url,
         sizeof(url),
-        "%s/quick-checksum.php?algorithm=fnv1a64&hash=%s&size_bytes=%llu",
+        "%s/quick-checksum.php?algorithm=sha256&hash=%s&size_bytes=%llu",
         config->api_url,
         encoded_hash,
         (unsigned long long)size_bytes
@@ -324,7 +342,7 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         "Authorization: Bearer %s\r\n"
         "Content-Type: application/octet-stream\r\n"
         "X-Swallowtail-Filename: %s\r\n"
-        "X-Swallowtail-Quick-Checksum-FNV1A64: %s\r\n"
+        "X-Swallowtail-Checksum-SHA256: %s\r\n"
         "X-Swallowtail-Device-ID: %s\r\n",
         config->upload_token,
         sb_basename(path),
@@ -358,7 +376,7 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
 static int process_cr2(const char *path, void *context)
 {
     SpiceBushCli *cli = (SpiceBushCli *)context;
-    char hash[32];
+    char hash[65];
     sb_u64 size_bytes = 0;
     unsigned long start;
     unsigned long photo_id = 0;
@@ -367,7 +385,7 @@ static int process_cr2(const char *path, void *context)
     cli->stats.found++;
     printf("found: %s\n", path);
 
-    if (!sb_compute_fnv1a64(path, hash, sizeof(hash), &size_bytes)) {
+    if (!sb_compute_sha256(path, hash, sizeof(hash), &size_bytes)) {
         cli->stats.failed++;
         printf("  failed: could not checksum\n");
         return 1;
@@ -375,14 +393,14 @@ static int process_cr2(const char *path, void *context)
 
     if (sb_uploaded_contains(&cli->config, hash, size_bytes)) {
         cli->stats.skipped_local++;
-        printf("  skipped: local uploaded cache has %s %llu\n", hash, (unsigned long long)size_bytes);
+        printf("  skipped: local uploaded cache has sha256=%s %llu\n", hash, (unsigned long long)size_bytes);
         return 1;
     }
 
     if (server_knows_file(&cli->config, hash, size_bytes, &photo_id)) {
         cli->stats.known++;
         sb_mark_uploaded(&cli->config, hash, size_bytes, photo_id, "server_known", path);
-        printf("  known: SwallowTail already has %s\n", hash);
+        printf("  known: SwallowTail already has sha256=%s\n", hash);
         return 1;
     }
 
@@ -400,7 +418,7 @@ static int process_cr2(const char *path, void *context)
     }
 
     start = tick_millis();
-    printf("  uploading: %s bytes=%llu\n", hash, (unsigned long long)size_bytes);
+    printf("  uploading: sha256=%s bytes=%llu\n", hash, (unsigned long long)size_bytes);
     upload_result = upload_file(&cli->config, path, hash, size_bytes);
     if (upload_result == RAW_UPLOAD_OK) {
         cli->stats.uploaded++;
