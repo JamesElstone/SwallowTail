@@ -199,7 +199,6 @@ New uploads return HTTP `201`.
   "duplicate": false,
   "photo_id": 123,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "quick_hash": "",
   "storage_base_location": "/storage/1",
   "conversion_job_id": 456,
   "conversion_jobs": {
@@ -220,7 +219,6 @@ Duplicate uploads return HTTP `200`. No second original is stored.
   "duplicate": true,
   "photo_id": 123,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "quick_hash": "",
   "warnings": []
 }
 ```

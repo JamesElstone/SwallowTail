@@ -266,7 +266,6 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         original_extension TEXT NOT NULL,
         original_bytes INTEGER NOT NULL,
         original_sha256 TEXT NOT NULL UNIQUE,
-        original_quick_hash TEXT NULL,
         storage_base_location TEXT NOT NULL,
         upload_state TEXT NOT NULL DEFAULT 'uploaded',
         conversion_state TEXT NOT NULL DEFAULT 'pending',

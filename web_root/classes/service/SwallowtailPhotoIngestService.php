@@ -115,10 +115,6 @@ final class SwallowtailPhotoIngestService
             $this->traceSha256Complete();
         }
 
-        $this->traceQuickHashResolveStart();
-        $quickHash = $this->contextQuickHash($context);
-        $this->traceQuickHashResolveComplete();
-
         $expectedSha256 = strtolower(trim((string)($context['expected_sha256'] ?? '')));
         if ($expectedSha256 !== '' && !hash_equals($expectedSha256, $sha256)) {
             $this->traceExpectedSha256Mismatch();
@@ -136,7 +132,6 @@ final class SwallowtailPhotoIngestService
             $this->traceDuplicateRecordStart();
             $recorded = $this->photoLibraryService->recordRawUpload([
                 'sha256' => $sha256,
-                'quick_hash' => $quickHash,
                 'original_filename' => $originalFilename,
                 'uploaded_via' => (string)($context['uploaded_via'] ?? 'api'),
                 'uploaded_by_user_id' => $context['uploaded_by_user_id'] ?? null,
@@ -153,7 +148,6 @@ final class SwallowtailPhotoIngestService
                 'duplicate' => true,
                 'photo_id' => (int)($recorded['photo']['id'] ?? $existing['id'] ?? 0),
                 'sha256' => $sha256,
-                'quick_hash' => $quickHash,
                 'warnings' => $validation['warnings'],
             ];
         }
@@ -170,7 +164,6 @@ final class SwallowtailPhotoIngestService
         $this->traceRecordRawUploadStart();
         $recorded = $this->photoLibraryService->recordRawUpload([
             'sha256' => $sha256,
-            'quick_hash' => $quickHash,
             'original_filename' => $originalFilename,
             'extension' => $validation['extension'],
             'bytes' => (int)$stored['bytes'],
@@ -203,7 +196,6 @@ final class SwallowtailPhotoIngestService
             'duplicate' => false,
             'photo_id' => $photoId,
             'sha256' => $sha256,
-            'quick_hash' => $quickHash,
             'storage_base_location' => $stored['storage_base_location'] ?? '',
             'conversion_job_id' => $firstJobId,
             'conversion_jobs' => $conversionJobs,
@@ -283,16 +275,6 @@ final class SwallowtailPhotoIngestService
         return ini_get($key);
     }
 
-    private function contextQuickHash(array $context): ?string
-    {
-        $quickHash = strtolower(trim((string)($context['quick_hash'] ?? '')));
-        if ($quickHash === '') {
-            return null;
-        }
-
-        return preg_match('/^[a-f0-9]{16}$/', $quickHash) === 1 ? $quickHash : null;
-    }
-
     private function contextSha256(array $context): ?string
     {
         $sha256 = strtolower(trim((string)($context['sha256'] ?? '')));
@@ -341,26 +323,6 @@ final class SwallowtailPhotoIngestService
     }
 
     private function traceSha256Complete(): void
-    {
-        logDetails();
-    }
-
-    private function traceQuickHashResolveStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceQuickHashResolveComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceQuickHashCalculateStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceQuickHashCalculateComplete(): void
     {
         logDetails();
     }

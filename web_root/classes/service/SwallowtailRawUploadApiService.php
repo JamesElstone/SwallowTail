@@ -156,7 +156,6 @@ final class SwallowtailRawUploadApiService
                         'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
                         'sha256' => $verifiedSha256,
                         'storage_base_location' => $temporaryStorageBaseLocation,
-                        'quick_hash' => '',
                         'request_metadata' => [
                             'device_id' => (string)$request->header('X-Swallowtail-Device-ID', ''),
                             'ip_address' => (string)$request->remoteAddress(),

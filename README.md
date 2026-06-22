@@ -70,7 +70,7 @@ Current core features:
 
 - CR2 RAW image upload through the web UI and device API.
 - SpiceBush desktop/CLI registration and upload-token based API access.
-- FNV-1a quick checksum preflight and SHA-256 duplicate detection during ingest.
+- SHA-256 quick checksum preflight and duplicate detection during ingest.
 - Off-web-root storage for RAW sources, generated JPEGs, thumbnails, filtered previews, and PP3 profiles.
 - Dynamic storage discovery with root-partition exclusion, free-space thresholds, optional checksum round-robin selection, ZFS dataset selection, cached storage snapshots, and queued storage migrations.
 - RAW-to-JPEG conversion jobs for embedded, original, thumbnail, and filtered preview outputs.

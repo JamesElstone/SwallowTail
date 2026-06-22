@@ -37,40 +37,6 @@ final class SwallowtailPhotoLibraryService
         return (int)($photo['original_bytes'] ?? 0) === $bytes ? $photo : null;
     }
 
-    public function photoByQuickHash(string $quickHash, ?int $bytes = null): ?array
-    {
-        $quickHash = $this->normaliseQuickHash($quickHash);
-
-        $where = 'original_quick_hash = :quick_hash';
-        $params = ['quick_hash' => $quickHash];
-
-        if ($bytes !== null) {
-            if ($bytes <= 0) {
-                return null;
-            }
-
-            $where .= ' AND original_bytes = :bytes';
-            $params['bytes'] = $bytes;
-        }
-
-        $row = InterfaceDB::fetchOne(
-            'SELECT * FROM photos WHERE ' . $where . ' ORDER BY id ASC LIMIT 1',
-            $params
-        );
-
-        return is_array($row) ? $row : null;
-    }
-
-    public function normaliseQuickHash(string $quickHash): string
-    {
-        $quickHash = strtolower(trim($quickHash));
-        if (preg_match('/^[a-f0-9]{16}$/', $quickHash) !== 1) {
-            throw new InvalidArgumentException('Quick checksum hash must be 16 lowercase hexadecimal characters.');
-        }
-
-        return $quickHash;
-    }
-
     public function normaliseSha256(string $sha256): string
     {
         $sha256 = strtolower(trim($sha256));
@@ -98,24 +64,9 @@ final class SwallowtailPhotoLibraryService
     public function recordRawUpload(array $upload): array
     {
         $sha256 = strtolower(trim((string)($upload['sha256'] ?? '')));
-        $quickHash = $this->normaliseOptionalQuickHash($upload['quick_hash'] ?? null);
         $existing = $this->photoByChecksum($sha256);
 
         if ($existing !== null) {
-            if ($quickHash !== null && trim((string)($existing['original_quick_hash'] ?? '')) === '') {
-                InterfaceDB::prepareExecute(
-                    "UPDATE photos
-                     SET original_quick_hash = :quick_hash
-                     WHERE id = :id
-                       AND (original_quick_hash IS NULL OR original_quick_hash = '')",
-                    [
-                        'id' => (int)$existing['id'],
-                        'quick_hash' => $quickHash,
-                    ]
-                );
-                $existing['original_quick_hash'] = $quickHash;
-            }
-
             $this->recordPhotoAudit(
                 (int)$existing['id'],
                 null,
@@ -142,7 +93,6 @@ final class SwallowtailPhotoLibraryService
                 original_extension,
                 original_bytes,
                 original_sha256,
-                original_quick_hash,
                 storage_base_location,
                 upload_state,
                 conversion_state,
@@ -154,7 +104,6 @@ final class SwallowtailPhotoLibraryService
                 :original_extension,
                 :original_bytes,
                 :original_sha256,
-                :original_quick_hash,
                 :storage_base_location,
                 'uploaded',
                 'pending',
@@ -167,7 +116,6 @@ final class SwallowtailPhotoLibraryService
                 'original_extension' => strtolower(trim((string)($upload['extension'] ?? ''))),
                 'original_bytes' => max(0, (int)($upload['bytes'] ?? 0)),
                 'original_sha256' => $sha256,
-                'original_quick_hash' => $quickHash,
                 'storage_base_location' => trim((string)($upload['storage_base_location'] ?? '')),
                 'uploaded_by_user_id' => $this->nullablePositiveInt($upload['uploaded_by_user_id'] ?? null),
                 'uploaded_via' => $this->normaliseUploadSource((string)($upload['uploaded_via'] ?? 'api')),
@@ -869,20 +817,6 @@ final class SwallowtailPhotoLibraryService
         $filename = trim($filename, ". \t\n\r\0\x0B-");
 
         return $filename !== '' ? substr($filename, 0, 255) : 'upload.raw';
-    }
-
-    private function normaliseOptionalQuickHash(mixed $value): ?string
-    {
-        if (!is_scalar($value) && $value !== null) {
-            return null;
-        }
-
-        $value = trim((string)$value);
-        if ($value === '') {
-            return null;
-        }
-
-        return $this->normaliseQuickHash($value);
     }
 
     private function normaliseSlug(string $value): string
