@@ -17,23 +17,34 @@ final class SwallowtailRawUploadApiService
 
     public function handleUpload(RequestFramework $request, array $files = [], string $inputStream = 'php://input'): ResponseFramework
     {
+        $this->traceHandleUploadStart();
+
         if ($request->method() !== 'POST') {
+            $this->traceMethodRejected();
+
             return ResponseFramework::json([
                 'success' => false,
                 'errors' => ['RAW upload API expects POST.'],
             ], 405);
         }
 
+        $this->traceTokenBlockCheckStart();
         if ($this->photoLibraryService->isUploadTokenRequestBlocked($request)) {
+            $this->traceTokenBlockCheckBlocked();
+
             return $this->photoLibraryService->uploadTokenLockoutResponse();
         }
+        $this->traceTokenBlockCheckComplete();
 
+        $this->traceTokenAuthenticationStart();
         $token = $this->photoLibraryService->uploadTokenFromRequest($request);
         $uploadToken = $this->photoLibraryService->authenticateUploadToken($token, $request->remoteAddress());
         $remoteAddress = $request->remoteAddress();
         $metadata = $this->photoLibraryService->uploadTokenAuditMetadata($request);
+        $this->traceTokenAuthenticationComplete();
 
         if ($uploadToken === null) {
+            $this->traceTokenFailureAuditStart();
             $this->photoLibraryService->recordUploadTokenUsage(
                 null,
                 $token,
@@ -43,10 +54,17 @@ final class SwallowtailRawUploadApiService
                 $this->photoLibraryService->explainUploadTokenAuthenticationFailure($token, $remoteAddress),
                 $metadata
             );
+            $this->traceTokenFailureAuditComplete();
 
+            $this->traceFailedTokenRecordStart();
             if (!empty($this->photoLibraryService->recordFailedUploadTokenRequest($request)['is_blocked'])) {
+                $this->traceFailedTokenRecordBlocked();
+
                 return $this->photoLibraryService->uploadTokenLockoutResponse();
             }
+            $this->traceFailedTokenRecordComplete();
+
+            $this->traceAuthenticationRejectedResponseReady();
 
             return ResponseFramework::json([
                 'success' => false,
@@ -55,18 +73,28 @@ final class SwallowtailRawUploadApiService
         }
 
         $temporaryFile = null;
+        $this->traceUploadSourceResolveStart();
         $upload = $this->uploadFileFromRequest($files);
+        $this->traceUploadSourceResolveComplete();
         $maxRawBytes = null;
 
         if ($upload === null) {
+            $this->traceRawBodyLimitStart();
             $maxRawBytes = $this->photoIngestService->maxRawBodyBytes();
             if ($this->contentLengthExceedsRawLimit($request, $maxRawBytes)) {
+                $this->traceRawBodyLimitExceeded();
+
                 return $this->rawUploadLimitResponse();
             }
+            $this->traceRawBodyLimitComplete();
 
             try {
+                $this->traceRawBodyCopyStart();
                 $temporaryFile = $this->copyInputStreamToTemporaryFile($inputStream, $maxRawBytes);
+                $this->traceRawBodyCopyComplete();
             } catch (LengthException) {
+                $this->traceRawBodyLimitExceeded();
+
                 return $this->rawUploadLimitResponse();
             }
             $upload = [
@@ -74,20 +102,28 @@ final class SwallowtailRawUploadApiService
                 'name' => $this->filenameFromRequest($request),
                 'error' => UPLOAD_ERR_OK,
             ];
+            $this->traceRawBodyUploadReady();
+        } else {
+            $this->traceMultipartUploadReady();
         }
 
         try {
+            $this->traceUploadErrorCheckStart();
             $uploadError = (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE);
             if ($uploadError !== UPLOAD_ERR_OK) {
+                $this->traceUploadErrorCheckFailed();
+
                 return ResponseFramework::json([
                     'success' => false,
                     'errors' => [$this->uploadErrorMessage($uploadError)],
                 ], 400);
             }
+            $this->traceUploadErrorCheckComplete();
 
             $originalFilename = (string)($upload['name'] ?? $this->filenameFromRequest($request));
 
             try {
+                $this->traceIngestStart();
                 $result = $this->photoIngestService->ingestLocalRawFile(
                     (string)$upload['tmp_name'],
                     $originalFilename,
@@ -105,9 +141,12 @@ final class SwallowtailRawUploadApiService
                         ],
                     ]
                 );
+                $this->traceIngestComplete();
             } catch (RuntimeException $exception) {
+                $this->traceIngestRuntimeException();
                 $reason = $this->publicStorageError($exception);
                 $diagnostics = $this->storageFailureDiagnostics($exception, $request, $uploadToken, $upload, $originalFilename, $maxRawBytes, $temporaryFile !== null);
+                $this->traceFailureAuditStart();
                 $this->photoLibraryService->recordUploadTokenUsage(
                     $uploadToken,
                     $token,
@@ -118,6 +157,9 @@ final class SwallowtailRawUploadApiService
                     $metadata,
                     $diagnostics
                 );
+                $this->traceFailureAuditComplete();
+
+                $this->traceFailureResponseReady();
 
                 return ResponseFramework::json([
                     'success' => false,
@@ -127,6 +169,8 @@ final class SwallowtailRawUploadApiService
             }
 
             if (empty($result['success'])) {
+                $this->traceIngestValidationFailed();
+                $this->traceFailureAuditStart();
                 $this->photoLibraryService->recordUploadTokenUsage(
                     $uploadToken,
                     $token,
@@ -140,9 +184,13 @@ final class SwallowtailRawUploadApiService
                         'upload_size_bytes' => $this->uploadSizeBytes($upload),
                     ]
                 );
+                $this->traceFailureAuditComplete();
+                $this->traceFailureResponseReady();
+
                 return ResponseFramework::json($result, 400);
             }
 
+            $this->traceSuccessAuditStart();
             $this->photoLibraryService->markUploadTokenUsed((int)$uploadToken['id']);
             $this->photoLibraryService->recordUploadTokenUsage(
                 $uploadToken,
@@ -160,11 +208,16 @@ final class SwallowtailRawUploadApiService
                     'duplicate' => !empty($result['duplicate']),
                 ]
             );
+            $this->traceSuccessAuditComplete();
+
+            $this->traceSuccessResponseReady();
 
             return ResponseFramework::json($this->publicUploadResponse($result), !empty($result['duplicate']) ? 200 : 201);
         } finally {
             if ($temporaryFile !== null && is_file($temporaryFile)) {
+                $this->traceTemporaryCleanupStart();
                 @unlink($temporaryFile);
+                $this->traceTemporaryCleanupComplete();
             }
         }
     }
@@ -360,5 +413,190 @@ final class SwallowtailRawUploadApiService
             UPLOAD_ERR_EXTENSION => 'A PHP extension stopped the upload.',
             default => 'RAW upload failed.',
         };
+    }
+
+    private function traceHandleUploadStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceMethodRejected(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenBlockCheckStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenBlockCheckComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenBlockCheckBlocked(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenAuthenticationStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenAuthenticationComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenFailureAuditStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceTokenFailureAuditComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailedTokenRecordStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailedTokenRecordComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailedTokenRecordBlocked(): void
+    {
+        logDetails();
+    }
+
+    private function traceAuthenticationRejectedResponseReady(): void
+    {
+        logDetails();
+    }
+
+    private function traceUploadSourceResolveStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceUploadSourceResolveComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyLimitStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyLimitComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyLimitExceeded(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyCopyStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyCopyComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyUploadReady(): void
+    {
+        logDetails();
+    }
+
+    private function traceMultipartUploadReady(): void
+    {
+        logDetails();
+    }
+
+    private function traceUploadErrorCheckStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceUploadErrorCheckComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceUploadErrorCheckFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceIngestStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceIngestComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceIngestRuntimeException(): void
+    {
+        logDetails();
+    }
+
+    private function traceIngestValidationFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailureAuditStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailureAuditComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceFailureResponseReady(): void
+    {
+        logDetails();
+    }
+
+    private function traceSuccessAuditStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceSuccessAuditComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceSuccessResponseReady(): void
+    {
+        logDetails();
+    }
+
+    private function traceTemporaryCleanupStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceTemporaryCleanupComplete(): void
+    {
+        logDetails();
     }
 }

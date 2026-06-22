@@ -340,22 +340,35 @@ final class SwallowtailStorageService
 
     public function storeSourceFile(string $sourcePath, string $checksum, bool $move = false): array
     {
+        $this->traceStoreSourceFileStart();
+
         if (!is_file($sourcePath) || !is_readable($sourcePath)) {
+            $this->traceStoreSourceFileUnreadable();
+
             throw new RuntimeException('RAW source file is not readable.');
         }
 
         $sourceBytes = (int)filesize($sourcePath);
+        $this->traceStoreSourceLocationsStart();
         $locations = $this->writableLocationsForChecksum($checksum, $this->storageLocations($sourceBytes));
+        $this->traceStoreSourceLocationsComplete();
         if ($locations === []) {
+            $this->traceStoreSourceNoWritableLocation();
+
             throw new RuntimeException('No writable SwallowTail storage location available.');
         }
 
         foreach ($locations as $location) {
+            $this->traceStoreSourceDestinationStart();
             $destinationPath = $this->imagePath((string)$location['storage_base_location'], $checksum, 'source');
+            $this->traceStoreSourceDestinationComplete();
             try {
+                $this->traceStoreSourceDirectoryStart();
                 $this->ensureDirectoryForPath($destinationPath);
+                $this->traceStoreSourceDirectoryComplete();
 
                 if (!is_file($destinationPath)) {
+                    $this->traceStoreSourceWriteStart();
                     try {
                         $stored = $this->storeFileToStorage($sourcePath, $destinationPath, $move);
                     } catch (Throwable $exception) {
@@ -369,8 +382,11 @@ final class SwallowtailStorageService
                             $this->filesystemFailureSuffix(null, $exception)
                         ), 0, $exception);
                     }
+                    $this->traceStoreSourceWriteComplete();
 
                     if (!$stored['success']) {
+                        $this->traceStoreSourceWriteFailed();
+
                         throw new RuntimeException(sprintf(
                             'Unable to store RAW file in SwallowTail storage: source=%s destination=%s storage_base_location=%s bytes=%d move=%s%s',
                             $sourcePath,
@@ -386,7 +402,11 @@ final class SwallowtailStorageService
                         $this->filesystemOperation(static fn(): bool => chmod($destinationPath, 0660));
                     } catch (Throwable) {
                     }
+                } else {
+                    $this->traceStoreSourceDestinationExists();
                 }
+
+                $this->traceStoreSourceFileComplete();
 
                 return [
                     'bytes' => (int)filesize($destinationPath),
@@ -394,9 +414,13 @@ final class SwallowtailStorageService
                     'absolute_path' => $destinationPath,
                 ];
             } catch (RuntimeException) {
+                $this->traceStoreSourceLocationFailed();
+
                 continue;
             }
         }
+
+        $this->traceStoreSourceNoWritableLocation();
 
         throw new RuntimeException('No writable SwallowTail storage location available.');
     }
@@ -432,6 +456,81 @@ final class SwallowtailStorageService
         }
 
         return ['success' => true, 'warning' => $rename['warning']];
+    }
+
+    private function traceStoreSourceFileStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceFileComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceFileUnreadable(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceLocationsStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceLocationsComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceNoWritableLocation(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceDestinationStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceDestinationComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceDirectoryStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceDirectoryComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceWriteStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceWriteComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceWriteFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceDestinationExists(): void
+    {
+        logDetails();
+    }
+
+    private function traceStoreSourceLocationFailed(): void
+    {
+        logDetails();
     }
 
     public function imageInfo(array $photo, string $imageType): ?array
