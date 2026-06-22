@@ -48,6 +48,7 @@
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
 #define RAW_UPLOAD_FAILED_PERMANENT 3
 #define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
+#define UPLOAD_TIME_WINDOW_SIZE 30
 
 typedef unsigned __int64 U64;
 
@@ -101,7 +102,10 @@ typedef struct AppState {
     LONG processing;
     LONG uploadsPaused;
     LONG shutdownRequested;
-    U64 totalUploadMillis;
+    U64 uploadMillisWindow[UPLOAD_TIME_WINDOW_SIZE];
+    DWORD uploadMillisWindowCount;
+    DWORD uploadMillisWindowNext;
+    U64 uploadMillisWindowTotal;
     U64 serverMaxRawUploadBytes;
     DWORD nextQueueId;
     DWORD queueDoneSinceCompact;
@@ -148,6 +152,7 @@ static int UploadsPaused(void);
 static int ShutdownRequested(void);
 static DWORD ClearUploadedHistoryCache(void);
 static U64 ParseU64(const char *text);
+static void RecordSuccessfulUpload(DWORD elapsedMillis);
 
 static HICON AppIcon(void)
 {
@@ -2012,10 +2017,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     uploadResult = UploadFileRaw(path, hash, sizeBytes);
     if (uploadResult == RAW_UPLOAD_OK) {
         DWORD elapsed = GetTickCount() - start;
-        EnterCriticalSection(&g_app.lock);
-        g_app.totalUploadMillis += elapsed;
-        LeaveCriticalSection(&g_app.lock);
-        InterlockedIncrement(&g_app.totalUploaded);
+        RecordSuccessfulUpload(elapsed);
         LogMessage("Process uploaded: path=%s sha256=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
         AppendQueueDone(queueId, "uploaded");
         CompactQueueIfNeeded();
@@ -2035,6 +2037,26 @@ static void ProcessPath(DWORD queueId, const char *path)
         QueueRequeue(queueId, path);
         Sleep(5000);
     }
+}
+
+static void RecordSuccessfulUpload(DWORD elapsedMillis)
+{
+    U64 elapsed = (U64)elapsedMillis;
+
+    EnterCriticalSection(&g_app.lock);
+    if (g_app.uploadMillisWindowCount < UPLOAD_TIME_WINDOW_SIZE) {
+        g_app.uploadMillisWindowCount++;
+    } else {
+        g_app.uploadMillisWindowTotal -= g_app.uploadMillisWindow[g_app.uploadMillisWindowNext];
+    }
+    g_app.uploadMillisWindow[g_app.uploadMillisWindowNext] = elapsed;
+    g_app.uploadMillisWindowTotal += elapsed;
+    g_app.uploadMillisWindowNext++;
+    if (g_app.uploadMillisWindowNext >= UPLOAD_TIME_WINDOW_SIZE) {
+        g_app.uploadMillisWindowNext = 0;
+    }
+    g_app.totalUploaded++;
+    LeaveCriticalSection(&g_app.lock);
 }
 
 static DWORD WINAPI ProcessorThread(LPVOID param)
@@ -2691,7 +2713,9 @@ static void RefreshStats(void)
     processing = g_app.processing;
     serverMaxRawUploadState = g_app.serverMaxRawUploadState;
     serverMaxRawUploadBytes = g_app.serverMaxRawUploadBytes;
-    if (g_app.totalUploaded > 0) avg = g_app.totalUploadMillis / (U64)g_app.totalUploaded;
+    if (g_app.uploadMillisWindowCount > 0) {
+        avg = g_app.uploadMillisWindowTotal / (U64)g_app.uploadMillisWindowCount;
+    }
     LeaveCriticalSection(&g_app.lock);
     UpdateTrayTooltip(g_app.mainWindow);
     if (!g_app.statsWindow) return;
