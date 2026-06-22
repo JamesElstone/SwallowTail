@@ -164,7 +164,7 @@ final class SwallowtailPhotoUiService
     {
         logDetails();
 
-        if ($photoId <= 0 || $userId <= 0 || !$this->schemaAvailable()) {
+        if ($photoId <= 0 || $userId <= 0) {
             return null;
         }
 
