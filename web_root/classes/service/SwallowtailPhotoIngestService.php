@@ -86,17 +86,13 @@ final class SwallowtailPhotoIngestService
 
     public function ingestLocalRawFile(string $sourcePath, string $originalFilename, array $context = []): array
     {
-        $this->traceIngestLocalRawFileStart();
-        $this->traceValidateRawFileStart();
         $validation = $this->validateRawFile(
             $sourcePath,
             $originalFilename,
             $this->contextMaxRawBytes($context)
         );
-        $this->traceValidateRawFileComplete();
 
         if (!$validation['valid']) {
-            $this->traceValidateRawFileFailed();
 
             return [
                 'success' => false,
@@ -106,18 +102,15 @@ final class SwallowtailPhotoIngestService
 
         $sha256 = $this->contextSha256($context);
         if ($sha256 === null) {
-            $this->traceSha256Start();
             $sha256 = hash_file('sha256', $sourcePath);
             if (!is_string($sha256) || $sha256 === '') {
                 throw new RuntimeException('Unable to checksum RAW file.');
             }
             $sha256 = strtolower($sha256);
-            $this->traceSha256Complete();
         }
 
         $expectedSha256 = strtolower(trim((string)($context['expected_sha256'] ?? '')));
         if ($expectedSha256 !== '' && !hash_equals($expectedSha256, $sha256)) {
-            $this->traceExpectedSha256Mismatch();
 
             return [
                 'success' => false,
@@ -125,11 +118,8 @@ final class SwallowtailPhotoIngestService
             ];
         }
 
-        $this->traceExistingPhotoLookupStart();
         $existing = $this->photoLibraryService->photoByChecksum($sha256);
-        $this->traceExistingPhotoLookupComplete();
         if ($existing !== null) {
-            $this->traceDuplicateRecordStart();
             $recorded = $this->photoLibraryService->recordRawUpload([
                 'sha256' => $sha256,
                 'original_filename' => $originalFilename,
@@ -138,9 +128,6 @@ final class SwallowtailPhotoIngestService
                 'upload_token_id' => $context['upload_token_id'] ?? null,
                 'request_metadata' => (array)($context['request_metadata'] ?? []),
             ]);
-            $this->traceDuplicateRecordComplete();
-
-            $this->traceIngestLocalRawFileComplete();
 
             return [
                 'success' => true,
@@ -152,16 +139,13 @@ final class SwallowtailPhotoIngestService
             ];
         }
 
-        $this->traceStorageStoreStart();
         $stored = $this->storageService->storeSourceFile(
             $sourcePath,
             $sha256,
             !empty($context['move_source']),
             $this->contextStorageBaseLocation($context)
         );
-        $this->traceStorageStoreComplete();
 
-        $this->traceRecordRawUploadStart();
         $recorded = $this->photoLibraryService->recordRawUpload([
             'sha256' => $sha256,
             'original_filename' => $originalFilename,
@@ -173,12 +157,9 @@ final class SwallowtailPhotoIngestService
             'upload_token_id' => $context['upload_token_id'] ?? null,
             'request_metadata' => (array)($context['request_metadata'] ?? []),
         ]);
-        $this->traceRecordRawUploadComplete();
 
         $photoId = (int)($recorded['photo']['id'] ?? 0);
-        $this->traceConversionQueueStart();
         $conversionJobs = $this->conversionQueueService->enqueueRawConversionJobs($photoId);
-        $this->traceConversionQueueComplete();
         $firstJobId = null;
         foreach ($conversionJobs as $job) {
             $jobId = (int)($job['job_id'] ?? 0);
@@ -187,8 +168,6 @@ final class SwallowtailPhotoIngestService
                 break;
             }
         }
-
-        $this->traceIngestLocalRawFileComplete();
 
         return [
             'success' => true,
@@ -292,93 +271,4 @@ final class SwallowtailPhotoIngestService
         return $location !== '' ? $location : null;
     }
 
-    private function traceIngestLocalRawFileStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceIngestLocalRawFileComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceValidateRawFileStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceValidateRawFileComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceValidateRawFileFailed(): void
-    {
-        logDetails();
-    }
-
-    private function traceSha256Start(): void
-    {
-        logDetails();
-    }
-
-    private function traceSha256Complete(): void
-    {
-        logDetails();
-    }
-
-    private function traceExpectedSha256Mismatch(): void
-    {
-        logDetails();
-    }
-
-    private function traceExistingPhotoLookupStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceExistingPhotoLookupComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceDuplicateRecordStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceDuplicateRecordComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceStorageStoreStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceStorageStoreComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceRecordRawUploadStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceRecordRawUploadComplete(): void
-    {
-        logDetails();
-    }
-
-    private function traceConversionQueueStart(): void
-    {
-        logDetails();
-    }
-
-    private function traceConversionQueueComplete(): void
-    {
-        logDetails();
-    }
 }

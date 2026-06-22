@@ -14,12 +14,10 @@ final class SwallowtailPhotoUiService
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
     ) {
-        logDetails();
     }
 
     public function accessiblePhotos(int $userId, int $page = 1, int $perPage = 24): array
     {
-        logDetails();
 
         if ($userId <= 0) {
             return $this->emptyPaginated($page, $perPage);
@@ -65,7 +63,6 @@ final class SwallowtailPhotoUiService
 
     public function recentUploads(int $userId, int $limit = 8): array
     {
-        logDetails();
 
         if ($userId <= 0) {
             return [];
@@ -104,7 +101,6 @@ final class SwallowtailPhotoUiService
 
     public function photoDetails(int $photoId, int $userId): ?array
     {
-        logDetails();
 
         if ($photoId <= 0 || $userId <= 0) {
             return null;
@@ -143,7 +139,6 @@ final class SwallowtailPhotoUiService
 
     public function photoAsset(int $photoId, int $userId, string $type): ?array
     {
-        logDetails();
 
         if ($photoId <= 0 || $userId <= 0) {
             return null;
@@ -156,21 +151,15 @@ final class SwallowtailPhotoUiService
 
         $params = ['photo_id' => $photoId];
         $where = 'photo.id = :photo_id AND ' . $this->accessWhereSql($userId, $params, 'photo');
-        $this->tracePhotoAssetRowLookupStart();
         $photo = InterfaceDB::fetchOne('SELECT * FROM photos photo WHERE ' . $where . ' LIMIT 1', $params);
         if (!is_array($photo)) {
-            $this->tracePhotoAssetRowNotFound();
             return null;
         }
-        $this->tracePhotoAssetRowLookupComplete();
 
-        $this->tracePhotoAssetImageInfoStart();
         $info = $this->storageService->imageInfo($photo, $type);
         if ($info === null) {
-            $this->tracePhotoAssetImageInfoMissing();
             return null;
         }
-        $this->tracePhotoAssetImageInfoComplete();
 
         return [
             'path' => (string)$info['absolute_path'],
@@ -183,7 +172,6 @@ final class SwallowtailPhotoUiService
 
     public function userCanViewPhoto(int $photoId, int $userId): bool
     {
-        logDetails();
 
         if ($photoId <= 0 || $userId <= 0) {
             return false;
@@ -198,39 +186,8 @@ final class SwallowtailPhotoUiService
         );
     }
 
-    private function tracePhotoAssetRowLookupStart(): void
-    {
-        logDetails();
-    }
-
-    private function tracePhotoAssetRowLookupComplete(): void
-    {
-        logDetails();
-    }
-
-    private function tracePhotoAssetRowNotFound(): void
-    {
-        logDetails();
-    }
-
-    private function tracePhotoAssetImageInfoStart(): void
-    {
-        logDetails();
-    }
-
-    private function tracePhotoAssetImageInfoComplete(): void
-    {
-        logDetails();
-    }
-
-    private function tracePhotoAssetImageInfoMissing(): void
-    {
-        logDetails();
-    }
-
     private function photoImages(array $photo): array
     {
-        logDetails();
 
         $images = [];
         foreach (self::IMAGE_TYPES as $type) {
@@ -250,7 +207,6 @@ final class SwallowtailPhotoUiService
 
     private function accessWhereSql(int $userId, array &$params, string $photoAlias): string
     {
-        logDetails();
 
         if ($this->isAdminUser($userId)) {
             return $photoAlias . ".upload_state = 'uploaded'";
@@ -278,7 +234,6 @@ final class SwallowtailPhotoUiService
 
     private function isAdminUser(int $userId): bool
     {
-        logDetails();
 
         try {
             return (new RoleAssignmentService())->isAdminUser($userId);
@@ -289,7 +244,6 @@ final class SwallowtailPhotoUiService
 
     private function normaliseGalleryPhotoRow(array $row): array
     {
-        logDetails();
 
         $row['id'] = (int)($row['id'] ?? 0);
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
@@ -303,7 +257,6 @@ final class SwallowtailPhotoUiService
 
     private function normalisePhotoRow(array $row): array
     {
-        logDetails();
 
         $row['id'] = (int)($row['id'] ?? 0);
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
@@ -321,7 +274,6 @@ final class SwallowtailPhotoUiService
 
     private function pagination(int $total, int $page, int $perPage): array
     {
-        logDetails();
 
         $totalPages = max(1, (int)ceil($total / $perPage));
         $page = min(max(1, $page), $totalPages);
@@ -340,7 +292,6 @@ final class SwallowtailPhotoUiService
 
     private function emptyPaginated(int $page, int $perPage): array
     {
-        logDetails();
 
         return [
             'rows' => [],
@@ -350,7 +301,6 @@ final class SwallowtailPhotoUiService
 
     private function nullableInt(mixed $value): ?int
     {
-        logDetails();
 
         if ($value === null || $value === '') {
             return null;
@@ -361,7 +311,6 @@ final class SwallowtailPhotoUiService
 
     private function assetFilename(string $originalFilename, string $type): string
     {
-        logDetails();
 
         $basename = pathinfo($originalFilename, PATHINFO_FILENAME);
         $basename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string)$basename) ?? 'photo';
