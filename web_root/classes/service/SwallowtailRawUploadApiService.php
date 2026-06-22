@@ -352,10 +352,12 @@ final class SwallowtailRawUploadApiService
 
     private function copyInputStreamToTemporaryFile(string $inputStream, string $temporaryFile, int $maxBytes, string $expectedSha256): array
     {
+        $this->traceRawBodyStreamOpenStart();
         $source = @fopen($inputStream, 'rb');
         $destination = @fopen($temporaryFile, 'wb');
 
         if (!is_resource($source) || !is_resource($destination)) {
+            $this->traceRawBodyStreamOpenFailed();
             if (is_resource($source)) {
                 fclose($source);
             }
@@ -365,46 +367,64 @@ final class SwallowtailRawUploadApiService
             @unlink($temporaryFile);
             throw new RuntimeException('Unable to open RAW upload stream.');
         }
+        $this->traceRawBodyStreamOpenComplete();
 
         $bytesCopied = 0;
         $hash = hash_init('sha256');
         while (!feof($source)) {
+            $this->traceRawBodyReadStart();
             $chunk = fread($source, 1024 * 1024);
             if ($chunk === false) {
+                $this->traceRawBodyReadFailed();
                 fclose($source);
                 fclose($destination);
                 @unlink($temporaryFile);
                 throw new RuntimeException('Unable to read RAW upload stream.');
             }
+            $this->traceRawBodyReadComplete();
 
             if ($chunk === '') {
                 continue;
             }
 
             $chunkBytes = strlen($chunk);
+            $this->traceRawBodyHashStart();
             hash_update($hash, $chunk);
+            $this->traceRawBodyHashComplete();
+
+            $this->traceRawBodyChunkLimitStart();
             if ($bytesCopied + $chunkBytes > $maxBytes) {
+                $this->traceRawBodyLimitExceeded();
                 fclose($source);
                 fclose($destination);
                 @unlink($temporaryFile);
                 throw new LengthException('RAW upload exceeded the configured size limit.');
             }
+            $this->traceRawBodyChunkLimitComplete();
 
+            $this->traceRawBodyWriteStart();
             $written = fwrite($destination, $chunk);
             if ($written === false || $written !== $chunkBytes) {
+                $this->traceRawBodyWriteFailed();
                 fclose($source);
                 fclose($destination);
                 @unlink($temporaryFile);
                 throw new RuntimeException('Unable to write RAW upload stream.');
             }
+            $this->traceRawBodyWriteComplete();
 
             $bytesCopied += $chunkBytes;
         }
+        $this->traceRawBodyStreamCloseStart();
         fclose($source);
         fclose($destination);
+        $this->traceRawBodyStreamCloseComplete();
 
+        $this->traceRawBodyFinalHashStart();
         $sha256 = strtolower(hash_final($hash));
+        $this->traceRawBodyFinalHashComplete();
         if (!hash_equals($expectedSha256, $sha256)) {
+            $this->traceRawBodyChecksumMismatch();
             @unlink($temporaryFile);
             throw new UnexpectedValueException('Uploaded RAW checksum did not match the expected SHA-256 value.');
         }
@@ -543,6 +563,96 @@ final class SwallowtailRawUploadApiService
     }
 
     private function traceRawBodyCopyComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyStreamOpenStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyStreamOpenComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyStreamOpenFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyReadStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyReadComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyReadFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyHashStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyHashComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyChunkLimitStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyChunkLimitComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyWriteStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyWriteComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyWriteFailed(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyStreamCloseStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyStreamCloseComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyFinalHashStart(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyFinalHashComplete(): void
+    {
+        logDetails();
+    }
+
+    private function traceRawBodyChecksumMismatch(): void
     {
         logDetails();
     }
