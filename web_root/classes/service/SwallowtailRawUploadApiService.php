@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 final class SwallowtailRawUploadApiService
 {
+    private const RAW_UPLOAD_WRITE_BUFFER_BYTES = 4 * 1024 * 1024;
+
     public function __construct(
         private readonly SwallowtailPhotoIngestService $photoIngestService = new SwallowtailPhotoIngestService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -370,6 +372,8 @@ final class SwallowtailRawUploadApiService
         $this->traceRawBodyStreamOpenComplete();
 
         $bytesCopied = 0;
+        $writeBuffer = '';
+        $writeBufferBytes = 0;
         $hash = hash_init('sha256');
         while (!feof($source)) {
             $this->traceRawBodyReadStart();
@@ -402,19 +406,30 @@ final class SwallowtailRawUploadApiService
             }
             $this->traceRawBodyChunkLimitComplete();
 
-            $this->traceRawBodyWriteStart();
-            $written = fwrite($destination, $chunk);
-            if ($written === false || $written !== $chunkBytes) {
+            $writeBuffer .= $chunk;
+            $writeBufferBytes += $chunkBytes;
+            if ($writeBufferBytes >= self::RAW_UPLOAD_WRITE_BUFFER_BYTES && !$this->writeRawBodyBuffer($destination, $writeBuffer)) {
                 $this->traceRawBodyWriteFailed();
                 fclose($source);
                 fclose($destination);
                 @unlink($temporaryFile);
                 throw new RuntimeException('Unable to write RAW upload stream.');
             }
-            $this->traceRawBodyWriteComplete();
+            if ($writeBufferBytes >= self::RAW_UPLOAD_WRITE_BUFFER_BYTES) {
+                $writeBuffer = '';
+                $writeBufferBytes = 0;
+            }
 
             $bytesCopied += $chunkBytes;
         }
+        if ($writeBufferBytes > 0 && !$this->writeRawBodyBuffer($destination, $writeBuffer)) {
+            $this->traceRawBodyWriteFailed();
+            fclose($source);
+            fclose($destination);
+            @unlink($temporaryFile);
+            throw new RuntimeException('Unable to write RAW upload stream.');
+        }
+
         $this->traceRawBodyStreamCloseStart();
         fclose($source);
         fclose($destination);
@@ -434,6 +449,24 @@ final class SwallowtailRawUploadApiService
             'bytes' => $bytesCopied,
             'sha256' => $sha256,
         ];
+    }
+
+    private function writeRawBodyBuffer($destination, string $buffer): bool
+    {
+        $bufferBytes = strlen($buffer);
+        $offset = 0;
+
+        $this->traceRawBodyWriteStart();
+        while ($offset < $bufferBytes) {
+            $written = fwrite($destination, substr($buffer, $offset));
+            if ($written === false || $written <= 0) {
+                return false;
+            }
+            $offset += $written;
+        }
+        $this->traceRawBodyWriteComplete();
+
+        return true;
     }
 
     private function contentLengthExceedsRawLimit(RequestFramework $request, int $maxBytes): bool
