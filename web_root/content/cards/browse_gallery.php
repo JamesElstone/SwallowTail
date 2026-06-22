@@ -11,29 +11,21 @@ final class _browse_galleryCard extends CardBaseFramework
 {
     public function key(): string
     {
-        logDetails();
-
         return 'browse_gallery';
     }
 
     protected function additionalInvalidationFacts(): array
     {
-        logDetails();
-
         return ['browse.gallery', 'cr2.upload'];
     }
 
     public function title(): string
     {
-        logDetails();
-
         return 'Browse Gallery';
     }
 
     public function helper(array $context): string
     {
-        logDetails();
-
         return 'Previews for photos you can view.';
     }
 
@@ -43,15 +35,11 @@ final class _browse_galleryCard extends CardBaseFramework
         array $pageContext,
         ActionResultFramework $actionResult
     ): array {
-        logDetails();
-
         return $this->applyPaginationContext($request, $pageContext);
     }
 
     public function render(array $context): string
     {
-        logDetails();
-
         $userId = $this->currentUserId();
         $service = new SwallowtailPhotoUiService();
 
@@ -81,8 +69,6 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function photoTile(array $photo): string
     {
-        logDetails();
-
         $photoId = (int)($photo['id'] ?? 0);
         $filename = (string)($photo['original_filename'] ?? 'Photo');
         $viewerUrl = '?page=picture_viewer&photo_id=' . rawurlencode((string)$photoId);
@@ -102,8 +88,6 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function galleryPreviewType(array $photo): ?string
     {
-        logDetails();
-
         if (!empty($photo['thumbnail_ready'])) {
             return 'thumbnail';
         }
@@ -113,15 +97,11 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function photoAssetUrl(int $photoId, string $type): string
     {
-        logDetails();
-
         return '/api/photo-asset.php?photo_id=' . rawurlencode((string)$photoId) . '&type=' . rawurlencode($type);
     }
 
     private function statusIndicator(string $state): string
     {
-        logDetails();
-
         $status = $this->statusIndicatorState($state);
         $label = match ($status) {
             'ready' => 'Ready',
@@ -136,8 +116,6 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function statusIndicatorState(string $state): string
     {
-        logDetails();
-
         $state = strtolower(trim($state));
         if ($state === 'ready' || $state === 'not_required') {
             return 'ready';
@@ -151,8 +129,6 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function statusIconSvg(string $status): string
     {
-        logDetails();
-
         $attributes = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
 
         return match ($status) {
@@ -164,8 +140,6 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function currentUserId(): int
     {
-        logDetails();
-
         $sessionAuthenticationService = new SessionAuthenticationService();
         $sessionAuthenticationService->startSession();
         $currentDeviceId = trim((string)AntiFraudService::instance()->requestValue('Client-Device-ID'));
