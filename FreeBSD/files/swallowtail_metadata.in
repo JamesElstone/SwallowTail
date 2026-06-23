@@ -75,6 +75,9 @@ swallowtail_metadata_precmd()
 			-g "${swallowtail_metadata_worker_group}" -m 0640 \
 			/dev/null "${swallowtail_metadata_log}"
 	fi
+	chown "${swallowtail_metadata_worker_user}:${swallowtail_metadata_worker_group}" \
+		"${swallowtail_metadata_log}"
+	chmod 0640 "${swallowtail_metadata_log}"
 
 	swallowtail_metadata_export_env
 	${swallowtail_metadata_python} -m swallowtail_metadata --health
