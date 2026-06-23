@@ -25,12 +25,24 @@ class StorageWorker:
     def run_forever(self) -> None:
         self.log.info("Storage worker started")
         self.refresh("startup")
-        while not self.shutdown_requested.wait(self.config.interval_seconds):
-            reason = "timer"
+        next_refresh_at = time.monotonic() + self.config.interval_seconds
+
+        while not self.shutdown_requested.is_set():
+            now = time.monotonic()
+            wait_seconds = min(self.config.mount_poll_seconds, max(0.0, next_refresh_at - now))
+            if self.shutdown_requested.wait(wait_seconds):
+                break
+
+            now = time.monotonic()
+            if now >= next_refresh_at:
+                self.refresh("timer")
+                next_refresh_at = time.monotonic() + self.config.interval_seconds
+                continue
+
             signature = self.mount_signature()
             if signature != "" and signature != self.last_mount_signature:
-                reason = "mount-change"
-            self.refresh(reason)
+                self.refresh("mount-change")
+                next_refresh_at = time.monotonic() + self.config.interval_seconds
         self.log.info("Storage worker stopped")
 
     def run_once(self) -> bool:
@@ -59,6 +71,7 @@ class StorageWorker:
             "state": "running",
             "project_root": self.config.project_root,
             "interval_seconds": self.config.interval_seconds,
+            "mount_poll_seconds": self.config.mount_poll_seconds,
             "last_mount_signature": self.last_mount_signature,
         }
         return payload

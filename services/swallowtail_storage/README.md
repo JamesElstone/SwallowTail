@@ -4,7 +4,8 @@ The storage service refreshes the Redis storage snapshot used by PHP uploads and
 processes durable storage migration jobs.
 
 It runs `tools/php/storageCache.php refresh` at startup and on its normal
-interval, refreshes early when the host mount signature changes, and runs
+interval, checks the host mount signature every 30 seconds so it can refresh
+early when mounted storage changes, and runs
 `tools/php/storageCache.php process-migrations <limit>` after each refresh.
 
 ## Install On FreeBSD
@@ -25,6 +26,7 @@ installed rc.d script. Override these with `sysrc` if needed:
 ```sh
 sysrc swallowtail_storage_php=/usr/local/bin/php
 sysrc swallowtail_storage_interval_seconds=300
+sysrc swallowtail_storage_mount_poll_seconds=30
 sysrc swallowtail_storage_migration_limit=10
 sysrc swallowtail_storage_log=/var/log/swallowtail/swallowtail_storage.log
 sysrc swallowtail_storage_log_level=INFO

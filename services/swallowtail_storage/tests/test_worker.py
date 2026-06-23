@@ -7,6 +7,7 @@ import uuid
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from swallowtail_storage.config import StorageConfig
 from swallowtail_storage.worker import StorageWorker
@@ -55,6 +56,7 @@ class StorageWorkerTest(unittest.TestCase):
             php=sys.executable,
             project_root=str(self.root),
             interval_seconds=300,
+            mount_poll_seconds=30,
             migration_limit=5,
             log_file=str(self.log_file),
             log_level="INFO",
@@ -77,6 +79,52 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertTrue(status["success"])
         self.assertEqual("running", status["service"]["state"])
         self.assertEqual(str(self.root), status["service"]["project_root"])
+        self.assertEqual(30, status["service"]["mount_poll_seconds"])
+
+    def test_run_forever_checks_mounts_between_full_refreshes(self) -> None:
+        class FakeClock:
+            def __init__(self) -> None:
+                self.now = 0.0
+
+            def monotonic(self) -> float:
+                return self.now
+
+        class FakeShutdown:
+            def __init__(self, clock: FakeClock) -> None:
+                self.clock = clock
+                self.waits: list[float] = []
+
+            def is_set(self) -> bool:
+                return False
+
+            def wait(self, seconds: float) -> bool:
+                self.waits.append(seconds)
+                self.clock.now += seconds
+                return len(self.waits) >= 3
+
+        clock = FakeClock()
+        shutdown = FakeShutdown(clock)
+        worker = StorageWorker(self.config())
+        worker.shutdown_requested = shutdown
+        reasons: list[str] = []
+        signatures = iter(["sig1", "sig2"])
+
+        def refresh(reason: str) -> bool:
+            reasons.append(reason)
+            if reason == "startup":
+                worker.last_mount_signature = "sig1"
+            if reason == "mount-change":
+                worker.last_mount_signature = "sig2"
+            return True
+
+        worker.refresh = refresh
+        worker.mount_signature = lambda: next(signatures)
+
+        with patch("swallowtail_storage.worker.time.monotonic", clock.monotonic):
+            worker.run_forever()
+
+        self.assertEqual(["startup", "mount-change"], reasons)
+        self.assertEqual([30, 30, 30], shutdown.waits)
 
     def test_health_checks_validate_storage_status_and_redis(self) -> None:
         worker = StorageWorker(self.config())
@@ -93,6 +141,7 @@ class StorageWorkerTest(unittest.TestCase):
                 php=config.php,
                 project_root=config.project_root,
                 interval_seconds=config.interval_seconds,
+                mount_poll_seconds=config.mount_poll_seconds,
                 migration_limit=config.migration_limit,
                 log_file=config.log_file,
                 log_level=config.log_level,

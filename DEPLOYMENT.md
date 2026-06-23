@@ -229,6 +229,7 @@ Useful service tunables can be set in `/etc/rc.conf`:
 ```sh
 sysrc swallowtail_conversion_poll_interval_seconds=5
 sysrc swallowtail_storage_interval_seconds=300
+sysrc swallowtail_storage_mount_poll_seconds=30
 ```
 
 The RAW conversion worker reads database settings from

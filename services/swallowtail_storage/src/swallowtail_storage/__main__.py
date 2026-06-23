@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--project-root", default=_env("PROJECT_ROOT", "/usr/local/swallowtail"), help="SwallowTail checkout root")
     parser.add_argument("--php", default=_env("PHP", "/usr/local/bin/php"), help="PHP executable")
     parser.add_argument("--interval-seconds", type=int, default=_env_int("INTERVAL_SECONDS", 300), help="Storage refresh interval")
+    parser.add_argument("--mount-poll-seconds", type=int, default=_env_int("MOUNT_POLL_SECONDS", 30), help="Mount change check interval")
     parser.add_argument("--migration-limit", type=int, default=_env_int("MIGRATION_LIMIT", 10), help="Migration jobs to process per refresh")
     parser.add_argument("--log-file", default=_env("LOG_FILE", "/var/log/swallowtail/swallowtail_storage.log"), help="Log file path")
     parser.add_argument("--log-level", default=_env("LOG_LEVEL", "INFO"), help="Log level")
@@ -35,6 +36,7 @@ def main() -> int:
         php=args.php,
         project_root=args.project_root,
         interval_seconds=max(10, args.interval_seconds),
+        mount_poll_seconds=max(5, args.mount_poll_seconds),
         migration_limit=max(1, args.migration_limit),
         log_file=args.log_file,
         log_level=args.log_level.strip().upper(),

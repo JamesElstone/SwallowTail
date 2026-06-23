@@ -24,6 +24,7 @@ load_rc_config "$name"
 : ${swallowtail_storage_worker_user:="swallowtail"}
 : ${swallowtail_storage_worker_group:="swallowtail"}
 : ${swallowtail_storage_interval_seconds:="300"}
+: ${swallowtail_storage_mount_poll_seconds:="30"}
 : ${swallowtail_storage_migration_limit:="10"}
 : ${swallowtail_storage_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_storage.log"}
 : ${swallowtail_storage_log_level:="INFO"}
@@ -43,6 +44,7 @@ swallowtail_storage_export_env()
 	export SWALLOWTAIL_STORAGE_PROJECT_ROOT="${swallowtail_storage_project_root}"
 	export SWALLOWTAIL_STORAGE_PHP="${swallowtail_storage_php}"
 	export SWALLOWTAIL_STORAGE_INTERVAL_SECONDS="${swallowtail_storage_interval_seconds}"
+	export SWALLOWTAIL_STORAGE_MOUNT_POLL_SECONDS="${swallowtail_storage_mount_poll_seconds}"
 	export SWALLOWTAIL_STORAGE_MIGRATION_LIMIT="${swallowtail_storage_migration_limit}"
 	export SWALLOWTAIL_STORAGE_LOG_FILE="${swallowtail_storage_log}"
 	export SWALLOWTAIL_STORAGE_LOG_LEVEL="${swallowtail_storage_log_level}"
