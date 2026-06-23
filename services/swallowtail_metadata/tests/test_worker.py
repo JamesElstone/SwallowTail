@@ -69,8 +69,8 @@ class MetadataParserTest(unittest.TestCase):
     def test_canon_time_info_maps_london_and_utc_capture_time(self) -> None:
         fields = parse_metadata(
             {
-                "EXIF:DateTimeOriginal": "2024:02:01 20:39:49",
-                "Canon:TimeZone": 60,
+                "EXIF:DateTimeOriginal": "2024:07:01 20:39:49",
+                "Canon:TimeZone": 0,
                 "Canon:TimeZoneCity": 20,
                 "Canon:DaylightSavings": 60,
                 "EXIF:Make": "Canon",
@@ -85,8 +85,8 @@ class MetadataParserTest(unittest.TestCase):
             "Europe/London",
         )
 
-        self.assertEqual("2024-02-01 20:39:49", fields["captured_at_local"])
-        self.assertEqual("2024-02-01 19:39:49", fields["captured_at_utc"])
+        self.assertEqual("2024-07-01 20:39:49", fields["captured_at_local"])
+        self.assertEqual("2024-07-01 19:39:49", fields["captured_at_utc"])
         self.assertEqual(60, fields["captured_timezone_offset_minutes"])
         self.assertEqual("canon_makernote", fields["captured_timezone_source"])
         self.assertEqual(20, fields["camera_timezone_city_code"])

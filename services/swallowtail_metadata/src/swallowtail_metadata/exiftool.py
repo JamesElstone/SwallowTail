@@ -64,11 +64,12 @@ def parse_metadata(raw: dict[str, Any], server_timezone: str) -> dict[str, Any]:
     captured_local = _exif_datetime(_tag(raw, "DateTimeOriginal", "CreateDate", "DateTime"))
     offset_minutes = _offset_minutes(_tag(raw, "Canon:TimeZone", "TimeZone"))
     city_code = _int_or_none(_tag(raw, "Canon:TimeZoneCity", "TimeZoneCity"))
-    dst_minutes = _int_or_none(_tag(raw, "Canon:DaylightSavings", "DaylightSavings"))
+    dst_minutes = _daylight_savings_minutes(_tag(raw, "Canon:DaylightSavings", "DaylightSavings"))
     timezone_source = "unknown"
     captured_utc = None
 
     if captured_local is not None and offset_minutes is not None:
+        offset_minutes += dst_minutes or 0
         timezone_source = "canon_makernote"
         captured_utc = captured_local.replace(
             tzinfo=timezone(timedelta(minutes=offset_minutes))
@@ -147,6 +148,15 @@ def _offset_minutes(value: Any) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _daylight_savings_minutes(value: Any) -> int | None:
+    minutes = _int_or_none(value)
+    if minutes is None:
+        return None
+    if minutes in (-1, 1):
+        return minutes * 60
+    return minutes
 
 
 def _city_label(code: int | None, fallback: Any) -> str | None:
