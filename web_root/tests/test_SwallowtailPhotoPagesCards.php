@@ -378,6 +378,74 @@ $harness->check(_gallery::class, 'browse gallery thumbnails link to picture view
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
 
+$harness->check(_gallery::class, 'browse gallery pagination renders first and last controls', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'paginationControls');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke(
+        $card,
+        ['page' => ['page_id' => 'gallery']],
+        [
+            'page' => 2,
+            'per_page' => 24,
+            'total_items' => 72,
+            'total_pages' => 3,
+            'has_previous_page' => true,
+            'has_next_page' => true,
+            'first_item' => 25,
+            'last_item' => 48,
+        ],
+        'photos',
+        null,
+        ['cards[]' => 'browse_gallery']
+    );
+
+    $harness->assertTrue(str_contains($html, '>First<'));
+    $harness->assertTrue(str_contains($html, '>Prev<'));
+    $harness->assertTrue(str_contains($html, '>Next<'));
+    $harness->assertTrue(str_contains($html, '>Last<'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_page" value="1"'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_page" value="3"'));
+});
+
+$harness->check(_gallery::class, 'browse gallery disables edge pagination controls', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'paginationControls');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke(
+        $card,
+        ['page' => ['page_id' => 'gallery']],
+        [
+            'page' => 1,
+            'per_page' => 24,
+            'total_items' => 24,
+            'total_pages' => 1,
+            'has_previous_page' => false,
+            'has_next_page' => false,
+            'first_item' => 1,
+            'last_item' => 24,
+        ],
+        'photos'
+    );
+
+    $harness->assertTrue(str_contains($html, 'button primary disabled" type="button" aria-disabled="true">First</button>'));
+    $harness->assertTrue(str_contains($html, 'button primary disabled" type="button" aria-disabled="true">Last</button>'));
+});
+
+$harness->check(_gallery::class, 'browse gallery renders auto refresh control', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'autoRefreshControl');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card);
+
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-refresh-control'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-refresh-toggle'));
+    $harness->assertTrue(str_contains($html, '>Auto refresh<'));
+});
+
 $harness->check(_gallery::class, 'browse gallery status icons match upload icon stroke', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'statusIconSvg');
@@ -409,7 +477,38 @@ $harness->check(_gallery::class, 'browse gallery falls back to embedded previews
     $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=43'));
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=embedded'));
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, 'Preview pending'));
+});
+
+$harness->check(_gallery::class, 'browse gallery tracks pending preview rows', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'hasPendingPreviews');
+    $method->setAccessible(true);
+
+    $harness->assertSame(true, $method->invoke($card, [[
+        'id' => 45,
+        'original_filename' => 'IMG_0045.CR2',
+        'conversion_state' => 'pending',
+        'thumbnail_ready' => false,
+        'embedded_ready' => false,
+    ]]));
+
+    $harness->assertSame(true, $method->invoke($card, [[
+        'id' => 46,
+        'original_filename' => 'IMG_0046.CR2',
+        'conversion_state' => 'ready',
+        'thumbnail_ready' => false,
+        'embedded_ready' => false,
+    ]]));
+
+    $harness->assertSame(false, $method->invoke($card, [[
+        'id' => 47,
+        'original_filename' => 'IMG_0047.CR2',
+        'conversion_state' => 'failed',
+        'thumbnail_ready' => false,
+        'embedded_ready' => false,
+    ]]));
 });
 
 $harness->check(_gallery::class, 'browse gallery shows failed status overlay', function () use ($harness): void {
@@ -425,5 +524,6 @@ $harness->check(_gallery::class, 'browse gallery shows failed status overlay', f
     ]);
 
     $harness->assertTrue(str_contains($html, 'gallery-status-failed'));
+    $harness->assertTrue(!str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, '>Conversion failed<'));
 });

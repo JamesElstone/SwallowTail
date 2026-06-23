@@ -3415,6 +3415,24 @@ label {
   gap: 14px;
 }
 
+.gallery-auto-refresh-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gallery-auto-refresh-control input {
+  margin: 0;
+}
+
 .gallery-tile {
   display: grid;
   gap: 10px;

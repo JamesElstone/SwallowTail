@@ -168,7 +168,8 @@ abstract class CardBaseFramework implements CardInterfaceFramework
         array $hiddenFields = [],
         string $method = 'post',
         array $formAttributes = [],
-        string $buttonClass = 'button primary'
+        string $buttonClass = 'button primary',
+        string $middleHtml = ''
     ): string {
         $hiddenFields = array_merge(
             [
@@ -182,14 +183,30 @@ abstract class CardBaseFramework implements CardInterfaceFramework
             $hiddenFields,
             static fn(mixed $value): bool => !is_array($value) && !is_object($value) && $value !== null && $value !== ''
         );
+        $currentPage = max(1, (int)($pagination['page'] ?? 1));
+        $lastPage = max(1, (int)($pagination['total_pages'] ?? $pagination['page_count'] ?? $currentPage));
+        $hasPreviousPage = (bool)($pagination['has_previous_page'] ?? $currentPage > 1);
+        $hasNextPage = (bool)($pagination['has_next_page'] ?? $currentPage < $lastPage);
 
         return '<div class="status-head">
             <div class="helper">' . HelperFramework::escape(HelperFramework::paginationItemsLabel($pagination, $itemLabel)) . '</div>
+            ' . $middleHtml . '
             <div class="actions-row">
                 ' . HelperFramework::paginationFormButton(
+                    'First',
+                    1,
+                    $hasPreviousPage,
+                    $this->paginationPageField($scope),
+                    $hiddenFields,
+                    '',
+                    $method,
+                    $formAttributes,
+                    $buttonClass
+                ) . '
+                ' . HelperFramework::paginationFormButton(
                     'Prev',
-                    max(1, (int)$pagination['page'] - 1),
-                    (bool)$pagination['has_previous_page'],
+                    max(1, $currentPage - 1),
+                    $hasPreviousPage,
                     $this->paginationPageField($scope),
                     $hiddenFields,
                     '',
@@ -199,8 +216,19 @@ abstract class CardBaseFramework implements CardInterfaceFramework
                 ) . '
                 ' . HelperFramework::paginationFormButton(
                     'Next',
-                    (int)$pagination['page'] + 1,
-                    (bool)$pagination['has_next_page'],
+                    $currentPage + 1,
+                    $hasNextPage,
+                    $this->paginationPageField($scope),
+                    $hiddenFields,
+                    '',
+                    $method,
+                    $formAttributes,
+                    $buttonClass
+                ) . '
+                ' . HelperFramework::paginationFormButton(
+                    'Last',
+                    $lastPage,
+                    $hasNextPage,
                     $this->paginationPageField($scope),
                     $hiddenFields,
                     '',

@@ -45,12 +45,21 @@ final class _browse_galleryCard extends CardBaseFramework
 
         $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), 24);
         $rows = (array)($gallery['rows'] ?? []);
+        $pagination = (array)($gallery['pagination'] ?? []);
 
         if ($rows === []) {
             return '<p class="helper">No accessible photos are available yet.</p>';
         }
 
-        $html = '<div class="gallery-grid">';
+        $hasPendingPreviews = $this->hasPendingPreviews($rows);
+        $pageField = $this->paginationPageField();
+        $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
+
+        $html = '<div class="gallery-grid"
+            data-gallery-auto-refresh="true"
+            data-gallery-pending="' . ($hasPendingPreviews ? '1' : '0') . '"
+            data-gallery-page="' . HelperFramework::escape((string)$page) . '"
+            data-gallery-page-field="' . HelperFramework::escape($pageField) . '">';
         foreach ($rows as $photo) {
             $html .= $this->photoTile((array)$photo);
         }
@@ -61,7 +70,11 @@ final class _browse_galleryCard extends CardBaseFramework
             (array)$gallery['pagination'],
             'photos',
             null,
-            ['cards[]' => 'browse_gallery']
+            ['cards[]' => 'browse_gallery'],
+            'post',
+            [],
+            'button primary',
+            $this->autoRefreshControl()
         );
 
         return $html;
@@ -73,12 +86,14 @@ final class _browse_galleryCard extends CardBaseFramework
         $filename = (string)($photo['original_filename'] ?? 'Photo');
         $viewerUrl = '?page=picture_viewer&photo_id=' . rawurlencode((string)$photoId);
         $previewType = $this->galleryPreviewType($photo);
+        $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
+        $pendingAttribute = $this->photoNeedsRefresh($photo) ? ' data-gallery-photo-pending="1"' : '';
         $thumbnail = $previewType !== null
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
-        $statusIndicator = $this->statusIndicator((string)($photo['conversion_state'] ?? 'pending'));
+        $statusIndicator = $this->statusIndicator($status);
 
-        return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '">
+        return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '"' . $pendingAttribute . '>
             <span class="gallery-thumb">' . $thumbnail . $statusIndicator . '</span>
             <span class="gallery-meta">
                 <strong>' . HelperFramework::escape($filename) . '</strong>
@@ -93,6 +108,36 @@ final class _browse_galleryCard extends CardBaseFramework
         }
 
         return !empty($photo['embedded_ready']) ? 'embedded' : null;
+    }
+
+    /**
+     * @param array<int, mixed> $rows
+     */
+    private function hasPendingPreviews(array $rows): bool
+    {
+        foreach ($rows as $photo) {
+            if (is_array($photo) && $this->photoNeedsRefresh($photo)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function photoNeedsRefresh(array $photo): bool
+    {
+        $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
+
+        return $status === 'processing'
+            || ($status !== 'failed' && $this->galleryPreviewType($photo) === null);
+    }
+
+    private function autoRefreshControl(): string
+    {
+        return '<label class="gallery-auto-refresh-control" data-gallery-auto-refresh-control>
+            <input type="checkbox" value="1" data-gallery-auto-refresh-toggle>
+            <span>Auto refresh</span>
+        </label>';
     }
 
     private function photoAssetUrl(int $photoId, string $type): string
