@@ -265,7 +265,15 @@ class ConversionWorker:
             if remaining <= 0:
                 return
             wait_seconds = min(self.STATUS_REFRESH_INTERVAL_SECONDS, remaining)
-            self.shutdown_requested.wait(wait_seconds)
+            if hasattr(self.redis, "pop_storage_wake"):
+                wait_started = time.monotonic()
+                if self.redis.pop_storage_wake(int(wait_seconds)):
+                    return
+                elapsed = time.monotonic() - wait_started
+                if elapsed < min(1.0, wait_seconds):
+                    self.shutdown_requested.wait(max(0.0, wait_seconds - elapsed))
+            else:
+                self.shutdown_requested.wait(wait_seconds)
             if not self.shutdown_requested.is_set() and deadline - time.monotonic() > 0:
                 self._touch_status()
 

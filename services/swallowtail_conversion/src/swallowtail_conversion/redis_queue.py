@@ -43,14 +43,27 @@ class RedisQueue:
         return self._to_text(response) == "OK"
 
     def pop(self) -> RedisMessage | None:
+        return self._blocking_pop([self.config.urgent_queue, self.config.normal_queue], self.config.timeout_seconds)
+
+    def pop_storage_wake(self, timeout_seconds: int) -> bool:
+        if self.config.storage_wake_queue == "":
+            return False
+
+        message = self._blocking_pop([self.config.storage_wake_queue], max(1, int(timeout_seconds)))
+        return message is not None
+
+    def _blocking_pop(self, queues: list[str], timeout_seconds: int) -> RedisMessage | None:
+        queues = [queue for queue in queues if queue != ""]
+        if queues == []:
+            return None
+
         try:
             with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
-                sock.settimeout(self.config.timeout_seconds + 2)
+                sock.settimeout(max(1, int(timeout_seconds)) + 2)
                 command = self._command(
                     "BRPOP",
-                    self.config.urgent_queue,
-                    self.config.normal_queue,
-                    str(self.config.timeout_seconds),
+                    *queues,
+                    str(max(1, int(timeout_seconds))),
                 )
                 sock.sendall(command)
                 response = self._read_resp(sock)
@@ -62,7 +75,7 @@ class RedisQueue:
 
         queue = self._to_text(response[0])
         payload = self._to_text(response[1])
-        return self._message_from_payload(queue, payload)
+        return self._message_from_payload(queue, payload) or RedisMessage(queue=queue, job_id=0)
 
     def pop_preempt(self) -> RedisMessage | None:
         if self.config.preempt_queue == "":

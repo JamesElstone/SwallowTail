@@ -68,6 +68,7 @@ def app_config(root: Path, rawtherapee_binary: str) -> AppConfig:
             urgent_queue="urgent",
             normal_queue="normal",
             preempt_queue="preempt",
+            storage_wake_queue="storage-wake",
             timeout_seconds=1,
         ),
         rawtherapee=RawTherapeeConfig(
@@ -208,6 +209,7 @@ class ConfigLoadingTest(unittest.TestCase):
                     "urgent_queue": "urgent-custom",
                     "normal_queue": "normal-custom",
                     "preempt_queue": "preempt-custom",
+                    "storage_wake_queue": "storage-wake-custom",
                 },
             },
         }
@@ -222,6 +224,7 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual("urgent-custom", config.redis.urgent_queue)
         self.assertEqual("normal-custom", config.redis.normal_queue)
         self.assertEqual("preempt-custom", config.redis.preempt_queue)
+        self.assertEqual("storage-wake-custom", config.redis.storage_wake_queue)
 
     def test_php_app_config_defaults_storage_settings_when_missing(self) -> None:
         with patch("swallowtail_conversion.config.subprocess.run") as run:
@@ -619,6 +622,38 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         self.assertEqual([300, 300, 100], shutdown.waits)
         self.assertEqual(["swallowtail_conversion", "swallowtail_conversion"], worker.redis.touched)
+
+    def test_storage_wake_message_interrupts_blocked_storage_wait(self) -> None:
+        class FakeShutdown:
+            def is_set(self) -> bool:
+                return False
+
+            def wait(self, _seconds: float) -> None:
+                raise AssertionError("storage wake should interrupt before event wait fallback")
+
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.waits: list[int] = []
+                self.touched: list[str] = []
+
+            def pop_storage_wake(self, timeout_seconds: int) -> bool:
+                self.waits.append(timeout_seconds)
+                return True
+
+            def touch_service(self, service_key: str) -> bool:
+                self.touched.append(service_key)
+                return True
+
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = FakeRedis()
+        worker.shutdown_requested = FakeShutdown()
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+
+        worker._wait_with_status(3600)
+
+        self.assertEqual([ConversionWorker.STATUS_REFRESH_INTERVAL_SECONDS], worker.redis.waits)
+        self.assertEqual([], worker.redis.touched)
 
     def test_storage_blocked_job_is_deferred_without_normal_failure(self) -> None:
         class FakeDb:

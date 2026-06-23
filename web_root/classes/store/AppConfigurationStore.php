@@ -370,6 +370,7 @@ final class AppConfigurationStore
                     'urgent_queue' => 'swallowtail:conversion:urgent',
                     'normal_queue' => 'swallowtail:conversion:normal',
                     'preempt_queue' => 'swallowtail:conversion:preempt',
+                    'storage_wake_queue' => 'swallowtail:conversion:storage_wake',
                 ],
             ],
             'site_context' => [

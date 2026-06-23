@@ -31,6 +31,21 @@ final class SwallowtailRedisService
         $this->command('DEL', $key);
     }
 
+    public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+    {
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json)) {
+            return false;
+        }
+
+        $pushed = is_int($this->command('LPUSH', $key, $json));
+        if ($pushed && $maxLength > 0) {
+            $this->command('LTRIM', $key, '0', (string)($maxLength - 1));
+        }
+
+        return $pushed;
+    }
+
     public function ping(): bool
     {
         return $this->command('PING') === 'PONG';
