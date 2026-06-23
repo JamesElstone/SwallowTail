@@ -41,6 +41,7 @@ required_files="${swallowtail_metadata_python} ${swallowtail_metadata_php} ${swa
 required_dirs="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
 extra_commands="reload onestatus"
 start_precmd="swallowtail_metadata_precmd"
+start_postcmd="swallowtail_metadata_postcmd"
 status_cmd="swallowtail_metadata_status"
 reload_cmd="swallowtail_metadata_reload"
 
@@ -81,6 +82,13 @@ swallowtail_metadata_precmd()
 
 	swallowtail_metadata_export_env
 	${swallowtail_metadata_python} -m swallowtail_metadata --health
+}
+
+swallowtail_metadata_postcmd()
+{
+	if [ -f "${pidfile}" ]; then
+		chmod 0640 "${pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_metadata_reload()

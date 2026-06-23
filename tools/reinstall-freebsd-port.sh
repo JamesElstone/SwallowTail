@@ -34,6 +34,12 @@ files/swallowtail-php-fpm.conf.in
 '
 SERVICE_NAMES='swallowtail_conversion swallowtail_storage swallowtail_metadata'
 WEB_SERVICE_NAMES='php_fpm apache24'
+LOCK_FILE=${SWALLOWTAIL_FREEBSD_REINSTALL_LOCK:-/var/run/swallowtail-freebsd-port.lock}
+
+if [ "${SWALLOWTAIL_FREEBSD_REINSTALL_LOCK_HELD:-}" != "1" ]; then
+	export SWALLOWTAIL_FREEBSD_REINSTALL_LOCK_HELD=1
+	exec lockf -k -t 0 "$LOCK_FILE" "$0" "$@"
+fi
 
 case "$PORT_DIR" in
 	""|"/")
@@ -117,6 +123,11 @@ echo "==> make in $PORT_DIR"
 
 echo "==> make reinstall in $PORT_DIR"
 ( cd "$PORT_DIR" && make reinstall )
+
+for service_name in $SERVICE_NAMES; do
+	echo "==> enabling $service_name"
+	sysrc "${service_name}_enable=YES" >/dev/null
+done
 
 for service_name in $WEB_SERVICE_NAMES; do
 	restart_or_start_service "$service_name"
