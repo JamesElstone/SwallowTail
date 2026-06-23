@@ -85,6 +85,27 @@ swallowtail_conversion_export_env()
 	export PYTHONDONTWRITEBYTECODE=1
 }
 
+swallowtail_conversion_require_root()
+{
+	requested_command=$1
+	base_command=${requested_command}
+
+	case "${base_command}" in
+	one*) base_command=${base_command#one} ;;
+	force*) base_command=${base_command#force} ;;
+	fast*) base_command=${base_command#fast} ;;
+	esac
+
+	case "${base_command}" in
+	start|stop|restart|reload|migrate)
+		if [ "$(id -u)" -ne 0 ]; then
+			echo "${name}: please run '${requested_command}' as root, for example: service ${name} ${requested_command}" >&2
+			exit 1
+		fi
+		;;
+	esac
+}
+
 swallowtail_conversion_precmd()
 {
 	install -d -o "${swallowtail_conversion_worker_user}" \
@@ -187,4 +208,5 @@ swallowtail_conversion_migrate()
 	' migrate "${pidfile}" "${swallowtail_conversion_project_root}" "${swallowtail_conversion_php}" "$0"
 }
 
+swallowtail_conversion_require_root "$1"
 run_rc_command "$1"
