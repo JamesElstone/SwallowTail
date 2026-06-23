@@ -3398,8 +3398,112 @@ label {
   box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.16), inset 0 0 0 1px rgba(15, 23, 42, 0.18);
 }
 
+.statistics-dashboard {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.statistics-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.statistics-metrics div {
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.statistics-metrics dt,
+.statistics-duration-row dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.statistics-metrics dd {
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.statistics-metrics span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.statistics-duration {
+  min-width: 0;
+}
+
+.statistics-duration h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.statistics-duration-list {
+  display: grid;
+  gap: 10px;
+}
+
+.statistics-duration-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.6fr) minmax(220px, 1.4fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.statistics-duration-row > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.statistics-duration-row strong,
+.statistics-duration-row span {
+  overflow-wrap: anywhere;
+}
+
+.statistics-duration-row span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.statistics-duration-row dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.statistics-duration-row dd {
+  margin: 3px 0 0;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 980px) {
-  .service-status-list {
+  .service-status-list,
+  .statistics-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .statistics-duration-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .statistics-metrics,
+  .statistics-duration-row dl {
     grid-template-columns: 1fr;
   }
 }

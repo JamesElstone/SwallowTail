@@ -23,17 +23,18 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'service_status', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
 });
 
-$harness->check(_dashboard::class, 'shows storage summary first on dashboard', function () use ($harness): void {
+$harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {
     $cards = (new _dashboard())->cards();
 
     $harness->assertSame('storage_summary', (string)($cards[0] ?? ''));
     $harness->assertSame('service_status', (string)($cards[1] ?? ''));
+    $harness->assertSame('statistics', (string)($cards[2] ?? ''));
 });
 
 $harness->check(SwallowtailServiceStatusService::class, 'reports pid-backed service state', function () use ($harness): void {
@@ -158,6 +159,59 @@ $harness->check(_storage_summaryCard::class, 'summarises included storage capaci
 
     $harness->assertTrue(str_contains($chartHtml, 'chart-pie-slice'));
     $harness->assertTrue(str_contains($chartHtml, 'Included storage capacity'));
+});
+
+$harness->check(SwallowtailStatisticsService::class, 'summarises photo and conversion job statistics', function () use ($harness): void {
+    InterfaceDB::execute('DROP TABLE IF EXISTS photo_conversion_jobs');
+    InterfaceDB::execute('DROP TABLE IF EXISTS photos');
+    InterfaceDB::execute("CREATE TABLE photos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_filename TEXT NOT NULL,
+        upload_state TEXT NOT NULL DEFAULT 'uploaded'
+    )");
+    InterfaceDB::execute("CREATE TABLE photo_conversion_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        image_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        duration_seconds REAL NULL
+    )");
+    InterfaceDB::execute("INSERT INTO photos (original_filename, upload_state) VALUES
+        ('IMG_0001.CR2', 'uploaded'),
+        ('IMG_0002.CR2', 'uploaded'),
+        ('IMG_0003.CR2', 'removed')");
+    InterfaceDB::execute("INSERT INTO photo_conversion_jobs (photo_id, image_type, status, duration_seconds) VALUES
+        (1, 'embedded', 'succeeded', 0.5),
+        (1, 'embedded', 'succeeded', 1.5),
+        (1, 'thumbnail', 'queued', NULL),
+        (2, 'thumbnail', 'processing', NULL),
+        (2, 'original', 'succeeded', 62.0),
+        (2, 'filtered', 'failed', 3.0)");
+
+    $summary = (new SwallowtailStatisticsService())->summary();
+    $jobs = (array)($summary['jobs'] ?? []);
+    $durations = (array)($summary['duration_by_image_type'] ?? []);
+
+    $harness->assertSame(2, (int)($summary['photos_current'] ?? 0));
+    $harness->assertSame(6, (int)($jobs['total'] ?? 0));
+    $harness->assertSame(2, (int)($jobs['outstanding'] ?? 0));
+    $harness->assertSame(3, (int)($jobs['completed'] ?? 0));
+    $harness->assertSame('embedded', (string)($durations[0]['image_type'] ?? ''));
+    $harness->assertSame(2, (int)($durations[0]['completed_jobs'] ?? 0));
+    $harness->assertSame(1.0, (float)($durations[0]['average_seconds'] ?? 0));
+});
+
+$harness->check(_statisticsCard::class, 'renders dashboard statistics totals and timings', function () use ($harness): void {
+    $card = new _statisticsCard();
+    $html = $card->render([]);
+
+    $harness->assertTrue(str_contains($html, 'Photos'));
+    $harness->assertTrue(str_contains($html, 'Total Jobs'));
+    $harness->assertTrue(str_contains($html, 'Jobs Outstanding'));
+    $harness->assertTrue(str_contains($html, 'Jobs Completed'));
+    $harness->assertTrue(str_contains($html, 'Time Taken per Job by Image Type'));
+    $harness->assertTrue(str_contains($html, 'Embedded'));
+    $harness->assertTrue(str_contains($html, '1.0s'));
 });
 
 $harness->check(_storage_availableCard::class, 'renders zpool dataset select and non-zfs migration controls', function () use ($harness): void {
