@@ -374,6 +374,32 @@ $harness->check(SwallowtailStoragePermissionRepairService::class, 'rejects unkno
     $harness->assertSame(false, $ranCommand);
 });
 
+$harness->check(SwallowtailStorageWakeService::class, 'sends storage wake after permission repair', function () use ($harness): void {
+    $redis = new class {
+        public string $capturedQueue = '';
+        public array $capturedPayload = [];
+        public int $capturedMaxLength = 0;
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->capturedQueue = $key;
+            $this->capturedPayload = $payload;
+            $this->capturedMaxLength = $maxLength;
+
+            return true;
+        }
+    };
+
+    $service = new SwallowtailStorageWakeService($redis);
+
+    $harness->assertSame(true, $service->notifyPermissionRepair('/storage/1'));
+    $harness->assertSame('swallowtail:conversion:storage_wake', $redis->capturedQueue);
+    $harness->assertSame('permission_repair', (string)($redis->capturedPayload['reason'] ?? ''));
+    $harness->assertSame('/storage/1', (string)($redis->capturedPayload['storage_base_location'] ?? ''));
+    $harness->assertTrue((int)($redis->capturedPayload['generated_at'] ?? 0) > 0);
+    $harness->assertSame(1, $redis->capturedMaxLength);
+});
+
 
 $harness->check(_storage_availableCard::class, 'renders ajax settings and per-location exclusion controls', function () use ($harness): void {
     $card = new _storage_availableCard();

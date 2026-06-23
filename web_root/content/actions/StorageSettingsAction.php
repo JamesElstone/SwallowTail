@@ -9,6 +9,11 @@ declare(strict_types=1);
 
 final class StorageSettingsAction implements ActionInterfaceFramework
 {
+    public function __construct(
+        private readonly ?SwallowtailStorageWakeService $storageWake = null,
+    ) {
+    }
+
     public function handle(RequestFramework $request, PageServiceFramework $services): ActionResultFramework
     {
         $session = new SessionAuthenticationService();
@@ -182,6 +187,8 @@ final class StorageSettingsAction implements ActionInterfaceFramework
                 'message' => $exception->getMessage(),
             ]]);
         }
+
+        ($this->storageWake ?? new SwallowtailStorageWakeService())->notifyPermissionRepair((string)$repair['base']);
 
         return ActionResultFramework::success(['storage.available', 'cr2.upload'], [[
             'type' => 'success',
