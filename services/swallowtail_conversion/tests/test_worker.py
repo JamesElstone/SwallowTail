@@ -465,6 +465,49 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertFalse(db.selected)
         self.assertEqual(["swallowtail_conversion"], worker.redis.touched)
 
+    def test_storage_blocked_wait_refreshes_heartbeat_inside_freshness_window(self) -> None:
+        class FakeClock:
+            def __init__(self) -> None:
+                self.now = 0.0
+
+            def monotonic(self) -> float:
+                return self.now
+
+        class FakeShutdown:
+            def __init__(self, clock: FakeClock) -> None:
+                self.clock = clock
+                self.waits: list[float] = []
+
+            def is_set(self) -> bool:
+                return False
+
+            def wait(self, seconds: float) -> None:
+                self.waits.append(seconds)
+                self.clock.now += seconds
+
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.touched: list[str] = []
+
+            def touch_service(self, service_key: str) -> bool:
+                self.touched.append(service_key)
+                return True
+
+        clock = FakeClock()
+        shutdown = FakeShutdown(clock)
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = FakeRedis()
+        worker.shutdown_requested = shutdown
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+
+        self.assertLess(ConversionWorker.STATUS_REFRESH_INTERVAL_SECONDS, 360)
+        with patch("swallowtail_conversion.worker.time.monotonic", clock.monotonic):
+            worker._wait_with_status(700)
+
+        self.assertEqual([300, 300, 100], shutdown.waits)
+        self.assertEqual(["swallowtail_conversion", "swallowtail_conversion"], worker.redis.touched)
+
     def test_storage_blocked_job_is_deferred_without_normal_failure(self) -> None:
         class FakeDb:
             def __init__(self) -> None:

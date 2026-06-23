@@ -17,6 +17,8 @@ from .storage import ConversionStorageManager, StorageBlocked
 
 
 class ConversionWorker:
+    STATUS_REFRESH_INTERVAL_SECONDS = 300
+
     def __init__(self, config: AppConfig):
         self.config = config
         self.log = logging.getLogger("swallowtail_conversion.worker")
@@ -50,7 +52,7 @@ class ConversionWorker:
                 if storage_blocked:
                     self._log_storage_blocked()
                     if not futures:
-                        self.shutdown_requested.wait(self.config.storage.storage_blocked_poll_interval_seconds)
+                        self._wait_with_status(self.config.storage.storage_blocked_poll_interval_seconds)
                         continue
                 else:
                     while not self.shutdown_requested.is_set() and len(futures) < self.config.rawtherapee.maximum_threads:
@@ -159,6 +161,17 @@ class ConversionWorker:
     def _touch_status(self) -> None:
         if not self.redis.touch_service("swallowtail_conversion"):
             self.log.debug("Unable to refresh Redis heartbeat for conversion worker")
+
+    def _wait_with_status(self, timeout_seconds: int) -> None:
+        deadline = time.monotonic() + max(0, int(timeout_seconds))
+        while not self.shutdown_requested.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            wait_seconds = min(self.STATUS_REFRESH_INTERVAL_SECONDS, remaining)
+            self.shutdown_requested.wait(wait_seconds)
+            if not self.shutdown_requested.is_set() and deadline - time.monotonic() > 0:
+                self._touch_status()
 
     def cleanup_stale_temp_dirs(self) -> int:
         work_dir = Path(self.config.worker.work_dir)

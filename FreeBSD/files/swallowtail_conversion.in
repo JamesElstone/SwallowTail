@@ -53,6 +53,7 @@ required_files="${swallowtail_conversion_python} ${swallowtail_conversion_php} $
 required_dirs="${swallowtail_conversion_project_root}/services/swallowtail_conversion/src"
 extra_commands="reload onestatus migrate"
 start_precmd="swallowtail_conversion_precmd"
+start_postcmd="swallowtail_conversion_postcmd"
 status_cmd="swallowtail_conversion_status"
 reload_cmd="swallowtail_conversion_reload"
 migrate_cmd="swallowtail_conversion_migrate"
@@ -103,6 +104,13 @@ swallowtail_conversion_precmd()
 
 	swallowtail_conversion_export_env
 	${swallowtail_conversion_python} -m swallowtail_conversion --health
+}
+
+swallowtail_conversion_postcmd()
+{
+	if [ -f "${pidfile}" ]; then
+		chmod 0640 "${pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_conversion_reload()

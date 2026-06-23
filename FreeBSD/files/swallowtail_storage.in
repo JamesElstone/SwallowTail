@@ -35,6 +35,7 @@ required_files="${swallowtail_storage_python} ${swallowtail_storage_php}"
 required_dirs="${swallowtail_storage_project_root}/services/swallowtail_storage/src"
 extra_commands="onestatus"
 start_precmd="swallowtail_storage_precmd"
+start_postcmd="swallowtail_storage_postcmd"
 status_cmd="swallowtail_storage_status"
 
 swallowtail_storage_export_env()
@@ -66,6 +67,13 @@ swallowtail_storage_precmd()
 
 	swallowtail_storage_export_env
 	${swallowtail_storage_python} -m swallowtail_storage --health
+}
+
+swallowtail_storage_postcmd()
+{
+	if [ -f "${pidfile}" ]; then
+		chmod 0640 "${pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_storage_process_status()
