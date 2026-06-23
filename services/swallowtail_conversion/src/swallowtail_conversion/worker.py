@@ -39,6 +39,8 @@ class ConversionWorker:
             self.shutdown_requested.set()
 
     def run_forever(self) -> None:
+        self.log.info("Raw conversion worker started")
+
         removed = self.cleanup_stale_temp_dirs()
         if removed:
             self.log.info("Removed %s stale raw conversion temp directories", removed)
