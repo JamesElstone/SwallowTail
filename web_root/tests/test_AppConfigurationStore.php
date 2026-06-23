@@ -16,6 +16,7 @@ $harness->check(AppConfigurationStore::class, 'loads configuration from the test
     $harness->assertSame('Test strapline', AppConfigurationStore::get('app_strapline'));
     $harness->assertSame('Test strapline', AppConfigurationStore::appStrapline());
     $harness->assertSame(3600, (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds'));
+    $harness->assertSame('Europe/London', AppConfigurationStore::get('swallowtail.timezone.server'));
 });
 
 $harness->check(AppConfigurationStore::class, 'centralises the default application strapline', function () use ($harness): void {
@@ -66,6 +67,13 @@ $harness->check(AppConfigurationStore::class, 'defaults storage-blocked conversi
     $defaults = $method->invoke(null);
 
     $harness->assertSame(3600, (int)($defaults['swallowtail']['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
+});
+
+$harness->check(AppConfigurationStore::class, 'defaults metadata fallback timezone to London', function () use ($harness): void {
+    $method = new ReflectionMethod(AppConfigurationStore::class, 'defaults');
+    $defaults = $method->invoke(null);
+
+    $harness->assertSame('Europe/London', $defaults['swallowtail']['timezone']['server'] ?? null);
 });
 
 $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled by default', function () use ($harness): void {
@@ -142,6 +150,25 @@ $harness->check(AppConfigurationStore::class, 'updates editable application sett
         $harness->assertSame('203.0.113.10', $updated['antifraud']['vendor_public_ip'] ?? null);
         $harness->assertSame('true', $updated['session']['cookie_secure'] ?? null);
         $harness->assertSame('../db_schema/eelKit.schema.sql', $updated['db']['sqlite_schema'] ?? null);
+    } finally {
+        file_put_contents($path, $original, LOCK_EX);
+        AppConfigurationStore::config(true);
+    }
+});
+
+$harness->check(AppConfigurationStore::class, 'updates timezone settings without dropping other SwallowTail config', function () use ($harness): void {
+    $path = AppConfigurationStore::configPath();
+    $original = file_get_contents($path);
+
+    if (!is_string($original)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    try {
+        $updated = AppConfigurationStore::setTimezoneSettings(['server' => 'UTC']);
+
+        $harness->assertSame('UTC', $updated['swallowtail']['timezone']['server'] ?? null);
+        $harness->assertSame(3600, (int)($updated['swallowtail']['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
     } finally {
         file_put_contents($path, $original, LOCK_EX);
         AppConfigurationStore::config(true);

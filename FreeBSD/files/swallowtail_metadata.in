@@ -1,0 +1,118 @@
+#!/bin/sh
+
+# PROVIDE: swallowtail_metadata
+# REQUIRE: LOGIN redis
+# KEYWORD: shutdown
+#
+# Add these lines to /etc/rc.conf.local or /etc/rc.conf to enable this service:
+#
+# swallowtail_metadata_enable="YES"
+#
+# Service defaults can be overridden with swallowtail_metadata_* variables.
+# Database settings are read from ${swallowtail_metadata_project_root}/secure/app.php.
+
+. /etc/rc.subr
+
+name="swallowtail_metadata"
+rcvar="swallowtail_metadata_enable"
+
+load_rc_config "$name"
+
+: ${swallowtail_metadata_enable:="NO"}
+: ${swallowtail_metadata_project_root:="%%SWALLOWTAIL_ROOT%%"}
+: ${swallowtail_metadata_python:="%%PYTHON_CMD%%"}
+: ${swallowtail_metadata_php:="%%PHP_CMD%%"}
+: ${swallowtail_metadata_app_config:="${swallowtail_metadata_project_root}/secure/app.php"}
+: ${swallowtail_metadata_worker_user:="swallowtail"}
+: ${swallowtail_metadata_worker_group:="swallowtail"}
+: ${swallowtail_metadata_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_metadata.log"}
+: ${swallowtail_metadata_exiftool_binary:="%%PREFIX%%/bin/exiftool"}
+: ${swallowtail_metadata_poll_min_seconds:="5"}
+: ${swallowtail_metadata_poll_max_seconds:="60"}
+: ${swallowtail_metadata_retry_delay_seconds:="60"}
+: ${swallowtail_metadata_max_attempts:="3"}
+: ${swallowtail_metadata_log_level:="INFO"}
+
+pidfile="/var/run/swallowtail/swallowtail_metadata.pid"
+procname="${swallowtail_metadata_python}"
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -u ${swallowtail_metadata_worker_user} -o ${swallowtail_metadata_log} ${swallowtail_metadata_python} -m swallowtail_metadata"
+required_files="${swallowtail_metadata_python} ${swallowtail_metadata_php} ${swallowtail_metadata_app_config} ${swallowtail_metadata_exiftool_binary}"
+required_dirs="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
+extra_commands="reload onestatus"
+start_precmd="swallowtail_metadata_precmd"
+status_cmd="swallowtail_metadata_status"
+reload_cmd="swallowtail_metadata_reload"
+
+swallowtail_metadata_export_env()
+{
+	export SWALLOWTAIL_METADATA_PROJECT_ROOT="${swallowtail_metadata_project_root}"
+	export SWALLOWTAIL_METADATA_APP_CONFIG="${swallowtail_metadata_app_config}"
+	export SWALLOWTAIL_METADATA_PHP_BINARY="${swallowtail_metadata_php}"
+	export SWALLOWTAIL_METADATA_EXIFTOOL_BINARY="${swallowtail_metadata_exiftool_binary}"
+	export SWALLOWTAIL_METADATA_POLL_MIN_SECONDS="${swallowtail_metadata_poll_min_seconds}"
+	export SWALLOWTAIL_METADATA_POLL_MAX_SECONDS="${swallowtail_metadata_poll_max_seconds}"
+	export SWALLOWTAIL_METADATA_RETRY_DELAY_SECONDS="${swallowtail_metadata_retry_delay_seconds}"
+	export SWALLOWTAIL_METADATA_MAX_ATTEMPTS="${swallowtail_metadata_max_attempts}"
+	export SWALLOWTAIL_METADATA_LOG_FILE="${swallowtail_metadata_log}"
+	export SWALLOWTAIL_METADATA_LOG_LEVEL="${swallowtail_metadata_log_level}"
+	export PYTHONPATH="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
+	export PYTHONDONTWRITEBYTECODE=1
+}
+
+swallowtail_metadata_precmd()
+{
+	install -d -o "${swallowtail_metadata_worker_user}" \
+		-g "${swallowtail_metadata_worker_group}" -m 0750 \
+		/var/run/swallowtail
+	install -d -o "${swallowtail_metadata_worker_user}" \
+		-g "${swallowtail_metadata_worker_group}" -m 2775 \
+		"$(dirname "${swallowtail_metadata_log}")"
+
+	if [ ! -f "${swallowtail_metadata_log}" ]; then
+		install -o "${swallowtail_metadata_worker_user}" \
+			-g "${swallowtail_metadata_worker_group}" -m 0640 \
+			/dev/null "${swallowtail_metadata_log}"
+	fi
+
+	swallowtail_metadata_export_env
+	${swallowtail_metadata_python} -m swallowtail_metadata --health
+}
+
+swallowtail_metadata_reload()
+{
+	swallowtail_metadata_precmd
+	echo "Configuration is valid. Restart ${name} to apply changes."
+}
+
+swallowtail_metadata_process_status()
+{
+	if [ -f "${pidfile}" ]; then
+		pid=$(cat "${pidfile}" 2>/dev/null || true)
+		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+			echo "${name} is running as pid ${pid}"
+			return 0
+		fi
+	fi
+
+	echo "${name} is not running"
+	return 1
+}
+
+swallowtail_metadata_health_status()
+{
+	swallowtail_metadata_export_env
+	${swallowtail_metadata_python} -m swallowtail_metadata --health
+}
+
+swallowtail_metadata_status()
+{
+	status=0
+
+	swallowtail_metadata_process_status || status=$?
+	swallowtail_metadata_health_status || status=$?
+
+	return "${status}"
+}
+
+run_rc_command "$1"

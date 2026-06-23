@@ -25,7 +25,7 @@ return array (
     'log_path' => '',
     'raw_upload_timing' => false,
   ),
-  'navigation' => 
+  'navigation' =>
   array (
     'default_order' => 
     array (

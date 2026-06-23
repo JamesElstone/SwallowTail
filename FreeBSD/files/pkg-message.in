@@ -10,8 +10,10 @@ services you want on this host:
 
   sysrc swallowtail_conversion_enable=YES
   sysrc swallowtail_storage_enable=YES
+  sysrc swallowtail_metadata_enable=YES
   service swallowtail_conversion start
   service swallowtail_storage start
+  service swallowtail_metadata start
 
 The FreeBSD SpiceBush CLI is installed under the package prefix as:
 
@@ -34,7 +36,7 @@ upgrading if it was already running.
 
 Service defaults are embedded in the rc.d scripts. Override them in
 the system rc configuration using sysrc(8) with swallowtail_conversion_* and
-swallowtail_storage_* variables.
+swallowtail_storage_* and swallowtail_metadata_* variables.
 
 An Apache include sample is installed under the package prefix as:
 

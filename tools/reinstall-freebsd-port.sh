@@ -24,13 +24,15 @@ files/swallowtail-fix-storage-permissions.in
 files/swallowtail-sudoers.in
 files/swallowtail_conversion.in
 files/swallowtail_conversion.newsyslog.conf
+files/swallowtail_metadata.in
+files/swallowtail_metadata.newsyslog.conf
 files/swallowtail_storage.in
 files/swallowtail_storage.newsyslog.conf
 files/swallowtail_apache.newsyslog.conf
 files/swallowtail-apache.conf.in
 files/swallowtail-php-fpm.conf.in
 '
-SERVICE_NAMES='swallowtail_conversion swallowtail_storage'
+SERVICE_NAMES='swallowtail_conversion swallowtail_storage swallowtail_metadata'
 WEB_SERVICE_NAMES='php_fpm apache24'
 
 case "$PORT_DIR" in

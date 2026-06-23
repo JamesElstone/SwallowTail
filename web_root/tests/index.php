@@ -26,6 +26,12 @@ if ($files === false) {
 
 sort($files);
 
+$traceLazyLoadTest = $testsDirectory . DIRECTORY_SEPARATOR . 'test_TraceLogLazyLoad.php';
+if (in_array($traceLazyLoadTest, $files, true)) {
+    $files = array_values(array_diff($files, [$traceLazyLoadTest]));
+    array_unshift($files, $traceLazyLoadTest);
+}
+
 foreach ($files as $file) {
     $currentTest = pathinfo($file, PATHINFO_FILENAME);
 

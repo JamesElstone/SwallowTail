@@ -25,6 +25,12 @@ final class SwallowtailServiceStatusService
             'pid_file' => '/var/run/swallowtail/storage.pid',
             'heartbeat_key' => 'swallowtail:service:swallowtail_storage:last_touched',
         ],
+        [
+            'key' => 'swallowtail_metadata',
+            'label' => 'Photo metadata worker',
+            'pid_file' => '/var/run/swallowtail/swallowtail_metadata.pid',
+            'heartbeat_key' => 'swallowtail:service:swallowtail_metadata:last_touched',
+        ],
     ];
 
     /** @var callable(int): ?bool|null */

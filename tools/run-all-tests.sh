@@ -31,6 +31,7 @@ Runs:
   - PHP test suite
   - SpiceBush client build
   - swallowtail_conversion CLI load check and unit tests
+  - swallowtail_metadata CLI load check and unit tests
   - swallowtail_storage CLI load check and unit tests
 
 Environment overrides:
@@ -167,6 +168,7 @@ if [ -z "$PYTHON_BIN" ]; then
 	FAILURES=$((FAILURES + 1))
 else
 	run_python_service services/swallowtail_conversion swallowtail_conversion "swallowtail_conversion"
+	run_python_service services/swallowtail_metadata swallowtail_metadata "swallowtail_metadata"
 	run_python_service services/swallowtail_storage swallowtail_storage "swallowtail_storage"
 fi
 

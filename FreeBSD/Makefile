@@ -1,6 +1,6 @@
 PORTNAME=	swallowtail
 DISTVERSION=	g20260618
-PORTREVISION=	31
+PORTREVISION=	32
 CATEGORIES=	graphics www
 
 MAINTAINER=	james@elstone.net
@@ -13,6 +13,7 @@ RUN_DEPENDS=	${PYTHON_PKGNAMEPREFIX}pymysql>=1.1:databases/py-pymysql@${PY_FLAVO
 		${PYTHON_PKGNAMEPREFIX}pyodbc>=5.0:databases/py-pyodbc@${PY_FLAVOR} \
 		${LOCALBASE}/sbin/httpd:www/apache24 \
 		${LOCALBASE}/lib/mariadb/libmaodbc.so:databases/mariadb-connector-odbc \
+		${LOCALBASE}/bin/exiftool:graphics/p5-Image-ExifTool \
 		rawtherapee-cli:graphics/rawtherapee \
 		redis-server:databases/redis
 
@@ -27,7 +28,8 @@ GH_TAGNAME=	main
 NO_CHECKSUM=	yes
 USE_PHP=	ctype curl filter gd mbstring pdo pdo_odbc session tokenizer
 USE_RC_SUBR=	swallowtail_storage \
-		swallowtail_conversion
+		swallowtail_conversion \
+		swallowtail_metadata
 
 CONFLICTS_INSTALL=	swallowtail-raw-conversion
 
@@ -76,6 +78,7 @@ SUB_LIST=	PHP_CMD=${PREFIX}/bin/php \
 
 PLIST_FILES=	etc/newsyslog.conf.d/swallowtail_storage.conf \
 		etc/newsyslog.conf.d/swallowtail_conversion.conf \
+		etc/newsyslog.conf.d/swallowtail_metadata.conf \
 		etc/newsyslog.conf.d/swallowtail_apache.conf \
 		etc/php/ext-30-pdo_odbc.ini \
 		etc/php-fpm.d/swallowtail.conf \
@@ -137,6 +140,8 @@ do-install:
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_storage.conf
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_conversion.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_conversion.conf
+	${INSTALL_DATA} ${FILESDIR}/swallowtail_metadata.newsyslog.conf \
+		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_metadata.conf
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_apache.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_apache.conf
 	${MKDIR} ${STAGEDIR}${PREFIX}/etc/php

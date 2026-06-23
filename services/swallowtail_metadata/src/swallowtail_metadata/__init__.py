@@ -1,0 +1,1 @@
+"""SwallowTail metadata extraction service."""

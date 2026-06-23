@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -106,6 +106,7 @@ $harness->check(_settings::class, 'includes reusable storage card', function () 
     $settings = new _settings();
 
     $harness->assertTrue(in_array('storage_available', $settings->cards(), true));
+    $harness->assertTrue(in_array('timezone_settings', $settings->cards(), true));
 });
 
 $harness->check(_storage_summaryCard::class, 'summarises included storage capacity for dashboard', function () use ($harness): void {

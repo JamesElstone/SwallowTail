@@ -168,6 +168,23 @@ final class AppConfigurationStore
         return self::config(true);
     }
 
+    public static function setTimezoneSettings(array $settings): array
+    {
+        $timezone = trim((string)($settings['server'] ?? ''));
+        if ($timezone === '' || !in_array($timezone, DateTimeZone::listIdentifiers(), true)) {
+            throw new RuntimeException('Choose a valid server timezone.');
+        }
+
+        $config = self::readStoredConfig();
+        $swallowtail = is_array($config['swallowtail'] ?? null) ? $config['swallowtail'] : [];
+        $current = is_array($swallowtail['timezone'] ?? null) ? $swallowtail['timezone'] : [];
+        $swallowtail['timezone'] = array_replace($current, ['server' => $timezone]);
+        $config['swallowtail'] = $swallowtail;
+        self::writeStoredConfig($config);
+
+        return self::config(true);
+    }
+
     public static function set(string $path, mixed $value): array
     {
         $segments = self::configPathSegments($path);
@@ -291,6 +308,9 @@ final class AppConfigurationStore
                 'cookie_samesite' => 'Strict',
             ],
             'swallowtail' => [
+                'timezone' => [
+                    'server' => 'Europe/London',
+                ],
                 'storage' => [
                     'store_on_root_partition' => false,
                     'round_robin_locations' => false,
