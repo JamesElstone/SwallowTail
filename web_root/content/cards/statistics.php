@@ -73,7 +73,18 @@ final class _statisticsCard extends CardBaseFramework
             return '<div class="panel-soft warn">No completed job timing data is available yet.</div>';
         }
 
-        $html = '<div class="statistics-duration-list">';
+        $html = '<div class="table-scroll statistics-duration-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Completed</th>
+                        <th>Average</th>
+                        <th>Fastest</th>
+                        <th>Slowest</th>
+                    </tr>
+                </thead>
+                <tbody>';
         foreach ($rows as $row) {
             if (!is_array($row)) {
                 continue;
@@ -82,7 +93,9 @@ final class _statisticsCard extends CardBaseFramework
             $html .= $this->durationRow($row);
         }
 
-        return $html . '</div>';
+        return $html . '</tbody>
+            </table>
+        </div>';
     }
 
     private function durationRow(array $row): string
@@ -90,26 +103,13 @@ final class _statisticsCard extends CardBaseFramework
         $imageType = $this->imageTypeLabel((string)($row['image_type'] ?? ''));
         $completedJobs = max(0, (int)($row['completed_jobs'] ?? 0));
 
-        return '<div class="panel-soft statistics-duration-row">
-            <div>
-                <strong>' . HelperFramework::escape($imageType) . '</strong>
-                <span>' . HelperFramework::escape(number_format($completedJobs) . ' completed') . '</span>
-            </div>
-            <dl>
-                <div>
-                    <dt>Average</dt>
-                    <dd>' . HelperFramework::escape($this->formatDuration((float)($row['average_seconds'] ?? 0))) . '</dd>
-                </div>
-                <div>
-                    <dt>Fastest</dt>
-                    <dd>' . HelperFramework::escape($this->formatDuration((float)($row['fastest_seconds'] ?? 0))) . '</dd>
-                </div>
-                <div>
-                    <dt>Slowest</dt>
-                    <dd>' . HelperFramework::escape($this->formatDuration((float)($row['slowest_seconds'] ?? 0))) . '</dd>
-                </div>
-            </dl>
-        </div>';
+        return '<tr>
+            <td>' . HelperFramework::escape($imageType) . '</td>
+            <td>' . HelperFramework::escape(number_format($completedJobs)) . '</td>
+            <td>' . HelperFramework::escape($this->formatDuration((float)($row['average_seconds'] ?? 0))) . '</td>
+            <td>' . HelperFramework::escape($this->formatDuration((float)($row['fastest_seconds'] ?? 0))) . '</td>
+            <td>' . HelperFramework::escape($this->formatDuration((float)($row['slowest_seconds'] ?? 0))) . '</td>
+        </tr>';
     }
 
     private function imageTypeLabel(string $imageType): string

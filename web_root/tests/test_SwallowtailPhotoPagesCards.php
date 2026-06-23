@@ -210,7 +210,13 @@ $harness->check(_statisticsCard::class, 'renders dashboard statistics totals and
     $harness->assertTrue(str_contains($html, 'Jobs Outstanding'));
     $harness->assertTrue(str_contains($html, 'Jobs Completed'));
     $harness->assertTrue(str_contains($html, 'Time Taken per Job by Image Type'));
-    $harness->assertTrue(str_contains($html, 'Embedded'));
+    $harness->assertTrue(str_contains($html, '<table>'));
+    $harness->assertTrue(str_contains($html, '<th>Type</th>'));
+    $harness->assertTrue(str_contains($html, '<th>Completed</th>'));
+    $harness->assertTrue(str_contains($html, '<th>Average</th>'));
+    $harness->assertTrue(str_contains($html, '<th>Fastest</th>'));
+    $harness->assertTrue(str_contains($html, '<th>Slowest</th>'));
+    $harness->assertTrue(str_contains($html, '<td>Embedded</td>'));
     $harness->assertTrue(str_contains($html, '1.0s'));
 });
 

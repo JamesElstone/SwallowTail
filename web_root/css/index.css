@@ -3418,8 +3418,7 @@ label {
   border-top: 1px solid var(--line);
 }
 
-.statistics-metrics dt,
-.statistics-duration-row dt {
+.statistics-metrics dt {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
@@ -3449,45 +3448,30 @@ label {
   font-size: 1rem;
 }
 
-.statistics-duration-list {
-  display: grid;
-  gap: 10px;
+.statistics-duration-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
-.statistics-duration-row {
-  display: grid;
-  grid-template-columns: minmax(110px, 0.6fr) minmax(220px, 1.4fr);
-  align-items: center;
-  gap: 12px;
+.statistics-duration-table table {
+  min-width: 520px;
 }
 
-.statistics-duration-row > div:first-child {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
+.statistics-duration-table th {
+  letter-spacing: 0;
 }
 
-.statistics-duration-row strong,
-.statistics-duration-row span {
-  overflow-wrap: anywhere;
+.statistics-duration-table th:not(:first-child),
+.statistics-duration-table td:not(:first-child) {
+  text-align: right;
 }
 
-.statistics-duration-row span {
-  color: var(--muted);
-  font-size: 0.9rem;
+.statistics-duration-table td:first-child {
+  font-weight: 700;
 }
 
-.statistics-duration-row dl {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 0;
-}
-
-.statistics-duration-row dd {
-  margin: 3px 0 0;
-  font-weight: 800;
-  overflow-wrap: anywhere;
+.statistics-duration-table td {
+  white-space: nowrap;
 }
 
 @media (max-width: 980px) {
@@ -3495,15 +3479,10 @@ label {
   .statistics-dashboard {
     grid-template-columns: 1fr;
   }
-
-  .statistics-duration-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 640px) {
-  .statistics-metrics,
-  .statistics-duration-row dl {
+  .statistics-metrics {
     grid-template-columns: 1fr;
   }
 }
