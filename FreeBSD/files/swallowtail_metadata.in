@@ -54,7 +54,7 @@ swallowtail_metadata_export_env()
 	export SWALLOWTAIL_METADATA_POLL_MAX_SECONDS="${swallowtail_metadata_poll_max_seconds}"
 	export SWALLOWTAIL_METADATA_RETRY_DELAY_SECONDS="${swallowtail_metadata_retry_delay_seconds}"
 	export SWALLOWTAIL_METADATA_MAX_ATTEMPTS="${swallowtail_metadata_max_attempts}"
-	export SWALLOWTAIL_METADATA_LOG_FILE="${swallowtail_metadata_log}"
+	export SWALLOWTAIL_METADATA_LOG_FILE="-"
 	export SWALLOWTAIL_METADATA_LOG_LEVEL="${swallowtail_metadata_log_level}"
 	export PATH="%%PREFIX%%/bin:%%PREFIX%%/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
 	export PYTHONPATH="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
