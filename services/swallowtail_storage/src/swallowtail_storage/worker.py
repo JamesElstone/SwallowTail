@@ -87,7 +87,7 @@ class StorageWorker:
         )
         if discovered and not cache_written:
             self.log.warning("Storage cache Redis write failed error=%s", cache_error or "unknown")
-        if reason == "mount-change" and discovered and cache_written:
+        if reason in {"startup", "mount-change"} and discovered and cache_written:
             self.log_storage_wake(self.notify_storage_wake(snapshot))
         if not discovered:
             self.log_refresh_failure(reason, payload)
