@@ -34,6 +34,7 @@ files/swallowtail-php-fpm.conf.in
 '
 SERVICE_NAMES='swallowtail_conversion swallowtail_storage swallowtail_metadata'
 WEB_SERVICE_NAMES='php_fpm apache24'
+REDIS_SERVICE_NAMES='redis'
 LOCK_FILE=${SWALLOWTAIL_FREEBSD_REINSTALL_LOCK:-/var/run/swallowtail-freebsd-port.lock}
 
 if [ "${SWALLOWTAIL_FREEBSD_REINSTALL_LOCK_HELD:-}" != "1" ]; then
@@ -141,6 +142,12 @@ echo "==> make reinstall in $PORT_DIR"
 for service_name in $SERVICE_NAMES; do
 	echo "==> enabling $service_name"
 	sysrc "${service_name}_enable=YES" >/dev/null
+done
+
+for service_name in $REDIS_SERVICE_NAMES; do
+	echo "==> enabling $service_name"
+	sysrc "${service_name}_enable=YES" >/dev/null
+	restart_or_start_service "$service_name"
 done
 
 for service_name in $WEB_SERVICE_NAMES; do
