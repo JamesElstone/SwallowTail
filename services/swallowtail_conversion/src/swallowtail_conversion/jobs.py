@@ -18,6 +18,7 @@ class ConversionJob:
     output_path: str
     profile_version: int
     attempts: int
+    priority: int = 0
     output_width: int | None = None
     output_height: int | None = None
 
@@ -32,6 +33,7 @@ class ConversionJob:
             output_path=str(row["output_path"] or ""),
             profile_version=max(1, int(row.get("profile_version") or 1)),
             attempts=int(row.get("attempts") or 0),
+            priority=int(row.get("priority") or 0),
             output_width=cls._positive_int_or_none(row.get("output_width")),
             output_height=cls._positive_int_or_none(row.get("output_height")),
         )

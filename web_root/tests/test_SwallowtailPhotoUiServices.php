@@ -315,7 +315,7 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         output_height INTEGER NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
         requested_by_user_id INTEGER NULL,
-        priority TEXT NOT NULL DEFAULT 'normal',
+        priority INTEGER NOT NULL DEFAULT 20,
         status TEXT NOT NULL DEFAULT 'queued',
         attempts INTEGER NOT NULL DEFAULT 0,
         available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

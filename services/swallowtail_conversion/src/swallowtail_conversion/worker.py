@@ -29,6 +29,8 @@ class ConversionWorker:
         self.storage = ConversionStorageManager(config.storage, self.db)
         self.shutdown_requested = threading.Event()
         self.last_storage_blocked_log_at = 0.0
+        self.preempt_lock = threading.Lock()
+        self.preempt_target: dict[str, int] | None = None
 
     def request_shutdown(self) -> None:
         if not self.shutdown_requested.is_set():
@@ -100,8 +102,8 @@ class ConversionWorker:
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            if self.db.is_stale_filtered(job):
-                self.db.cancel_job(job, "Stale profile version")
+            if self._job_is_obsolete(job) or self.db.is_stale_filtered(job):
+                self._obsolete_job(job, "Obsolete preview profile")
                 return
 
             storage = getattr(self, "storage", None)
@@ -109,14 +111,29 @@ class ConversionWorker:
                 job = storage.relocate_job_if_needed(job)
 
             job.validate()
-            result = self.embedded.extract(job, str(temp_dir)) if job.image_type == "embedded" else self.runner.render(job, str(temp_dir))
+            result = self.embedded.extract(job, str(temp_dir)) if job.image_type == "embedded" else self.runner.render(
+                job,
+                str(temp_dir),
+                should_cancel=lambda: self._should_preempt(job),
+            )
             render_duration = result.duration_seconds
+            if getattr(result, "cancelled", False):
+                if self._job_is_obsolete(job):
+                    self._obsolete_job(job, "Obsolete preview profile")
+                else:
+                    self.db.requeue_preempted_job(job, result.stderr, duration=render_duration)
+                return
+
             if result.exit_code != 0:
                 raise RuntimeError(f"conversion failed with exit code {result.exit_code}: {result.stderr}")
 
             output = Path(result.temp_output_path)
             if not output.is_file() or output.stat().st_size <= 0:
                 raise RuntimeError("Conversion did not create a non-empty output file.")
+
+            if self._job_is_obsolete(job) or self.db.is_stale_filtered(job):
+                self._obsolete_job(job, "Obsolete preview profile")
+                return
 
             final = Path(job.output_path)
             final.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +157,87 @@ class ConversionWorker:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _next_job_id(self) -> int | None:
+        target = self._consume_preempt_target()
+        if target is not None:
+            return target
         self.redis.pop()
+        target = self._consume_preempt_target()
+        if target is not None:
+            return target
         return self.db.next_queued_job_id()
+
+    def _should_preempt(self, job: ConversionJob) -> bool:
+        if self._job_is_obsolete(job):
+            return True
+
+        target = self._current_preempt_target()
+        if target is None or int(target["id"]) == job.id:
+            return False
+
+        return int(target["priority"]) > int(job.priority)
+
+    def _current_preempt_target(self) -> dict[str, int] | None:
+        lock = getattr(self, "preempt_lock", None)
+        if lock is None:
+            return self._current_preempt_target_unlocked()
+        with lock:
+            return self._current_preempt_target_unlocked()
+
+    def _current_preempt_target_unlocked(self) -> dict[str, int] | None:
+        self._read_preempt_message_unlocked()
+        target = getattr(self, "preempt_target", None)
+        if not target:
+            return None
+
+        verified = self.db.preempt_target(int(target["id"]))
+        if verified is None:
+            self.preempt_target = None
+            return None
+
+        self.preempt_target = verified
+        return verified
+
+    def _consume_preempt_target(self) -> int | None:
+        lock = getattr(self, "preempt_lock", None)
+        if lock is None:
+            target = self._current_preempt_target_unlocked()
+            self.preempt_target = None
+            return int(target["id"]) if target is not None else None
+        with lock:
+            target = self._current_preempt_target_unlocked()
+            self.preempt_target = None
+            return int(target["id"]) if target is not None else None
+
+    def _read_preempt_message_unlocked(self) -> None:
+        if not hasattr(self.redis, "pop_preempt"):
+            return
+
+        message = self.redis.pop_preempt()
+        if message is None:
+            return
+
+        verified = self.db.preempt_target(message.job_id)
+        if verified is None:
+            return
+
+        current = getattr(self, "preempt_target", None)
+        if (
+            current is None
+            or int(verified["priority"]) > int(current["priority"])
+            or (int(verified["priority"]) == int(current["priority"]) and int(verified["id"]) > int(current["id"]))
+        ):
+            self.preempt_target = verified
+
+    def _job_is_obsolete(self, job: ConversionJob) -> bool:
+        if hasattr(self.db, "is_obsolete_job"):
+            return bool(self.db.is_obsolete_job(job))
+        return False
+
+    def _obsolete_job(self, job: ConversionJob, message: str) -> None:
+        if hasattr(self.db, "obsolete_job"):
+            self.db.obsolete_job(job, message)
+        else:
+            self.db.cancel_job(job, message)
 
     def _storage_blocked(self) -> bool:
         storage = getattr(self, "storage", None)

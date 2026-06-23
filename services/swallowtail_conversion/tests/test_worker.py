@@ -7,6 +7,7 @@ import unittest
 import uuid
 import logging
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -66,6 +67,7 @@ def app_config(root: Path, rawtherapee_binary: str) -> AppConfig:
             port=6379,
             urgent_queue="urgent",
             normal_queue="normal",
+            preempt_queue="preempt",
             timeout_seconds=1,
         ),
         rawtherapee=RawTherapeeConfig(
@@ -197,6 +199,30 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertTrue(config.storage.store_on_root_partition)
         self.assertEqual(1800, config.storage.storage_blocked_poll_interval_seconds)
 
+    def test_php_app_config_loads_redis_preempt_queue(self) -> None:
+        payload = {
+            "swallowtail": {
+                "redis": {
+                    "host": "redis.internal",
+                    "port": 6380,
+                    "urgent_queue": "urgent-custom",
+                    "normal_queue": "normal-custom",
+                    "preempt_queue": "preempt-custom",
+                },
+            },
+        }
+
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+            config = load_php_app_config("secure/app.php", "php", default_config())
+
+        self.assertEqual("redis.internal", config.redis.host)
+        self.assertEqual(6380, config.redis.port)
+        self.assertEqual("urgent-custom", config.redis.urgent_queue)
+        self.assertEqual("normal-custom", config.redis.normal_queue)
+        self.assertEqual("preempt-custom", config.redis.preempt_queue)
+
     def test_php_app_config_defaults_storage_settings_when_missing(self) -> None:
         with patch("swallowtail_conversion.config.subprocess.run") as run:
             run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps({}), stderr="")
@@ -276,6 +302,21 @@ class RawTherapeeRunnerTest(unittest.TestCase):
 
         self.assertEqual(17, result.exit_code)
         self.assertIn("fake rawtherapee failure", result.stderr)
+
+    def test_rawtherapee_process_can_be_cancelled_while_running(self) -> None:
+        slow = Path(__file__).parent / "fixtures" / "fake_rawtherapee_slow.py"
+        started = time.monotonic()
+        result = RawTherapeeRunner(
+            RawTherapeeConfig(binary=str(slow), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
+        ).render(
+            job(self.root),
+            str(self.root / "work"),
+            should_cancel=lambda: time.monotonic() - started > 0.4,
+        )
+
+        self.assertTrue(result.cancelled)
+        self.assertLess(result.duration_seconds, 10)
+        self.assertIn("preempted", result.stderr)
 
     def test_missing_input_and_pp3_are_validation_failures(self) -> None:
         missing_input = job(self.root, input_path=str(self.root / "missing.CR2"))
@@ -399,6 +440,77 @@ class WorkerBehaviourTest(unittest.TestCase):
         worker.db = FakeDb()
 
         self.assertEqual(12, worker._next_job_id())
+
+    def test_preempt_message_is_verified_and_consumed_before_database_polling(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.preempt_popped = False
+                self.normal_popped = False
+
+            def pop_preempt(self):
+                self.preempt_popped = True
+                return SimpleNamespace(job_id=99, priority=51)
+
+            def pop(self):
+                self.normal_popped = True
+                return None
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.selected = False
+
+            def preempt_target(self, job_id: int):
+                return {"id": job_id, "priority": 51}
+
+            def next_queued_job_id(self):
+                self.selected = True
+                return 7
+
+        redis = FakeRedis()
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = redis
+        worker.db = db
+        worker.preempt_lock = threading.Lock()
+        worker.preempt_target = None
+
+        self.assertEqual(99, worker._next_job_id())
+        self.assertTrue(redis.preempt_popped)
+        self.assertFalse(redis.normal_popped)
+        self.assertFalse(db.selected)
+
+    def test_preempt_message_interrupts_lower_priority_job_only_after_database_verification(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.sent = False
+
+            def pop_preempt(self):
+                if self.sent:
+                    return None
+                self.sent = True
+                return SimpleNamespace(job_id=99, priority=51)
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.verified = False
+
+            def is_obsolete_job(self, _job) -> bool:
+                return False
+
+            def preempt_target(self, job_id: int):
+                self.verified = True
+                return {"id": job_id, "priority": 51}
+
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.redis = FakeRedis()
+        worker.db = db
+        worker.preempt_lock = threading.Lock()
+        worker.preempt_target = None
+
+        self.assertTrue(worker._should_preempt(job(self.root, id=1, priority=20)))
+        self.assertTrue(db.verified)
+        self.assertFalse(worker._should_preempt(job(self.root, id=2, priority=51)))
 
     def test_run_once_records_worker_heartbeat(self) -> None:
         class FakeRedis:
@@ -543,6 +655,56 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertEqual(3600, worker.db.delay_seconds)
         self.assertIn("No storage location", worker.db.message)
 
+    def test_running_lower_priority_rawtherapee_job_is_requeued_when_preempted(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.sent = False
+
+            def pop_preempt(self):
+                if self.sent:
+                    return None
+                self.sent = True
+                return SimpleNamespace(job_id=99, priority=51)
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.requeued = False
+                self.failed = False
+
+            def is_obsolete_job(self, _job) -> bool:
+                return False
+
+            def is_stale_filtered(self, _job) -> bool:
+                return False
+
+            def preempt_target(self, job_id: int):
+                return {"id": job_id, "priority": 51}
+
+            def requeue_preempted_job(self, _job, message: str, duration=None) -> None:
+                self.requeued = True
+                self.message = message
+                self.duration = duration
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                self.failed = True
+
+        slow = Path(__file__).parent / "fixtures" / "fake_rawtherapee_slow.py"
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(slow))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.redis = FakeRedis()
+        worker.db = FakeDb()
+        worker.runner = RawTherapeeRunner(worker.config.rawtherapee)
+        worker.preempt_lock = threading.Lock()
+        worker.preempt_target = None
+
+        worker.process_job(job(self.root, priority=20))
+        self.assertTrue(worker.db.requeued)
+        self.assertFalse(worker.db.failed)
+        self.assertIn("preempted", worker.db.message)
+        self.assertIsNotNone(worker.db.duration)
+
     def test_cleanup_removes_only_stale_job_directories(self) -> None:
         config = app_config(self.root, str(self.fake))
         work_dir = Path(config.worker.work_dir)
@@ -585,6 +747,35 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         worker.process_job(job(self.root))
         self.assertTrue(worker.db.cancelled)
+
+    def test_obsolete_job_is_not_retried_as_failure(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.obsoleted = False
+                self.failed = False
+
+            def is_obsolete_job(self, _job) -> bool:
+                return True
+
+            def is_stale_filtered(self, _job) -> bool:
+                return False
+
+            def obsolete_job(self, _job, _message) -> None:
+                self.obsoleted = True
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                self.failed = True
+
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.db = FakeDb()
+        worker.runner = RawTherapeeRunner(worker.config.rawtherapee)
+
+        worker.process_job(job(self.root))
+        self.assertTrue(worker.db.obsoleted)
+        self.assertFalse(worker.db.failed)
 
     def test_health_helpers_report_missing_paths(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "directory not found"):
@@ -679,12 +870,6 @@ class StorageManagerTest(unittest.TestCase):
 
 
 class ConversionDatabaseOrderingTest(unittest.TestCase):
-    def test_database_priority_order_is_embedded_filtered_thumbnail_original(self) -> None:
-        self.assertEqual(
-            ["embedded", "filtered", "thumbnail", "original"],
-            list(ConversionDatabase.IMAGE_TYPE_ORDER.keys()),
-        )
-
     def test_photo_state_follows_aggregate_job_status(self) -> None:
         state = ConversionDatabase.photo_state_from_job_counts
 
@@ -695,17 +880,18 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
         self.assertEqual("ready", state(active_jobs=0, failed_jobs=0, non_cancelled_jobs=2, succeeded_jobs=2))
         self.assertEqual("pending", state(active_jobs=0, failed_jobs=0, non_cancelled_jobs=0, succeeded_jobs=0))
 
-    def test_database_priority_order_sql_matches_image_type_policy(self) -> None:
-        sql = ConversionDatabase._image_type_order_sql()
+    def test_database_priority_order_sql_uses_numeric_priority_descending(self) -> None:
+        queries: list[str] = []
+        db = ConversionDatabase.__new__(ConversionDatabase)
+        db._fetchone = lambda sql, params=(): queries.append(sql) or {"id": 7}
+        db.connection = SimpleNamespace(rollback=lambda: None)
 
-        embedded = sql.index("WHEN 'embedded' THEN 1")
-        filtered = sql.index("WHEN 'filtered' THEN 2")
-        thumbnail = sql.index("WHEN 'thumbnail' THEN 3")
-        original = sql.index("WHEN 'original' THEN 4")
+        self.assertEqual(7, db.next_queued_job_id())
+        self.assertIn("priority DESC", queries[0])
+        self.assertNotIn("CASE image_type", queries[0])
 
-        self.assertLess(embedded, filtered)
-        self.assertLess(filtered, thumbnail)
-        self.assertLess(thumbnail, original)
+    def test_preempt_priority_threshold_is_high_priority_only(self) -> None:
+        self.assertEqual(50, ConversionDatabase.PREEMPT_PRIORITY)
 
 
 if __name__ == "__main__":

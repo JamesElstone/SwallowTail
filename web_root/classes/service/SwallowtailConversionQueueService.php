@@ -10,14 +10,20 @@ declare(strict_types=1);
 final class SwallowtailConversionQueueService
 {
     private const IMAGE_TYPES = ['embedded', 'filtered', 'thumbnail', 'original'];
-    private const PRIORITIES = ['low', 'normal', 'high'];
+    private const PRIORITY_FILTERED = 10;
+    private const PRIORITY_ORIGINAL = 20;
+    private const PRIORITY_THUMBNAIL = 30;
+    private const PRIORITY_EMBEDDED = 40;
+    private const PRIORITY_PREVIEW_THUMBNAIL = 50;
+    private const PRIORITY_PREVIEW_FILTERED = 51;
+    private const PRIORITY_PREEMPT_THRESHOLD = 50;
     private const ENQUEUE_ATTEMPTS = 3;
 
     public function __construct(private readonly ?Closure $redisNotifier = null)
     {
     }
 
-    public function enqueueRawConversion(int $photoId, string $priority = 'normal'): ?int
+    public function enqueueRawConversion(int $photoId, string|int $priority = self::PRIORITY_THUMBNAIL): ?int
     {
         foreach ($this->enqueueRawConversionJobs($photoId, $priority) as $job) {
             $jobId = $this->nullablePositiveInt($job['job_id'] ?? null);
@@ -29,7 +35,7 @@ final class SwallowtailConversionQueueService
         return null;
     }
 
-    public function enqueueRawConversionJobs(int $photoId, string $priority = 'normal'): array
+    public function enqueueRawConversionJobs(int $photoId, string|int $priority = self::PRIORITY_THUMBNAIL): array
     {
         if ($photoId <= 0) {
             return [];
@@ -49,10 +55,11 @@ final class SwallowtailConversionQueueService
             $jobs = [];
 
             foreach ([
-                'embedded' => 'high',
+                'embedded' => self::PRIORITY_EMBEDDED,
                 'thumbnail' => $priority,
-                'original' => 'normal',
+                'original' => self::PRIORITY_ORIGINAL,
             ] as $imageType => $jobPriority) {
+                $jobPriority = $this->normalisePriority($jobPriority);
                 $outputPath = $storage->imagePath($base, $sha256, $imageType);
                 $dimensions = $this->dimensionsForImageType($imageType);
                 $jobId = $this->enqueueImageJob(
@@ -116,7 +123,7 @@ final class SwallowtailConversionQueueService
                 $filteredPath,
                 $profilePath,
                 $profileVersion,
-                'high',
+                self::PRIORITY_PREVIEW_FILTERED,
                 $requestedByUserId,
                 $outputWidth,
                 $outputHeight
@@ -130,24 +137,28 @@ final class SwallowtailConversionQueueService
                 $storage->imagePath($base, $sha256, 'thumbnail'),
                 $profilePath,
                 $profileVersion,
-                'normal',
+                self::PRIORITY_PREVIEW_THUMBNAIL,
                 $requestedByUserId,
                 $thumb['width'],
                 $thumb['height']
             );
 
+            $this->markObsoletePreviewJobs($photoId, [
+                $filteredJobId,
+                $thumbnailJobId,
+            ]);
             $this->setPhotoConversionState($photoId, 'processing');
 
             return [
                 'filtered' => [
                     'job_id' => $filteredJobId,
                     'image_type' => 'filtered',
-                    'priority' => 'high',
+                    'priority' => self::PRIORITY_PREVIEW_FILTERED,
                 ],
                 'thumbnail' => [
                     'job_id' => $thumbnailJobId,
                     'image_type' => 'thumbnail',
-                    'priority' => 'normal',
+                    'priority' => self::PRIORITY_PREVIEW_THUMBNAIL,
                 ],
             ];
         });
@@ -166,7 +177,7 @@ final class SwallowtailConversionQueueService
         string $outputPath,
         ?string $profilePath = null,
         int $profileVersion = 1,
-        string $priority = 'normal',
+        string|int $priority = self::PRIORITY_ORIGINAL,
         ?int $requestedByUserId = null,
         ?int $outputWidth = null,
         ?int $outputHeight = null
@@ -177,6 +188,7 @@ final class SwallowtailConversionQueueService
 
         $imageType = $this->normaliseImageType($imageType);
         $priority = $this->normalisePriority($priority);
+        $profilePath = $this->normaliseOptionalPath($profilePath, 1000);
         $profileVersion = max(1, $profileVersion);
         $outputWidth = $this->nullablePositiveInt($outputWidth);
         $outputHeight = $this->nullablePositiveInt($outputHeight);
@@ -191,14 +203,16 @@ final class SwallowtailConversionQueueService
              WHERE photo_id = :photo_id
                AND image_type = :image_type
                AND profile_version = :profile_version
+               AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
                AND status IN ('queued', 'processing')
              ORDER BY id DESC
              LIMIT 1",
-            [
+            array_filter([
                 'photo_id' => $photoId,
                 'image_type' => $imageType,
                 'profile_version' => $profileVersion,
-            ]
+                'profile_path' => $profilePath,
+            ], static fn(mixed $value): bool => $value !== null)
         );
 
         if ($existingJobId !== false && $existingJobId !== null) {
@@ -237,7 +251,7 @@ final class SwallowtailConversionQueueService
                 'photo_id' => $photoId,
                 'image_type' => $imageType,
                 'input_path' => $this->normaliseRequiredPath($inputPath, 1000),
-                'profile_path' => $this->normaliseOptionalPath($profilePath, 1000),
+                'profile_path' => $profilePath,
                 'output_path' => $this->normaliseRequiredPath($outputPath, 1000),
                 'output_width' => $outputWidth,
                 'output_height' => $outputHeight,
@@ -262,27 +276,19 @@ final class SwallowtailConversionQueueService
              WHERE status = 'queued'
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
-               CASE image_type
-                 WHEN 'embedded' THEN 1
-                 WHEN 'filtered' THEN 2
-                 WHEN 'thumbnail' THEN 3
-                 WHEN 'original' THEN 4
-                 ELSE 5
-               END,
-               CASE priority
-                 WHEN 'high' THEN 1
-                 WHEN 'normal' THEN 2
-                 ELSE 3
-               END,
+               priority DESC,
                id
              LIMIT " . $limit
         );
     }
 
-    private function notifyRedis(int $jobId, string $imageType, string $priority): void
+    private function notifyRedis(int $jobId, string $imageType, int $priority): void
     {
         if ($this->redisNotifier instanceof Closure) {
-            ($this->redisNotifier)($jobId, $imageType, $priority);
+            $this->invokeRedisNotifier([$jobId, $imageType, $priority, 'queue']);
+            if ($priority >= self::PRIORITY_PREEMPT_THRESHOLD) {
+                $this->invokeRedisNotifier([$jobId, $imageType, $priority, 'preempt']);
+            }
 
             return;
         }
@@ -291,12 +297,13 @@ final class SwallowtailConversionQueueService
         $port = (int)AppConfigurationStore::get('swallowtail.redis.port', 6379);
         $urgentQueue = trim((string)AppConfigurationStore::get('swallowtail.redis.urgent_queue', 'swallowtail:conversion:urgent'));
         $normalQueue = trim((string)AppConfigurationStore::get('swallowtail.redis.normal_queue', 'swallowtail:conversion:normal'));
+        $preemptQueue = trim((string)AppConfigurationStore::get('swallowtail.redis.preempt_queue', 'swallowtail:conversion:preempt'));
 
         if ($host === '' || $port <= 0) {
             return;
         }
 
-        $queue = $imageType === 'embedded' || $imageType === 'filtered' || $priority === 'high' ? $urgentQueue : $normalQueue;
+        $queue = $priority >= self::PRIORITY_EMBEDDED ? $urgentQueue : $normalQueue;
         if ($queue === '') {
             return;
         }
@@ -309,13 +316,15 @@ final class SwallowtailConversionQueueService
 
             stream_set_timeout($socket, 0, 200000);
             $payload = json_encode(['job_id' => $jobId], JSON_THROW_ON_ERROR);
-            $command = "*3\r\n"
-                . "$5\r\nLPUSH\r\n"
-                . '$' . strlen($queue) . "\r\n" . $queue . "\r\n"
-                . '$' . strlen($payload) . "\r\n" . $payload . "\r\n";
-
-            fwrite($socket, $command);
-            fgets($socket);
+            $this->writeRedisListPush($socket, $queue, $payload);
+            if ($priority >= self::PRIORITY_PREEMPT_THRESHOLD && $preemptQueue !== '') {
+                $preemptPayload = json_encode([
+                    'job_id' => $jobId,
+                    'priority' => $priority,
+                    'reason' => 'high_priority_job',
+                ], JSON_THROW_ON_ERROR);
+                $this->writeRedisListPush($socket, $preemptQueue, $preemptPayload);
+            }
             fclose($socket);
         } catch (Throwable) {
             if (isset($socket) && is_resource($socket)) {
@@ -338,9 +347,31 @@ final class SwallowtailConversionQueueService
             $this->notifyRedis(
                 $jobId,
                 (string)($job['image_type'] ?? ''),
-                (string)($job['priority'] ?? 'normal')
+                $this->normalisePriority($job['priority'] ?? self::PRIORITY_ORIGINAL)
             );
         }
+    }
+
+    private function invokeRedisNotifier(array $arguments): void
+    {
+        if (!$this->redisNotifier instanceof Closure) {
+            return;
+        }
+
+        $reflection = new ReflectionFunction($this->redisNotifier);
+        $argumentCount = $reflection->isVariadic() ? count($arguments) : $reflection->getNumberOfParameters();
+        ($this->redisNotifier)(...array_slice($arguments, 0, $argumentCount));
+    }
+
+    private function writeRedisListPush(mixed $socket, string $queue, string $payload): void
+    {
+        $command = "*3\r\n"
+            . "$5\r\nLPUSH\r\n"
+            . '$' . strlen($queue) . "\r\n" . $queue . "\r\n"
+            . '$' . strlen($payload) . "\r\n" . $payload . "\r\n";
+
+        fwrite($socket, $command);
+        fgets($socket);
     }
 
     private function withRetryableQueueTransaction(callable $callback): array
@@ -390,6 +421,43 @@ final class SwallowtailConversionQueueService
         );
     }
 
+    private function markObsoletePreviewJobs(int $photoId, array $keepJobIds): void
+    {
+        $keepJobIds = array_values(array_filter(array_map(
+            static fn(mixed $value): int => (int)$value,
+            $keepJobIds
+        ), static fn(int $value): bool => $value > 0));
+
+        $params = ['photo_id' => $photoId];
+        $keepPlaceholders = [];
+        $notInSql = '';
+        foreach ($keepJobIds as $index => $jobId) {
+            $key = 'keep_job_' . (string)$index;
+            $params[$key] = $jobId;
+            $keepPlaceholders[] = ':' . $key;
+        }
+
+        if ($keepJobIds !== []) {
+            $notInSql = ' AND id NOT IN (' . implode(', ', $keepPlaceholders) . ')';
+        }
+
+        InterfaceDB::prepareExecute(
+            "UPDATE photo_conversion_jobs
+             SET status = 'obsolete',
+                 completed_at = CURRENT_TIMESTAMP,
+                 locked_at = NULL,
+                 locked_by = NULL,
+                 last_error = 'Obsolete preview profile'
+             WHERE photo_id = :photo_id
+               AND status IN ('queued', 'processing')
+               AND (
+                 image_type = 'filtered'
+                 OR (image_type = 'thumbnail' AND profile_path IS NOT NULL)
+               )" . $notInSql,
+            $params
+        );
+    }
+
     private function normaliseImageType(string $imageType): string
     {
         $imageType = strtolower(trim($imageType));
@@ -400,11 +468,22 @@ final class SwallowtailConversionQueueService
         return $imageType;
     }
 
-    private function normalisePriority(string $priority): string
+    private function normalisePriority(mixed $priority): int
     {
-        $priority = strtolower(trim($priority));
+        if (is_int($priority)) {
+            return max(0, $priority);
+        }
 
-        return in_array($priority, self::PRIORITIES, true) ? $priority : 'normal';
+        if (is_numeric($priority)) {
+            return max(0, (int)$priority);
+        }
+
+        return match (strtolower(trim((string)$priority))) {
+            'high' => self::PRIORITY_EMBEDDED,
+            'low' => self::PRIORITY_FILTERED,
+            'normal' => self::PRIORITY_ORIGINAL,
+            default => self::PRIORITY_ORIGINAL,
+        };
     }
 
     private function normaliseRequiredPath(string $path, int $maxLength): string

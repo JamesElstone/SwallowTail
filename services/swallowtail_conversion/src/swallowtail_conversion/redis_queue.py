@@ -13,6 +13,8 @@ from .config import RedisConfig
 class RedisMessage:
     queue: str
     job_id: int
+    priority: int = 0
+    reason: str = ""
 
 
 class RedisQueue:
@@ -60,13 +62,24 @@ class RedisQueue:
 
         queue = self._to_text(response[0])
         payload = self._to_text(response[1])
-        try:
-            data = json.loads(payload)
-            job_id = int(data.get("job_id", 0))
-        except (TypeError, ValueError, json.JSONDecodeError):
+        return self._message_from_payload(queue, payload)
+
+    def pop_preempt(self) -> RedisMessage | None:
+        if self.config.preempt_queue == "":
             return None
 
-        return RedisMessage(queue=queue, job_id=job_id) if job_id > 0 else None
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("RPOP", self.config.preempt_queue))
+                response = self._read_resp(sock)
+        except OSError:
+            return None
+
+        if response is None:
+            return None
+
+        return self._message_from_payload(self.config.preempt_queue, self._to_text(response))
 
     def ping(self) -> None:
         with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
@@ -122,3 +135,14 @@ class RedisQueue:
 
     def _to_text(self, value) -> str:
         return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+    def _message_from_payload(self, queue: str, payload: str) -> RedisMessage | None:
+        try:
+            data = json.loads(payload)
+            job_id = int(data.get("job_id", 0))
+            priority = int(data.get("priority", 0) or 0)
+            reason = str(data.get("reason", "") or "")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+        return RedisMessage(queue=queue, job_id=job_id, priority=priority, reason=reason) if job_id > 0 else None

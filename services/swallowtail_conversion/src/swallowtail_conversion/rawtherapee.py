@@ -7,6 +7,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .config import RawTherapeeConfig
 from .jobs import ConversionJob
@@ -19,13 +20,14 @@ class RenderResult:
     exit_code: int
     stderr: str
     duration_seconds: float
+    cancelled: bool = False
 
 
 class RawTherapeeRunner:
     def __init__(self, config: RawTherapeeConfig):
         self.config = config
 
-    def render(self, job: ConversionJob, temp_dir: str) -> RenderResult:
+    def render(self, job: ConversionJob, temp_dir: str, should_cancel: Callable[[], bool] | None = None) -> RenderResult:
         binary = shutil.which(self.config.binary) or self.config.binary
         temp_path = Path(temp_dir)
         temp_path.mkdir(parents=True, exist_ok=True)
@@ -48,16 +50,44 @@ class RawTherapeeRunner:
         env["HOME"] = self.config.home
 
         started = time.monotonic()
-        completed = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        cancelled = False
+        stdout = ""
+        stderr_text = ""
+        communicated = False
+        try:
+            while process.poll() is None:
+                if should_cancel is not None and should_cancel():
+                    cancelled = True
+                    process.terminate()
+                    try:
+                        stdout, stderr_text = process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        stdout, stderr_text = process.communicate(timeout=5)
+                    communicated = True
+                    break
+                time.sleep(0.2)
+
+            if not communicated:
+                stdout, stderr_text = process.communicate()
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            raise
         duration = time.monotonic() - started
 
-        stderr = (completed.stderr or completed.stdout or "").strip()
+        stderr = (stderr_text or stdout or "").strip()
+        if cancelled and stderr == "":
+            stderr = "Conversion preempted by a higher priority job."
         return RenderResult(
             temp_output_path=temp_output,
             command=command,
-            exit_code=completed.returncode,
+            exit_code=process.returncode if process.returncode is not None else 1,
             stderr=stderr[-self.config.stderr_chars:],
             duration_seconds=duration,
+            cancelled=cancelled,
         )
 
     def binary_path(self) -> str:

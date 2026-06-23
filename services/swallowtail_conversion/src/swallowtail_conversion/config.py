@@ -25,6 +25,7 @@ class RedisConfig:
     port: int
     urgent_queue: str
     normal_queue: str
+    preempt_queue: str
     timeout_seconds: int
 
 
@@ -87,6 +88,7 @@ def default_config() -> AppConfig:
             port=6379,
             urgent_queue="swallowtail:conversion:urgent",
             normal_queue="swallowtail:conversion:normal",
+            preempt_queue="swallowtail:conversion:preempt",
             timeout_seconds=5,
         ),
         rawtherapee=RawTherapeeConfig(
@@ -142,6 +144,7 @@ def load_config(path: str | None = None) -> AppConfig:
             port=parser.getint("redis", "port", fallback=defaults.redis.port),
             urgent_queue=parser.get("redis", "urgent_queue", fallback=defaults.redis.urgent_queue),
             normal_queue=parser.get("redis", "normal_queue", fallback=defaults.redis.normal_queue),
+            preempt_queue=parser.get("redis", "preempt_queue", fallback=defaults.redis.preempt_queue),
             timeout_seconds=parser.getint("redis", "timeout_seconds", fallback=defaults.redis.timeout_seconds),
         ),
         rawtherapee=RawTherapeeConfig(
@@ -323,6 +326,7 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             port=port,
             urgent_queue=str(redis_config.get("urgent_queue", config.redis.urgent_queue)),
             normal_queue=str(redis_config.get("normal_queue", config.redis.normal_queue)),
+            preempt_queue=str(redis_config.get("preempt_queue", config.redis.preempt_queue)),
         ),
     )
 

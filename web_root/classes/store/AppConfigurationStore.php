@@ -369,6 +369,7 @@ final class AppConfigurationStore
                     'port' => 6379,
                     'urgent_queue' => 'swallowtail:conversion:urgent',
                     'normal_queue' => 'swallowtail:conversion:normal',
+                    'preempt_queue' => 'swallowtail:conversion:preempt',
                 ],
             ],
             'site_context' => [

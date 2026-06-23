@@ -280,7 +280,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         output_height INTEGER NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
         requested_by_user_id INTEGER NULL,
-        priority TEXT NOT NULL DEFAULT 'normal',
+        priority INTEGER NOT NULL DEFAULT 20,
         status TEXT NOT NULL DEFAULT 'queued',
         attempts INTEGER NOT NULL DEFAULT 0,
         available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -938,15 +938,17 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'embedded',
-        'priority' => 'high',
+        'priority' => 40,
     ]));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'thumbnail',
+        'priority' => 30,
     ]));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'original',
+        'priority' => 20,
     ]));
     $harness->assertCount(3, (array)($result['conversion_jobs'] ?? []));
     $harness->assertSame(['embedded', 'thumbnail', 'original'], array_keys((array)($result['conversion_jobs'] ?? [])));
@@ -966,7 +968,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     @unlink($source);
 });
 
-$harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in image priority order', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in numeric priority order', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 
     InterfaceDB::prepareExecute(
@@ -979,16 +981,16 @@ $harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in 
             priority,
             status
         ) VALUES
-            (1, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 'normal', 'queued'),
-            (1, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail.jpg', 'normal', 'queued'),
-            (1, 'image', 'filtered', '/tmp/source.cr2', '/tmp/filtered.jpg', 'normal', 'queued'),
-            (1, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 'normal', 'queued')"
+            (1, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 20, 'queued'),
+            (1, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail.jpg', 30, 'queued'),
+            (1, 'image', 'filtered', '/tmp/source.cr2', '/tmp/filtered.jpg', 10, 'queued'),
+            (1, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 40, 'queued')"
     );
 
     $rows = (new SwallowtailConversionQueueService())->queuedJobs(10);
     $types = array_map(static fn(array $row): string => (string)($row['image_type'] ?? ''), $rows);
 
-    $harness->assertSame(['embedded', 'filtered', 'thumbnail', 'original'], $types);
+    $harness->assertSame(['embedded', 'thumbnail', 'original', 'filtered'], $types);
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -1998,6 +2000,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses original preview 
 });
 
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    AppConfigurationStore::config(true);
     $swallowtailCreateSqliteSchema();
 
     $source = swallowtail_backend_test_temp_file('swallowtail-test-');
@@ -2024,12 +2027,25 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         'exposure' => ['black' => 1, 'lightness' => 2, 'contrast' => 3, 'saturation' => 4],
     ]);
 
-    $harness->assertTrue(empty($denied['success']));
-    $harness->assertTrue(!empty($queued['success']));
+    if (!empty($denied['success'])) {
+        throw new RuntimeException('Preview edit unexpectedly allowed an unauthorized user.');
+    }
+    if (empty($queued['success'])) {
+        throw new RuntimeException('Preview edit did not queue successfully: ' . json_encode($queued, JSON_UNESCAPED_SLASHES));
+    }
     $harness->assertSame(1, (int)($queued['profile_version'] ?? 0));
-    $harness->assertTrue((int)($queued['job_id'] ?? 0) > 0);
-    $harness->assertTrue(str_contains((string)($queued['preview_url'] ?? ''), 'v=1'));
-    $harness->assertTrue(str_contains((string)($queued['status_url'] ?? ''), 'profile_version=1'));
+    if ((int)($queued['job_id'] ?? 0) <= 0) {
+        throw new RuntimeException('Preview edit did not return a positive job id.');
+    }
+    if (!str_contains((string)($queued['preview_url'] ?? ''), 'v=1')) {
+        throw new RuntimeException('Preview URL did not include profile version 1: ' . (string)($queued['preview_url'] ?? ''));
+    }
+    if (!str_contains((string)($queued['preview_url'] ?? ''), 'type=filtered')) {
+        throw new RuntimeException('Preview URL did not target the filtered image: ' . (string)($queued['preview_url'] ?? ''));
+    }
+    if (!str_contains((string)($queued['status_url'] ?? ''), 'profile_version=1')) {
+        throw new RuntimeException('Preview status URL did not include profile version 1: ' . (string)($queued['status_url'] ?? ''));
+    }
 
     $job = InterfaceDB::fetchOne(
         "SELECT profile_path, profile_version, requested_by_user_id, priority, output_width, output_height
@@ -2038,29 +2054,77 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         ['id' => (int)$queued['job_id']]
     );
 
-    $harness->assertTrue(is_array($job));
+    if (!is_array($job)) {
+        throw new RuntimeException('Preview filtered job row was not found.');
+    }
     $profilePath = (string)($job['profile_path'] ?? '');
     $harness->assertSame(1, (int)($job['profile_version'] ?? 0));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
-    $harness->assertSame('high', (string)($job['priority'] ?? ''));
+    $harness->assertSame(51, (int)($job['priority'] ?? 0));
     $harness->assertSame(0, (int)($job['output_width'] ?? 0));
     $harness->assertSame(0, (int)($job['output_height'] ?? 0));
-    $harness->assertTrue($profilePath !== '');
-    $harness->assertTrue(is_file($profilePath));
-    $harness->assertTrue(!str_starts_with($profilePath, APP_ROOT));
-    $harness->assertTrue(str_ends_with($profilePath, '_profile.pp3'));
-    $harness->assertTrue(str_contains((string)file_get_contents($profilePath), "[Crop]\nEnabled=true\nX=10\nY=20\nW=100\nH=120"));
+    if ($profilePath === '') {
+        throw new RuntimeException('Preview filtered job did not store a profile path.');
+    }
+    if (!is_file($profilePath)) {
+        throw new RuntimeException('Preview profile path was not written: ' . $profilePath);
+    }
+    if (str_starts_with($profilePath, APP_ROOT . 'web_root' . DIRECTORY_SEPARATOR)) {
+        throw new RuntimeException('Preview profile path was inside web_root: ' . $profilePath);
+    }
+    if (!str_ends_with($profilePath, '_profile.pp3')) {
+        throw new RuntimeException('Preview profile path did not use the profile suffix: ' . $profilePath);
+    }
+    if (!str_contains((string)file_get_contents($profilePath), "[Crop]\nEnabled=true\nX=10\nY=20\nW=100\nH=120")) {
+        throw new RuntimeException('Preview profile file did not contain the expected crop settings.');
+    }
+
+    $thumbnailJob = InterfaceDB::fetchOne(
+        "SELECT id, priority, profile_path
+         FROM photo_conversion_jobs
+         WHERE photo_id = :photo_id
+           AND image_type = 'thumbnail'
+           AND profile_version = 1
+           AND profile_path IS NOT NULL
+         LIMIT 1",
+        ['photo_id' => $photoId]
+    );
+    if (!is_array($thumbnailJob)) {
+        throw new RuntimeException('Preview thumbnail refresh job row was not found.');
+    }
+    $harness->assertSame(50, (int)($thumbnailJob['priority'] ?? 0));
+
+    $second = $service->enqueuePreview($photoId, 303, [
+        'crop' => ['x' => 30, 'y' => 40, 'width' => 90, 'height' => 110],
+        'exposure' => ['black' => 2, 'lightness' => 3, 'contrast' => 4, 'saturation' => 5],
+    ]);
+    if (empty($second['success'])) {
+        throw new RuntimeException('Second preview edit did not queue successfully: ' . json_encode($second, JSON_UNESCAPED_SLASHES));
+    }
+    $harness->assertSame(2, (int)($second['profile_version'] ?? 0));
+    $harness->assertSame('obsolete', (string)InterfaceDB::fetchColumn(
+        'SELECT status FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
+        ['id' => (int)$queued['job_id']]
+    ));
+    $harness->assertSame('obsolete', (string)InterfaceDB::fetchColumn(
+        'SELECT status FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
+        ['id' => (int)($thumbnailJob['id'] ?? 0)]
+    ));
 
     InterfaceDB::prepareExecute(
         "UPDATE photo_conversion_jobs
          SET status = 'succeeded'
          WHERE id = :id",
-        ['id' => (int)$queued['job_id']]
+        ['id' => (int)$second['job_id']]
     );
-    $status = $service->previewStatus($photoId, (int)$queued['job_id'], 1, 303);
-    $harness->assertTrue(!empty($status['success']));
+    $status = $service->previewStatus($photoId, (int)$second['job_id'], 2, 303);
+    if (empty($status['success'])) {
+        throw new RuntimeException('Preview status did not succeed: ' . json_encode($status, JSON_UNESCAPED_SLASHES));
+    }
     $harness->assertSame('succeeded', (string)($status['status'] ?? ''));
-    $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$queued['job_id']));
+    if (!str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$second['job_id'])) {
+        throw new RuntimeException('Preview status URL did not include the second job id: ' . (string)($status['preview_url'] ?? ''));
+    }
 
     @unlink($source);
 });
@@ -2848,6 +2912,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $storageMigrationPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_17_002_zfs_storage_cache_and_migrations.sql';
     $removeQuickHashPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_22_001_remove_original_quick_hash.sql';
     $metadataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_23_003_normalize_photo_metadata.sql';
+    $conversionPriorityPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_23_004_conversion_priority_preempt.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -2858,12 +2923,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $storageMigrationSql = file_get_contents($storageMigrationPath);
     $removeQuickHashSql = file_get_contents($removeQuickHashPath);
     $metadataSql = file_get_contents($metadataPath);
+    $conversionPrioritySql = file_get_contents($conversionPriorityPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -2888,6 +2954,9 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'DROP COLUMN IF EXISTS original_quick_hash',
         'CREATE TABLE IF NOT EXISTS photo_metadata',
         'CREATE TABLE IF NOT EXISTS photo_metadata_property',
+        "status enum('queued','processing','succeeded','failed','cancelled','obsolete')",
+        'MODIFY priority int(10) unsigned NOT NULL DEFAULT 20',
+        'ADD INDEX idx_conversion_jobs_priority (status, priority, available_at, id)',
         'DROP TABLE IF EXISTS photo_metadata_property',
         'DROP TABLE IF EXISTS photo_metadata',
         "`key` varchar(191) NOT NULL",
@@ -2940,6 +3009,47 @@ $harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jo
         'image_type' => 'filtered',
         'profile_version' => 2,
     ]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailConversionQueueService::class, 'sends Redis preempt signals for high priority preview jobs', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $ingest = new SwallowtailPhotoIngestService(
+        new SwallowtailStorageService(),
+        new SwallowtailPhotoLibraryService(),
+        new SwallowtailConversionQueueService()
+    );
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0008.CR2');
+    $notifications = [];
+    $queue = new SwallowtailConversionQueueService(static function (int $jobId, string $imageType, int $priority, string $messageType) use (&$notifications): void {
+        $notifications[] = [
+            'job_id' => $jobId,
+            'image_type' => $imageType,
+            'priority' => $priority,
+            'message_type' => $messageType,
+        ];
+    });
+
+    $profile = (new SwallowtailStorageService())->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'profile');
+    $filteredJobId = $queue->enqueueFilteredRefresh((int)$result['photo_id'], $profile, 2, 12);
+
+    $harness->assertTrue((int)$filteredJobId > 0);
+    $preempts = array_values(array_filter(
+        $notifications,
+        static fn(array $notification): bool => (string)$notification['message_type'] === 'preempt'
+    ));
+    $harness->assertCount(2, $preempts);
+    $harness->assertSame(['filtered', 'thumbnail'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
+    $harness->assertSame([51, 50], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+    $harness->assertSame($filteredJobId, (int)$preempts[0]['job_id']);
 
     @unlink($source);
 });

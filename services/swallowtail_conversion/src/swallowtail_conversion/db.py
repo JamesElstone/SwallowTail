@@ -10,13 +10,7 @@ from .jobs import ConversionJob
 
 
 class ConversionDatabase:
-    IMAGE_TYPE_ORDER = {
-        "embedded": 1,
-        "filtered": 2,
-        "thumbnail": 3,
-        "original": 4,
-    }
-    DEFAULT_IMAGE_TYPE_ORDER = 6
+    PREEMPT_PRIORITY = 50
 
     def __init__(self, database: DatabaseConfig, worker: WorkerConfig):
         self.worker = worker
@@ -99,12 +93,7 @@ class ConversionDatabase:
              WHERE status = 'queued'
                AND available_at <= CURRENT_TIMESTAMP
              ORDER BY
-               {self._image_type_order_sql()},
-               CASE priority
-                 WHEN 'high' THEN 1
-                 WHEN 'normal' THEN 2
-                 ELSE 3
-               END,
+               priority DESC,
                id
              LIMIT 1
             """
@@ -112,18 +101,23 @@ class ConversionDatabase:
         self.connection.rollback()
         return int(row["id"]) if row else None
 
-    @classmethod
-    def _image_type_order_sql(cls) -> str:
-        clauses = "\n                 ".join(
-            f"WHEN '{image_type}' THEN {rank}" for image_type, rank in cls.IMAGE_TYPE_ORDER.items()
+    def preempt_target(self, job_id: int) -> dict[str, int] | None:
+        row = self._fetchone(
+            """
+            SELECT id, priority
+              FROM photo_conversion_jobs
+             WHERE id = %s
+               AND status = 'queued'
+               AND priority >= %s
+               AND available_at <= CURRENT_TIMESTAMP
+             LIMIT 1
+            """,
+            (job_id, self.PREEMPT_PRIORITY),
         )
-
-        return (
-            "CASE image_type\n"
-            f"                 {clauses}\n"
-            f"                 ELSE {cls.DEFAULT_IMAGE_TYPE_ORDER}\n"
-            "               END"
-        )
+        self.connection.rollback()
+        if row is None:
+            return None
+        return {"id": int(row["id"]), "priority": int(row["priority"] or 0)}
 
     def claim_job(self, job_id: int) -> ConversionJob | None:
         cursor = self._execute(
@@ -167,6 +161,19 @@ class ConversionDatabase:
         )
         self.connection.rollback()
         return row is not None
+
+    def is_obsolete_job(self, job: ConversionJob) -> bool:
+        row = self._fetchone(
+            """
+            SELECT status
+              FROM photo_conversion_jobs
+             WHERE id = %s
+             LIMIT 1
+            """,
+            (job.id,),
+        )
+        self.connection.rollback()
+        return row is not None and str(row.get("status") or "") == "obsolete"
 
     def storage_location_properties(self) -> list[dict[str, Any]]:
         rows = self._fetchall(
@@ -341,13 +348,49 @@ class ConversionDatabase:
         self._refresh_photo_conversion_state(job.photo_id)
         self.connection.commit()
 
+    def obsolete_job(self, job: ConversionJob, message: str) -> None:
+        self._execute(
+            """
+            UPDATE photo_conversion_jobs
+               SET status = 'obsolete',
+                   completed_at = CURRENT_TIMESTAMP,
+                   locked_at = NULL,
+                   locked_by = NULL,
+                   last_error = %s
+             WHERE id = %s
+            """,
+            (message[-4000:], job.id),
+        )
+        self._refresh_photo_conversion_state(job.photo_id)
+        self.connection.commit()
+
+    def requeue_preempted_job(self, job: ConversionJob, message: str, duration: float | None = None) -> None:
+        duration_seconds = round(duration, 3) if duration is not None else None
+        self._execute(
+            """
+            UPDATE photo_conversion_jobs
+               SET status = 'queued',
+                   locked_at = NULL,
+                   locked_by = NULL,
+                   last_error = %s,
+                   duration_seconds = %s,
+                   attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                   available_at = CURRENT_TIMESTAMP
+             WHERE id = %s
+               AND status = 'processing'
+            """,
+            (message[-4000:], duration_seconds, job.id),
+        )
+        self._refresh_photo_conversion_state(job.photo_id)
+        self.connection.commit()
+
     def _refresh_photo_conversion_state(self, photo_id: int) -> None:
         row = self._fetchone(
             """
             SELECT
                 SUM(CASE WHEN status IN ('queued', 'processing') THEN 1 ELSE 0 END) AS active_jobs,
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
-                SUM(CASE WHEN status != 'cancelled' THEN 1 ELSE 0 END) AS non_cancelled_jobs,
+                SUM(CASE WHEN status NOT IN ('cancelled', 'obsolete') THEN 1 ELSE 0 END) AS non_cancelled_jobs,
                 SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_jobs
               FROM photo_conversion_jobs
              WHERE photo_id = %s
