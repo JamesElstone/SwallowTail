@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -47,6 +48,7 @@ class ConversionStorageManager:
         self.disk_usage = disk_usage
         self.mount_reader = mount_reader or self._mounted_base_locations
         self.zfs_reader = zfs_reader or self._zfs_datasets_by_mountpoint
+        self.log = logging.getLogger("swallowtail_conversion.storage")
 
     def has_usable_location(self) -> bool:
         return self.usable_locations() != []
@@ -87,6 +89,22 @@ class ConversionStorageManager:
         new_root = self.data_root(new_base)
 
         self.db.update_photo_storage_location(job.photo_id, old_base, new_base, old_root, new_root)
+        old_free_bytes, old_threshold_bytes, reason = self._relocation_reason(old_base)
+        copied_files = ",".join(destination.name for _source, destination in copied_pairs)
+        self.log.info(
+            "Relocated storage before conversion job=%s photo=%s checksum=%s old_base=%s new_base=%s "
+            "reason=%s old_free_bytes=%s old_threshold_bytes=%s new_free_bytes=%s copied_files=%s",
+            job.id,
+            job.photo_id,
+            checksum,
+            old_base,
+            new_base,
+            reason,
+            old_free_bytes,
+            old_threshold_bytes,
+            destination.free_bytes,
+            copied_files,
+        )
 
         for source, _destination in copied_pairs:
             try:
@@ -234,6 +252,17 @@ class ConversionStorageManager:
 
     def _threshold_bytes(self, total_bytes: int) -> float:
         return float(total_bytes) * (self.config.full_threshold_percent / 100.0)
+
+    def _relocation_reason(self, base: str) -> tuple[int | None, int | None, str]:
+        try:
+            usage = self.disk_usage(self._normalise_directory(base))
+        except OSError:
+            return None, None, "old_storage_unavailable"
+
+        threshold = int(self._threshold_bytes(int(usage.total)))
+        if int(usage.free) <= threshold:
+            return int(usage.free), threshold, "old_storage_below_free_space_threshold"
+        return int(usage.free), threshold, "old_storage_not_writable"
 
     def _property_rows(self) -> list[dict[str, Any]]:
         if not hasattr(self.db, "storage_location_properties"):

@@ -876,7 +876,8 @@ class StorageManagerTest(unittest.TestCase):
 
         old_input = str(source)
         old_output = str(old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg")
-        relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
+        with self.assertLogs("swallowtail_conversion.storage", level="INFO") as logs:
+            relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
         new_source = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
 
         self.assertTrue(new_source.is_file())
@@ -885,6 +886,13 @@ class StorageManagerTest(unittest.TestCase):
         self.assertIn(str(new_base), relocated.output_path)
         self.assertIsNotNone(db.updated)
         self.assertEqual(str(new_base.resolve()) + os.sep, db.updated[2])
+        self.assertTrue(any("Relocated storage before conversion job=1 photo=2" in line for line in logs.output))
+        self.assertTrue(any(f"checksum={checksum}" in line for line in logs.output))
+        self.assertTrue(any("reason=old_storage_below_free_space_threshold" in line for line in logs.output))
+        self.assertTrue(any("old_free_bytes=50" in line for line in logs.output))
+        self.assertTrue(any("old_threshold_bytes=100" in line for line in logs.output))
+        self.assertTrue(any(f"new_base={str(new_base.resolve()) + os.sep}" in line for line in logs.output))
+        self.assertTrue(any(f"copied_files={checksum}_source.cr2" in line for line in logs.output))
 
     def test_relocation_skips_unwritable_storage_destination(self) -> None:
         checksum = "b" * 64
