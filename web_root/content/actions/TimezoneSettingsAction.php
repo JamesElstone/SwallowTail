@@ -23,7 +23,15 @@ final class TimezoneSettingsAction implements ActionInterfaceFramework
 
         $timezone = trim((string)$request->input('server_timezone', ''));
         try {
-            AppConfigurationStore::setTimezoneSettings(['server' => $timezone]);
+            AppConfigurationStore::setTimezoneSettings([
+                'server' => $timezone,
+                'daylight_saving' => [
+                    'enabled' => $request->input('daylight_saving_enabled', '') === '1',
+                    'start' => trim((string)$request->input('daylight_saving_start', '')),
+                    'end' => trim((string)$request->input('daylight_saving_end', '')),
+                    'offset_minutes' => (int)$request->input('daylight_saving_offset_minutes', 60),
+                ],
+            ]);
         } catch (RuntimeException $exception) {
             return new ActionResultFramework(false, ['timezone.settings'], [[
                 'type' => 'error',

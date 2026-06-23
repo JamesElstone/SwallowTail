@@ -25,4 +25,10 @@ $harness->check(_timezone_settingsCard::class, 'renders server timezone selector
     $harness->assertTrue(str_contains($html, 'name="server_timezone"'));
     $harness->assertTrue(str_contains($html, 'value="Europe/London"'));
     $harness->assertTrue(str_contains($html, 'data-submit-on-change="true"'));
+    $harness->assertTrue(str_contains($html, 'Apply Daylight Saving Time'));
+    $harness->assertTrue(str_contains($html, 'name="daylight_saving_enabled"'));
+    $harness->assertTrue(str_contains($html, 'name="daylight_saving_start"'));
+    $harness->assertTrue(str_contains($html, 'name="daylight_saving_end"'));
+    $harness->assertTrue(str_contains($html, 'name="daylight_saving_offset_minutes"'));
+    $harness->assertTrue(str_contains($html, '<option value="60" selected>+1</option>'));
 });

@@ -52,8 +52,8 @@ class MetadataWorker:
             source_path = self.source_path(photo)
             if not source_path.is_file():
                 raise RuntimeError(f"Source CR2 file was not found: {source_path}")
-            result = self.exiftool.extract(str(source_path), self.config.metadata.server_timezone)
-            self.db.upsert_ready(photo_id, result.fields, result.raw)
+            result = self.exiftool.extract(str(source_path), self.config.metadata)
+            self.db.upsert_ready(photo_id, result.fields, result.properties)
             self.log.info("Extracted metadata for photo=%s source=%s", photo_id, source_path)
         except Exception as exc:
             status = self.db.defer_or_fail(

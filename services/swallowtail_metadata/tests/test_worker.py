@@ -9,8 +9,8 @@ from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 
-from swallowtail_metadata.config import default_config
-from swallowtail_metadata.exiftool import parse_metadata
+from swallowtail_metadata.config import DaylightSavingConfig, default_config
+from swallowtail_metadata.exiftool import extract_properties, parse_metadata
 from swallowtail_metadata.worker import MetadataWorker
 
 
@@ -42,11 +42,11 @@ class FakeExifTool:
     def __init__(self):
         self.paths = []
 
-    def extract(self, path, server_timezone):
-        self.paths.append((path, server_timezone))
+    def extract(self, path, metadata):
+        self.paths.append((path, metadata.server_timezone))
         return type("Result", (), {
-            "fields": {"camera_make": "Canon", "captured_timezone_source": "canon_makernote"},
-            "raw": {"EXIF:Make": "Canon"},
+            "fields": {"camera_make": "Canon"},
+            "properties": [{"type": "exififd", "key": "Make", "value": "Canon", "value_type": "string"}],
         })()
 
     def health_check(self):
@@ -66,11 +66,23 @@ class FakeRedis:
 
 
 class MetadataParserTest(unittest.TestCase):
-    def test_canon_time_info_maps_london_and_utc_capture_time(self) -> None:
+    def metadata_config(self, enabled: bool = False) -> object:
+        config = default_config()
+        return replace(
+            config.metadata,
+            daylight_saving=DaylightSavingConfig(
+                enabled=enabled,
+                start="03-31",
+                end="10-31",
+                offset_minutes=60,
+            ),
+        )
+
+    def test_winter_london_canon_time_info_does_not_apply_daylight_saving(self) -> None:
         fields = parse_metadata(
             {
-                "EXIF:DateTimeOriginal": "2024:07:01 20:39:49",
-                "Canon:TimeZone": 0,
+                "EXIF:DateTimeOriginal": "2024:02:01 20:39:49",
+                "Canon:TimeZone": 60,
                 "Canon:TimeZoneCity": 20,
                 "Canon:DaylightSavings": 60,
                 "EXIF:Make": "Canon",
@@ -82,13 +94,11 @@ class MetadataParserTest(unittest.TestCase):
                 "EXIF:ExifImageWidth": 6000,
                 "EXIF:ExifImageHeight": 4000,
             },
-            "Europe/London",
+            self.metadata_config(enabled=True),
         )
 
-        self.assertEqual("2024-07-01 20:39:49", fields["captured_at_local"])
-        self.assertEqual("2024-07-01 19:39:49", fields["captured_at_utc"])
-        self.assertEqual(60, fields["captured_timezone_offset_minutes"])
-        self.assertEqual("canon_makernote", fields["captured_timezone_source"])
+        self.assertEqual("2024-02-01 20:39:49", fields["captured_at_local"])
+        self.assertEqual("2024-02-01 20:39:49", fields["captured_at_utc"])
         self.assertEqual(20, fields["camera_timezone_city_code"])
         self.assertEqual("London", fields["camera_timezone_city_label"])
         self.assertEqual(60, fields["camera_daylight_savings_minutes"])
@@ -96,12 +106,57 @@ class MetadataParserTest(unittest.TestCase):
         self.assertEqual("Canon EOS 760D", fields["camera_model"])
         self.assertEqual(1000, fields["iso"])
 
-    def test_server_timezone_is_fallback_when_canon_timezone_is_missing(self) -> None:
-        fields = parse_metadata({"EXIF:DateTimeOriginal": "2024:02:01 20:39:49"}, "Europe/London")
+    def test_summer_london_canon_time_info_applies_configured_daylight_saving(self) -> None:
+        fields = parse_metadata(
+            {
+                "EXIF:DateTimeOriginal": "2024:07:01 20:39:49",
+                "Canon:TimeZone": 60,
+                "Canon:TimeZoneCity": 20,
+                "Canon:DaylightSavings": 60,
+            },
+            self.metadata_config(enabled=True),
+        )
 
-        self.assertEqual("server_default", fields["captured_timezone_source"])
+        self.assertEqual("2024-07-01 19:39:49", fields["captured_at_utc"])
+        self.assertEqual(60, fields["camera_daylight_savings_minutes"])
+
+    def test_disabled_daylight_saving_does_not_apply_configured_adjustment(self) -> None:
+        fields = parse_metadata(
+            {
+                "EXIF:DateTimeOriginal": "2024:07:01 20:39:49",
+                "Canon:TimeZone": 60,
+                "Canon:DaylightSavings": 60,
+            },
+            self.metadata_config(enabled=False),
+        )
+
+        self.assertEqual("2024-07-01 20:39:49", fields["captured_at_utc"])
+
+    def test_server_timezone_is_fallback_when_canon_timezone_is_missing(self) -> None:
+        fields = parse_metadata({"EXIF:DateTimeOriginal": "2024:02:01 20:39:49"}, self.metadata_config())
+
         self.assertEqual("2024-02-01 20:39:49", fields["captured_at_utc"])
-        self.assertEqual(0, fields["captured_timezone_offset_minutes"])
+
+    def test_property_extraction_keeps_selected_scalar_sections_and_skips_binary(self) -> None:
+        properties = extract_properties({
+            "File:FileType": "CR2",
+            "ExifIFD:ISO": 100,
+            "Canon:LiveViewShooting": False,
+            "Composite:Aperture": 4.0,
+            "IFD0:Make": "Canon",
+            "Canon:PreviewImage": "(Binary data 10 bytes, use -b option to extract)",
+            "Canon:Nested": {"bad": "shape"},
+        })
+
+        self.assertEqual(
+            [
+                {"type": "file", "key": "FileType", "value": "CR2", "value_type": "string"},
+                {"type": "exififd", "key": "ISO", "value": "100", "value_type": "int"},
+                {"type": "canon", "key": "LiveViewShooting", "value": "0", "value_type": "bool"},
+                {"type": "composite", "key": "Aperture", "value": "4.0", "value_type": "float"},
+            ],
+            properties,
+        )
 
 
 class MetadataWorkerTest(unittest.TestCase):
@@ -153,6 +208,7 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertTrue(worker.run_once())
 
         self.assertEqual(7, db.ready[0][0])
+        self.assertEqual([{"type": "exififd", "key": "Make", "value": "Canon", "value_type": "string"}], db.ready[0][2])
         self.assertEqual([(str(source), "Europe/London")], exiftool.paths)
         self.assertEqual(["swallowtail_metadata", "swallowtail_metadata"], worker.redis.touched)
 

@@ -175,14 +175,52 @@ final class AppConfigurationStore
             throw new RuntimeException('Choose a valid server timezone.');
         }
 
+        $daylightSaving = self::normaliseDaylightSavingSettings($settings['daylight_saving'] ?? []);
         $config = self::readStoredConfig();
         $swallowtail = is_array($config['swallowtail'] ?? null) ? $config['swallowtail'] : [];
         $current = is_array($swallowtail['timezone'] ?? null) ? $swallowtail['timezone'] : [];
-        $swallowtail['timezone'] = array_replace($current, ['server' => $timezone]);
+        $swallowtail['timezone'] = array_replace($current, [
+            'server' => $timezone,
+            'daylight_saving' => $daylightSaving,
+        ]);
         $config['swallowtail'] = $swallowtail;
         self::writeStoredConfig($config);
 
         return self::config(true);
+    }
+
+    private static function normaliseDaylightSavingSettings(mixed $settings): array
+    {
+        $settings = is_array($settings) ? $settings : [];
+        $enabled = filter_var($settings['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $start = self::normaliseMonthDayDate((string)($settings['start'] ?? ''));
+        $end = self::normaliseMonthDayDate((string)($settings['end'] ?? ''));
+        $offset = (int)($settings['offset_minutes'] ?? 60);
+        if (!in_array($offset, [60, 30, 0, -30, -60], true)) {
+            throw new RuntimeException('Choose a valid daylight saving offset.');
+        }
+
+        return [
+            'enabled' => $enabled,
+            'start' => $start,
+            'end' => $end,
+            'offset_minutes' => $offset,
+        ];
+    }
+
+    private static function normaliseMonthDayDate(string $date): string
+    {
+        $date = trim($date);
+        if ($date === '') {
+            throw new RuntimeException('Choose valid daylight saving start and end dates.');
+        }
+
+        $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+        if (!$parsed instanceof DateTimeImmutable || $parsed->format('Y-m-d') !== $date) {
+            throw new RuntimeException('Choose valid daylight saving start and end dates.');
+        }
+
+        return $parsed->format('m-d');
     }
 
     public static function set(string $path, mixed $value): array
@@ -310,6 +348,12 @@ final class AppConfigurationStore
             'swallowtail' => [
                 'timezone' => [
                     'server' => 'Europe/London',
+                    'daylight_saving' => [
+                        'enabled' => false,
+                        'start' => '03-31',
+                        'end' => '10-31',
+                        'offset_minutes' => 60,
+                    ],
                 ],
                 'storage' => [
                     'store_on_root_partition' => false,

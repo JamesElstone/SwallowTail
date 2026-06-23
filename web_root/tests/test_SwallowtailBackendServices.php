@@ -2750,6 +2750,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $quickHashPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_16_005_raw_quick_hash.sql';
     $storageMigrationPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_17_002_zfs_storage_cache_and_migrations.sql';
     $removeQuickHashPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_22_001_remove_original_quick_hash.sql';
+    $metadataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_23_003_normalize_photo_metadata.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -2759,12 +2760,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $quickHashSql = file_get_contents($quickHashPath);
     $storageMigrationSql = file_get_contents($storageMigrationPath);
     $removeQuickHashSql = file_get_contents($removeQuickHashPath);
+    $metadataSql = file_get_contents($metadataPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -2787,6 +2789,12 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         "'filtered'",
         'DROP INDEX IF EXISTS idx_photos_quick_hash ON photos',
         'DROP COLUMN IF EXISTS original_quick_hash',
+        'CREATE TABLE IF NOT EXISTS photo_metadata',
+        'CREATE TABLE IF NOT EXISTS photo_metadata_property',
+        'DROP TABLE IF EXISTS photo_metadata_property',
+        'DROP TABLE IF EXISTS photo_metadata',
+        "`key` varchar(191) NOT NULL",
+        "value_type enum('null','bool','int','float','string') NOT NULL",
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));
@@ -2796,8 +2804,15 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'CREATE TABLE IF NOT EXISTS swallowtail_storage_locations',
         'CREATE TABLE IF NOT EXISTS swallowtail_photo_derivatives',
         'output_storage_path',
+        'metadata_json longtext',
+        'captured_timezone_offset_minutes',
+        'captured_timezone_source',
+        'server_timezone_name_at_upload',
     ] as $needle) {
-        $harness->assertTrue(!str_contains($sql, $needle));
+        $targetSql = in_array($needle, ['metadata_json longtext', 'captured_timezone_offset_minutes', 'captured_timezone_source', 'server_timezone_name_at_upload'], true)
+            ? $metadataSql
+            : $sql;
+        $harness->assertTrue(!str_contains($targetSql, $needle));
     }
 });
 

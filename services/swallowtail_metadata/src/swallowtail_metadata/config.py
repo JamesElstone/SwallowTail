@@ -34,9 +34,18 @@ class WorkerConfig:
 
 
 @dataclass(frozen=True)
+class DaylightSavingConfig:
+    enabled: bool
+    start: str
+    end: str
+    offset_minutes: int
+
+
+@dataclass(frozen=True)
 class MetadataConfig:
     exiftool_binary: str
     server_timezone: str
+    daylight_saving: DaylightSavingConfig
 
 
 @dataclass(frozen=True)
@@ -68,7 +77,11 @@ def default_config() -> AppConfig:
         ),
         redis=RedisConfig(host="127.0.0.1", port=6379, timeout_seconds=5),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
-        metadata=MetadataConfig(exiftool_binary="/usr/local/bin/exiftool", server_timezone="Europe/London"),
+        metadata=MetadataConfig(
+            exiftool_binary="/usr/local/bin/exiftool",
+            server_timezone="Europe/London",
+            daylight_saving=DaylightSavingConfig(enabled=False, start="03-31", end="10-31", offset_minutes=60),
+        ),
         logging=LoggingConfig(file="/var/log/swallowtail/swallowtail_metadata.log", level="INFO"),
         project_root="/usr/local/swallowtail",
     )
@@ -158,8 +171,44 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
 def _apply_php_timezone_config(config: AppConfig, swallowtail_config: Any) -> AppConfig:
     if not isinstance(swallowtail_config, dict) or not isinstance(swallowtail_config.get("timezone"), dict):
         return config
-    timezone = str(swallowtail_config["timezone"].get("server") or config.metadata.server_timezone).strip()
-    return replace(config, metadata=replace(config.metadata, server_timezone=timezone or config.metadata.server_timezone))
+    timezone_config = swallowtail_config["timezone"]
+    timezone = str(timezone_config.get("server") or config.metadata.server_timezone).strip()
+    daylight_saving = _daylight_saving_config(timezone_config.get("daylight_saving"), config.metadata.daylight_saving)
+    return replace(
+        config,
+        metadata=replace(
+            config.metadata,
+            server_timezone=timezone or config.metadata.server_timezone,
+            daylight_saving=daylight_saving,
+        ),
+    )
+
+
+def _daylight_saving_config(value: Any, default: DaylightSavingConfig) -> DaylightSavingConfig:
+    if not isinstance(value, dict):
+        return default
+    try:
+        offset = int(value.get("offset_minutes", default.offset_minutes))
+    except (TypeError, ValueError):
+        offset = default.offset_minutes
+    if offset not in {60, 30, 0, -30, -60}:
+        offset = default.offset_minutes
+    return DaylightSavingConfig(
+        enabled=bool(value.get("enabled", default.enabled)),
+        start=_month_day(value.get("start"), default.start),
+        end=_month_day(value.get("end"), default.end),
+        offset_minutes=offset,
+    )
+
+
+def _month_day(value: Any, default: str) -> str:
+    text = str(value or "").strip()
+    if len(text) == 5 and text[2] == "-" and text[0:2].isdigit() and text[3:5].isdigit():
+        month = int(text[0:2])
+        day = int(text[3:5])
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return text
+    return default
 
 
 def _split_pdo_dsn(dsn: str) -> tuple[str, str]:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -10,13 +9,10 @@ from .config import DatabaseConfig
 class MetadataDatabase:
     FIELD_NAMES = [
         "captured_at_local",
-        "captured_at_utc",
-        "captured_timezone_offset_minutes",
-        "captured_timezone_source",
         "camera_timezone_city_code",
         "camera_timezone_city_label",
         "camera_daylight_savings_minutes",
-        "server_timezone_name_at_upload",
+        "captured_at_utc",
         "camera_make",
         "camera_model",
         "camera_serial",
@@ -92,17 +88,16 @@ class MetadataDatabase:
         self.connection.rollback()
         return row
 
-    def upsert_ready(self, photo_id: int, fields: dict[str, Any], raw: dict[str, Any]) -> None:
+    def upsert_ready(self, photo_id: int, fields: dict[str, Any], properties: list[dict[str, Any]]) -> None:
         values = {name: fields.get(name) for name in self.FIELD_NAMES}
-        columns = ["photo_id", "status", *self.FIELD_NAMES, "metadata_json", "attempts", "next_attempt_at", "last_error", "extracted_at"]
+        columns = ["photo_id", "status", "attempts", "next_attempt_at", "last_error", *self.FIELD_NAMES, "extracted_at"]
         params = [
             photo_id,
             "ready",
-            *(values[name] for name in self.FIELD_NAMES),
-            json.dumps(raw, separators=(",", ":"), ensure_ascii=False),
             0,
             None,
             None,
+            *(values[name] for name in self.FIELD_NAMES),
             self._now(),
         ]
         updates = ", ".join(f"{column} = VALUES({column})" for column in columns[1:])
@@ -112,7 +107,28 @@ class MetadataDatabase:
             ON DUPLICATE KEY UPDATE {updates}, updated_at = CURRENT_TIMESTAMP
         """
         self._execute(sql, tuple(params))
+        self._replace_properties(photo_id, properties)
         self.connection.commit()
+
+    def _replace_properties(self, photo_id: int, properties: list[dict[str, Any]]) -> None:
+        self._execute("DELETE FROM photo_metadata_property WHERE photo_id = %s", (photo_id,))
+        if not properties:
+            return
+        sql = """
+            INSERT INTO photo_metadata_property (
+                photo_id, type, `key`, value, value_type
+            ) VALUES (
+                %s, %s, %s, %s, %s
+            )
+        """
+        for property_row in properties:
+            self._execute(sql, (
+                photo_id,
+                str(property_row.get("type") or "")[:32],
+                str(property_row.get("key") or "")[:191],
+                property_row.get("value"),
+                str(property_row.get("value_type") or "string"),
+            ))
 
     def defer_or_fail(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
         existing = self._fetchone("SELECT attempts FROM photo_metadata WHERE photo_id = %s LIMIT 1", (photo_id,))

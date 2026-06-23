@@ -74,6 +74,10 @@ $harness->check(AppConfigurationStore::class, 'defaults metadata fallback timezo
     $defaults = $method->invoke(null);
 
     $harness->assertSame('Europe/London', $defaults['swallowtail']['timezone']['server'] ?? null);
+    $harness->assertSame(false, $defaults['swallowtail']['timezone']['daylight_saving']['enabled'] ?? null);
+    $harness->assertSame('03-31', $defaults['swallowtail']['timezone']['daylight_saving']['start'] ?? null);
+    $harness->assertSame('10-31', $defaults['swallowtail']['timezone']['daylight_saving']['end'] ?? null);
+    $harness->assertSame(60, $defaults['swallowtail']['timezone']['daylight_saving']['offset_minutes'] ?? null);
 });
 
 $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled by default', function () use ($harness): void {
@@ -165,9 +169,21 @@ $harness->check(AppConfigurationStore::class, 'updates timezone settings without
     }
 
     try {
-        $updated = AppConfigurationStore::setTimezoneSettings(['server' => 'UTC']);
+        $updated = AppConfigurationStore::setTimezoneSettings([
+            'server' => 'UTC',
+            'daylight_saving' => [
+                'enabled' => true,
+                'start' => '2026-03-31',
+                'end' => '2026-10-31',
+                'offset_minutes' => 30,
+            ],
+        ]);
 
         $harness->assertSame('UTC', $updated['swallowtail']['timezone']['server'] ?? null);
+        $harness->assertSame(true, $updated['swallowtail']['timezone']['daylight_saving']['enabled'] ?? null);
+        $harness->assertSame('03-31', $updated['swallowtail']['timezone']['daylight_saving']['start'] ?? null);
+        $harness->assertSame('10-31', $updated['swallowtail']['timezone']['daylight_saving']['end'] ?? null);
+        $harness->assertSame(30, (int)($updated['swallowtail']['timezone']['daylight_saving']['offset_minutes'] ?? 0));
         $harness->assertSame(3600, (int)($updated['swallowtail']['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
     } finally {
         file_put_contents($path, $original, LOCK_EX);
