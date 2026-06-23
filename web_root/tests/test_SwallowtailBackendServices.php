@@ -601,6 +601,38 @@ $harness->check(SwallowtailStorageService::class, 'marks invalid storage bases u
     }
 });
 
+$harness->check(SwallowtailStorageService::class, 'fails storage refresh when Redis cache write fails', function () use ($harness, $swallowtailAssertContains): void {
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    $base = swallowtail_backend_storage_tmp_root();
+    if (!is_dir($base) && !@mkdir($base, 0770, true) && !is_dir($base)) {
+        throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
+    }
+
+    try {
+        AppConfigurationStore::set('swallowtail.storage.test_base_location', $base);
+        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        AppConfigurationStore::set('swallowtail.redis.port', 0);
+
+        try {
+            (new SwallowtailStorageService())->refreshStorageSnapshot();
+            throw new RuntimeException('Expected storage refresh to fail when Redis cannot store the snapshot.');
+        } catch (RuntimeException $exception) {
+            $swallowtailAssertContains('Unable to store refreshed SwallowTail storage snapshot in Redis', $exception->getMessage(), 'storage refresh cache write failure');
+        }
+    } finally {
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        (new SwallowtailStorageCacheService())->clear();
+        swallowtail_backend_remove_tree($base);
+    }
+});
+
 $harness->check(SwallowtailStorageService::class, 'verifies active live storage locations are writable by PHP', function () use ($harness): void {
     $configPath = AppConfigurationStore::configPath();
     $originalConfig = file_get_contents($configPath);

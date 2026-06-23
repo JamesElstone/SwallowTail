@@ -38,15 +38,19 @@ class StorageWorker:
 
     def refresh(self, reason: str) -> bool:
         self.touch_status()
-        ok = self.run_php("refresh")
+        payload = self.php_json("refresh")
+        ok = bool(payload.get("success"))
+        mount_points = self.snapshot_mount_points(payload.get("snapshot"))
         if ok:
-            status = self.php_json("status")
-            self.last_mount_signature = str(
-                (((status.get("cache") or {}).get("snapshot") or {}).get("mount_signature")) or self.mount_signature()
-            )
+            self.last_mount_signature = self.mount_signature()
         self.run_php("process-migrations", str(self.config.migration_limit))
         self.touch_status()
-        self.log.info("Storage refresh completed reason=%s ok=%s", reason, ok)
+        self.log.info(
+            "Storage refresh completed reason=%s ok=%s mount_points=%s",
+            reason,
+            ok,
+            json.dumps(mount_points, separators=(",", ":")),
+        )
         return ok
 
     def status(self) -> dict:
@@ -106,6 +110,22 @@ class StorageWorker:
             except subprocess.TimeoutExpired:
                 continue
         return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest() if parts else ""
+
+    def snapshot_mount_points(self, snapshot) -> list[str]:
+        if not isinstance(snapshot, dict):
+            return []
+        locations = snapshot.get("locations")
+        if not isinstance(locations, list):
+            return []
+
+        mount_points: list[str] = []
+        for location in locations:
+            if not isinstance(location, dict):
+                continue
+            mount_point = str(location.get("storage_base_location") or "").strip()
+            if mount_point != "":
+                mount_points.append(mount_point)
+        return mount_points
 
     def run_php(self, *args: str) -> bool:
         payload = self.php_json(*args)

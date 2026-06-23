@@ -27,7 +27,7 @@ class StorageWorkerTest(unittest.TestCase):
                     "import json, sys",
                     "cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'",
                     "if cmd == 'refresh':",
-                    "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc'}}))",
+                    "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc', 'locations': [{'storage_base_location': '/storage/a'}, {'storage_base_location': '/storage/b'}]}}))",
                     "elif cmd == 'process-migrations':",
                     "    print(json.dumps({'success': True, 'processed': 1}))",
                     "elif cmd == 'touch-service':",
@@ -62,9 +62,12 @@ class StorageWorkerTest(unittest.TestCase):
 
     def test_run_once_refreshes_and_processes_migrations(self) -> None:
         worker = StorageWorker(self.config())
+        worker.mount_signature = lambda: "mount-raw"
 
-        self.assertTrue(worker.run_once())
-        self.assertEqual("abc", worker.last_mount_signature)
+        with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
+            self.assertTrue(worker.run_once())
+        self.assertEqual("mount-raw", worker.last_mount_signature)
+        self.assertTrue(any('mount_points=["/storage/a","/storage/b"]' in line for line in logs.output))
 
     def test_status_includes_service_state(self) -> None:
         worker = StorageWorker(self.config())

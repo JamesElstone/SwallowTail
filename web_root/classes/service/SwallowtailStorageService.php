@@ -37,7 +37,9 @@ final class SwallowtailStorageService
     public function refreshStorageSnapshot(): array
     {
         $snapshot = $this->liveStorageSnapshot();
-        (new SwallowtailStorageCacheService())->store($snapshot);
+        if (!(new SwallowtailStorageCacheService())->store($snapshot)) {
+            throw new RuntimeException('Unable to store refreshed SwallowTail storage snapshot in Redis.');
+        }
 
         return $snapshot;
     }
