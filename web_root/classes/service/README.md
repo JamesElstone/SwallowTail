@@ -48,6 +48,10 @@ missing or stale, PHP falls back to live discovery.
 Processes durable storage migration jobs from `storage_migration_jobs` and
 `storage_migration_job_items`.
 
+- Plans one queued migration item per photo/checksum family when a location is
+  migrated.
+- Processes queued/failed migration items in bounded batches rather than moving
+  a whole location in one PHP invocation.
 - Copies all files in a photo's checksum family to the destination location.
 - Verifies copied files with SHA-256 before updating the `photos` row.
 - Records a `storage_location_migrated` audit event.

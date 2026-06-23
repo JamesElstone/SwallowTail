@@ -331,7 +331,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         job_id INTEGER NOT NULL,
         photo_id INTEGER NOT NULL,
         source_base_location TEXT NOT NULL,
-        destination_base_location TEXT NOT NULL,
+        destination_base_location TEXT NULL,
         status TEXT NOT NULL DEFAULT 'queued',
         file_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NULL,
@@ -633,6 +633,21 @@ $harness->check(SwallowtailStorageService::class, 'fails storage refresh when Re
     }
 });
 
+$harness->check(SwallowtailStorageCacheService::class, 'ignores malformed Redis storage snapshots', function () use ($harness): void {
+    $redis = new class {
+        public function get(string $key): ?string
+        {
+            return json_encode([
+                'version' => 1,
+                'generated_at' => time(),
+                'cached_at' => time(),
+            ], JSON_UNESCAPED_SLASHES);
+        }
+    };
+
+    $harness->assertSame(null, (new SwallowtailStorageCacheService($redis))->snapshot(true));
+});
+
 $harness->check(SwallowtailStorageService::class, 'verifies active live storage locations are writable by PHP', function () use ($harness): void {
     $configPath = AppConfigurationStore::configPath();
     $originalConfig = file_get_contents($configPath);
@@ -855,6 +870,10 @@ $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file 
 
         $jobId = (new SwallowtailStorageMigrationService())->enqueue($sourceBase, $destinationBase, null, null, null);
         $harness->assertTrue((int)$jobId > 0);
+        $harness->assertSame(1, InterfaceDB::countWhere('storage_migration_job_items', [
+            'job_id' => $jobId,
+            'destination_base_location' => rtrim($destinationBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR,
+        ]));
         $processed = (new SwallowtailStorageMigrationService())->processPending(1);
 
         $harness->assertSame(1, $processed);
@@ -884,6 +903,140 @@ $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file 
                 @rmdir($base);
             } catch (Throwable) {
             }
+        }
+        @rmdir($root);
+    }
+});
+
+$harness->check(SwallowtailStorageMigrationService::class, 'plans migration items and excludes source location', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $root = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'swallowtail-plan-' . bin2hex(random_bytes(4));
+    $sourceBase = $root . DIRECTORY_SEPARATOR . 'source';
+    $source = rtrim($sourceBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+
+    try {
+        for ($index = 1; $index <= 2; $index++) {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO photos (
+                    original_filename,
+                    original_extension,
+                    original_bytes,
+                    original_sha256,
+                    storage_base_location
+                ) VALUES (
+                    :filename,
+                    'cr2',
+                    12,
+                    :sha256,
+                    :storage_base_location
+                )",
+                [
+                    'filename' => 'IMG_PLAN_' . $index . '.CR2',
+                    'sha256' => str_repeat((string)$index, 64),
+                    'storage_base_location' => $source,
+                ]
+            );
+        }
+
+        $jobId = (new SwallowtailStorageMigrationService())->enqueueAndExcludeSource($sourceBase, null);
+
+        $harness->assertTrue((int)$jobId > 0);
+        $harness->assertSame(2, InterfaceDB::countWhere('storage_migration_job_items', 'job_id', $jobId));
+        $harness->assertSame(2, (int)InterfaceDB::fetchColumn('SELECT total_photos FROM storage_migration_jobs WHERE id = :id', ['id' => $jobId]));
+        $harness->assertSame(2, InterfaceDB::countWhere('storage_migration_job_items', [
+            'job_id' => $jobId,
+            'status' => 'queued',
+        ]));
+        $harness->assertSame(2, (int)InterfaceDB::fetchColumn(
+            'SELECT COUNT(*) FROM storage_migration_job_items WHERE job_id = :job_id AND destination_base_location IS NULL',
+            ['job_id' => $jobId]
+        ));
+        $harness->assertSame(1, (int)InterfaceDB::fetchColumn(
+            'SELECT is_excluded FROM storage_location_properties WHERE storage_base_location = :storage_base_location',
+            ['storage_base_location' => $source]
+        ));
+    } finally {
+        swallowtail_backend_remove_tree($root);
+    }
+});
+
+$harness->check(SwallowtailStorageMigrationService::class, 'processes migration item batches before completing parent job', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $storage = new SwallowtailStorageService();
+    $root = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'swallowtail-batch-' . bin2hex(random_bytes(4));
+    $sourceBase = $root . DIRECTORY_SEPARATOR . 'source';
+    $destinationBase = $root . DIRECTORY_SEPARATOR . 'destination';
+    $checksums = [str_repeat('a', 64), str_repeat('b', 64)];
+
+    try {
+        foreach ($checksums as $index => $sha256) {
+            $sourcePath = $storage->imagePath($sourceBase, $sha256, 'source');
+            $thumbnailPath = $storage->imagePath($sourceBase, $sha256, 'thumbnail');
+            $storage->ensureDirectoryForPath($sourcePath);
+            file_put_contents($sourcePath, 'source-bytes-' . $index, LOCK_EX);
+            file_put_contents($thumbnailPath, 'thumbnail-bytes-' . $index, LOCK_EX);
+
+            InterfaceDB::prepareExecute(
+                "INSERT INTO photos (
+                    original_filename,
+                    original_extension,
+                    original_bytes,
+                    original_sha256,
+                    storage_base_location
+                ) VALUES (
+                    :filename,
+                    'cr2',
+                    12,
+                    :sha256,
+                    :storage_base_location
+                )",
+                [
+                    'filename' => 'IMG_BATCH_' . $index . '.CR2',
+                    'sha256' => $sha256,
+                    'storage_base_location' => rtrim($sourceBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR,
+                ]
+            );
+        }
+
+        $jobId = (new SwallowtailStorageMigrationService())->enqueue($sourceBase, $destinationBase, null, null, null);
+        $harness->assertTrue((int)$jobId > 0);
+
+        $harness->assertSame(1, (new SwallowtailStorageMigrationService())->processPending(1));
+        $harness->assertSame(1, InterfaceDB::countWhere('storage_migration_job_items', [
+            'job_id' => $jobId,
+            'status' => 'succeeded',
+        ]));
+        $harness->assertSame(1, InterfaceDB::countWhere('storage_migration_job_items', [
+            'job_id' => $jobId,
+            'status' => 'queued',
+        ]));
+        $harness->assertSame('processing', (string)InterfaceDB::fetchColumn('SELECT status FROM storage_migration_jobs WHERE id = :id', ['id' => $jobId]));
+
+        $harness->assertSame(1, (new SwallowtailStorageMigrationService())->processPending(10));
+        $harness->assertSame(2, InterfaceDB::countWhere('storage_migration_job_items', [
+            'job_id' => $jobId,
+            'status' => 'succeeded',
+        ]));
+        $harness->assertSame('succeeded', (string)InterfaceDB::fetchColumn('SELECT status FROM storage_migration_jobs WHERE id = :id', ['id' => $jobId]));
+        $harness->assertSame(2, (int)InterfaceDB::fetchColumn('SELECT moved_photos FROM storage_migration_jobs WHERE id = :id', ['id' => $jobId]));
+    } finally {
+        foreach ([$sourceBase, $destinationBase] as $base) {
+            foreach ($checksums as $sha256) {
+                foreach (SwallowtailStorageService::IMAGE_TYPES as $imageType) {
+                    try {
+                        @unlink($storage->imagePath($base, $sha256, $imageType));
+                    } catch (Throwable) {
+                    }
+                }
+                try {
+                    $folder = dirname($storage->imagePath($base, $sha256, 'source'));
+                    @rmdir($folder);
+                    @rmdir(dirname($folder));
+                } catch (Throwable) {
+                }
+            }
+            @rmdir($base . DIRECTORY_SEPARATOR . SwallowtailStorageService::DATA_DIRECTORY);
+            @rmdir($base);
         }
         @rmdir($root);
     }

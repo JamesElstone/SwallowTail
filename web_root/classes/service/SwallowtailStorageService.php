@@ -40,7 +40,6 @@ final class SwallowtailStorageService
         if (!(new SwallowtailStorageCacheService())->store($snapshot)) {
             throw new RuntimeException('Unable to store refreshed SwallowTail storage snapshot in Redis.');
         }
-        $this->notifyConversionStorageWake($snapshot);
 
         return $snapshot;
     }
@@ -661,44 +660,6 @@ final class SwallowtailStorageService
         }
 
         return ' ' . ($parts !== [] ? implode(' ', $parts) : 'php_error=operation returned false without PHP warning');
-    }
-
-    /**
-     * @param array<string, mixed> $snapshot
-     */
-    private function notifyConversionStorageWake(array $snapshot): void
-    {
-        if (!$this->snapshotHasWritableLocation($snapshot)) {
-            return;
-        }
-
-        $queue = trim((string)AppConfigurationStore::get('swallowtail.redis.storage_wake_queue', 'swallowtail:conversion:storage_wake'));
-        if ($queue === '') {
-            return;
-        }
-
-        try {
-            (new SwallowtailRedisService())->listPushJson($queue, [
-                'reason' => 'storage_refresh',
-                'mount_signature' => (string)($snapshot['mount_signature'] ?? ''),
-                'generated_at' => (int)($snapshot['generated_at'] ?? time()),
-            ], 1);
-        } catch (Throwable) {
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $snapshot
-     */
-    private function snapshotHasWritableLocation(array $snapshot): bool
-    {
-        foreach ((array)($snapshot['locations'] ?? []) as $location) {
-            if (is_array($location) && !empty($location['can_write'])) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function combineFilesystemWarnings(string $firstOperation, ?string $firstWarning, string $secondOperation, ?string $secondWarning): string

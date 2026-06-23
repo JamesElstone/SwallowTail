@@ -13,7 +13,7 @@ final class SwallowtailStorageCacheService
     public const TTL_SECONDS = 360;
 
     public function __construct(
-        private readonly SwallowtailRedisService $redis = new SwallowtailRedisService(),
+        private readonly object $redis = new SwallowtailRedisService(),
     ) {
     }
 
@@ -26,6 +26,9 @@ final class SwallowtailStorageCacheService
 
         $snapshot = json_decode($json, true);
         if (!is_array($snapshot)) {
+            return null;
+        }
+        if (!isset($snapshot['locations']) || !is_array($snapshot['locations'])) {
             return null;
         }
 

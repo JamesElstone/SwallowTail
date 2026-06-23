@@ -29,11 +29,18 @@ try {
             'command' => 'status',
             'cache' => (new SwallowtailStorageCacheService())->status(),
         ],
-        'process-migrations' => [
-            'success' => true,
-            'command' => 'process-migrations',
-            'processed' => (new SwallowtailStorageMigrationService())->processPending((int)($argv[2] ?? 10)),
-        ],
+        'process-migrations' => (static function () use ($argv): array {
+            $limit = max(1, (int)($argv[2] ?? 10));
+            $processed = (new SwallowtailStorageMigrationService())->processPending($limit);
+
+            return [
+                'success' => true,
+                'command' => 'process-migrations',
+                'migration_item_limit' => $limit,
+                'processed' => $processed,
+                'processed_items' => $processed,
+            ];
+        })(),
         'touch-service' => [
             'success' => (new SwallowtailServiceStatusService())->touchService((string)($argv[2] ?? '')),
             'command' => 'touch-service',

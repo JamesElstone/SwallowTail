@@ -125,8 +125,9 @@ php tools/php/setExternalIP.php
 ## storageCache
 
 Refreshes or inspects the cached SwallowTail storage snapshot and processes queued
-storage migration jobs. The `swallowtail_storage` service calls this helper, but
-it can also be run directly for diagnostics:
+storage migration jobs. The `swallowtail_storage` service uses `discover` for
+the PHP-side storage calculation, then writes the Redis snapshot itself. The
+helper can also be run directly for diagnostics:
 
 ```sh
 php tools/php/storageCache.php status
@@ -136,7 +137,10 @@ php tools/php/storageCache.php process-migrations 10
 ```
 
 `discover` reads the live mount/ZFS state without updating the cache. `refresh`
-stores a new snapshot for PHP uploads and the storage UI.
+stores a new snapshot for manual diagnostics; the daemon path writes Redis
+directly after `discover`.
+`process-migrations` processes up to the requested number of migration job
+items, not whole migration jobs.
 
 ## run-all-tests
 

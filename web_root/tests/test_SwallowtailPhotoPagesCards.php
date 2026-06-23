@@ -299,6 +299,27 @@ $harness->check(_storage_availableCard::class, 'renders zpool dataset select and
     $harness->assertTrue(!str_contains($locationHtml, 'Fix Permission Issues'));
     $harness->assertTrue(!str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
+
+    $zfsLocationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/photos',
+        'label' => 'tank/photos',
+        'root_path' => '/storage/photos/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => false,
+        'is_zfs' => true,
+        'is_selected_zfs_dataset' => true,
+        'can_write' => true,
+    ], $context);
+
+    $harness->assertTrue(str_contains($zfsLocationHtml, 'Migrate Files from this Location'));
+    $harness->assertTrue(str_contains($zfsLocationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
+    $harness->assertTrue(str_contains($zfsLocationHtml, 'name="storage_base_location" value="/storage/photos"'));
+    $harness->assertTrue(!str_contains($zfsLocationHtml, 'name="storage_settings_action" value="set_location_excluded"'));
+    $harness->assertTrue(!str_contains($zfsLocationHtml, 'name="zpool_name"'));
 });
 
 $harness->check(SwallowtailStoragePermissionRepairService::class, 'runs sudo permission helper only for known storage locations', function () use ($harness): void {

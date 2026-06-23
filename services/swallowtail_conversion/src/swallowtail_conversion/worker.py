@@ -274,6 +274,7 @@ class ConversionWorker:
                 wait_seconds = min(self.STORAGE_WAKE_WAIT_INTERVAL_SECONDS, wait_seconds)
                 wait_started = time.monotonic()
                 if self.redis.pop_storage_wake(int(max(1, wait_seconds))):
+                    self.log.info("Storage wake received; rechecking storage availability")
                     return
                 elapsed = time.monotonic() - wait_started
                 if elapsed < min(1.0, wait_seconds):

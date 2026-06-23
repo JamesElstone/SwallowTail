@@ -98,7 +98,7 @@ final class _storage_availableCard extends CardBaseFramework
                 <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
                 <button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Fix storage permissions" data-chicken-message="Run the SwallowTail storage permission repair helper for this location. It only creates or modifies the swallowtail-data directory below the selected storage base." data-chicken-confirm-text="Fix Permissions">Fix Permission Issues</button>
             </form>';
-        $actions = $fixPermissionAction . ($isZfs ? '' : '
+        $excludeAction = $isZfs ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
                 <input type="hidden" name="card_action" value="StorageSettings">
@@ -110,15 +110,17 @@ final class _storage_availableCard extends CardBaseFramework
                     <input type="checkbox" name="is_excluded" value="1"' . ($isExcluded ? ' checked' : '') . ' data-submit-on-change="true">
                     <span>Exclude from new writes</span>
                 </label>
-            </form>
+            </form>';
+        $migrateAction = $baseLocation === '' ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
                 <input type="hidden" name="card_action" value="StorageSettings">
                 <input type="hidden" name="storage_settings_action" value="request_migrate_location">
                 <input type="hidden" name="storage_base_location" value="' . HelperFramework::escape($baseLocation) . '">
                 <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
-                <button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Migrate storage files" data-chicken-message="Move all SwallowTail files from this location to other writable storage. Existing photos remain available while files are copied and verified." data-chicken-confirm-text="Migrate Files">Migrate Files from this Location</button>
-            </form>');
+                <button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Migrate storage files" data-chicken-message="Move all SwallowTail files from this location to other eligible storage. Existing photos remain available while files are copied and verified." data-chicken-confirm-text="Migrate Files">Migrate Files from this Location</button>
+            </form>';
+        $actions = $fixPermissionAction . $excludeAction . $migrateAction;
 
         return '<article class="storage-location-card">
             <div class="storage-location-head">

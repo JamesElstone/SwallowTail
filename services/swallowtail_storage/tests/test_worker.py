@@ -7,10 +7,36 @@ import uuid
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from swallowtail_storage.config import StorageConfig
 from swallowtail_storage.worker import StorageWorker
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.snapshots: list[dict] = []
+        self.messages: list[tuple[str, dict, int]] = []
+        self.heartbeats: list[tuple[str, dict, int]] = []
+        self.available = True
+        self.store_ok = True
+        self.push_ok = True
+
+    def store_snapshot(self, snapshot: dict) -> bool:
+        self.snapshots.append(snapshot)
+        return self.store_ok
+
+    def list_push_json(self, key: str, payload: dict, max_length: int = 0) -> bool:
+        self.messages.append((key, payload, max_length))
+        return self.push_ok
+
+    def set_json(self, key: str, payload: dict, ttl_seconds: int) -> bool:
+        self.heartbeats.append((key, payload, ttl_seconds))
+        return self.available
+
+    def ping(self) -> bool:
+        return self.available
 
 
 class StorageWorkerTest(unittest.TestCase):
@@ -27,8 +53,10 @@ class StorageWorkerTest(unittest.TestCase):
                 [
                     "import json, sys",
                     "cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'",
-                    "if cmd == 'refresh':",
-                    "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc', 'locations': [{'storage_base_location': '/storage/a'}, {'storage_base_location': '/storage/b'}]}}))",
+                    "if cmd == 'discover':",
+                    "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc', 'locations': [{'storage_base_location': '/storage/a', 'can_write': True}, {'storage_base_location': '/storage/b', 'can_write': False}]}}))",
+                    "elif cmd == 'refresh':",
+                    "    print(json.dumps({'success': True, 'snapshot': {'mount_signature': 'abc', 'locations': [{'storage_base_location': '/storage/a', 'can_write': True}, {'storage_base_location': '/storage/b', 'can_write': False}]}}))",
                     "elif cmd == 'process-migrations':",
                     "    print(json.dumps({'success': True, 'processed': 1}))",
                     "elif cmd == 'touch-service':",
@@ -57,22 +85,68 @@ class StorageWorkerTest(unittest.TestCase):
             project_root=str(self.root),
             interval_seconds=300,
             mount_poll_seconds=30,
-            migration_limit=5,
+            migration_item_limit=5,
+            redis_host="127.0.0.1",
+            redis_port=6379,
+            redis_timeout_seconds=5,
+            redis_snapshot_key="swallowtail:storage:snapshot",
+            redis_snapshot_ttl_seconds=360,
+            redis_storage_wake_queue="storage-wake",
             log_file=str(self.log_file),
             log_level="INFO",
         )
 
+    def worker(self, redis: FakeRedis | None = None) -> StorageWorker:
+        return StorageWorker(self.config(), redis if redis is not None else FakeRedis())
+
     def test_run_once_refreshes_and_processes_migrations(self) -> None:
-        worker = StorageWorker(self.config())
+        redis = FakeRedis()
+        worker = self.worker(redis)
         worker.mount_signature = lambda: "mount-raw"
 
         with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
             self.assertTrue(worker.run_once())
         self.assertEqual("mount-raw", worker.last_mount_signature)
+        self.assertEqual(1, len(redis.snapshots))
         self.assertTrue(any('mount_points=["/storage/a","/storage/b"]' in line for line in logs.output))
+        self.assertFalse(any("Storage wake message sent" in line for line in logs.output))
+
+    def test_mount_change_logs_storage_wake_sent(self) -> None:
+        redis = FakeRedis()
+        worker = self.worker(redis)
+        worker.mount_signature = lambda: "mount-raw"
+
+        with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
+            self.assertTrue(worker.refresh("mount-change"))
+
+        self.assertEqual(1, len(redis.messages))
+        self.assertEqual("storage-wake", redis.messages[0][0])
+        self.assertTrue(any("Storage wake message sent queue=storage-wake" in line for line in logs.output))
+
+    def test_mount_change_logs_storage_wake_failure(self) -> None:
+        redis = FakeRedis()
+        redis.push_ok = False
+        worker = self.worker(redis)
+        worker.mount_signature = lambda: "mount-raw"
+
+        with self.assertLogs("swallowtail_storage.worker", level="WARNING") as logs:
+            self.assertTrue(worker.refresh("mount-change"))
+
+        self.assertTrue(any("Storage wake message failed queue=storage-wake" in line for line in logs.output))
+
+    def test_refresh_logs_storage_cache_write_failure(self) -> None:
+        redis = FakeRedis()
+        redis.store_ok = False
+        worker = self.worker(redis)
+        worker.mount_signature = lambda: "mount-raw"
+
+        with self.assertLogs("swallowtail_storage.worker", level="WARNING") as logs:
+            self.assertFalse(worker.run_once())
+
+        self.assertTrue(any("Storage cache Redis write failed" in line for line in logs.output))
 
     def test_status_includes_service_state(self) -> None:
-        worker = StorageWorker(self.config())
+        worker = self.worker()
 
         status = worker.status()
 
@@ -104,7 +178,7 @@ class StorageWorkerTest(unittest.TestCase):
 
         clock = FakeClock()
         shutdown = FakeShutdown(clock)
-        worker = StorageWorker(self.config())
+        worker = self.worker()
         worker.shutdown_requested = shutdown
         reasons: list[str] = []
         signatures = iter(["sig1", "sig2"])
@@ -126,37 +200,74 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertEqual(["startup", "mount-change"], reasons)
         self.assertEqual([30, 30, 30], shutdown.waits)
 
+    def test_mount_signature_ignores_df_free_space_changes(self) -> None:
+        worker = self.worker()
+        df_outputs = iter([
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+            "/dev/ufs/storage3 8122124 100 8122024 0% /storage/3\n",
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+            "/dev/ufs/storage3 8122124 200 8121924 0% /storage/3\n",
+        ])
+
+        def run(command, **_kwargs):
+            if command == ["/bin/df", "-Pk"]:
+                return SimpleNamespace(stdout=next(df_outputs))
+            if command == ["/sbin/mount", "-p"]:
+                return SimpleNamespace(stdout="/dev/ufs/storage3 /storage/3 ufs rw 0 0\n")
+            return SimpleNamespace(stdout="")
+
+        with patch("swallowtail_storage.worker.subprocess.run", run):
+            first = worker.mount_signature()
+            second = worker.mount_signature()
+
+        self.assertEqual(first, second)
+
+    def test_mount_signature_changes_when_mount_point_changes(self) -> None:
+        worker = self.worker()
+        df_outputs = iter([
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+            "/dev/ufs/storage2 8122124 100 8122024 0% /storage/2\n",
+            "Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+            "/dev/ufs/storage2 8122124 100 8122024 0% /storage/2\n"
+            "/dev/ufs/storage3 8122124 100 8122024 0% /storage/3\n",
+        ])
+        mount_outputs = iter([
+            "/dev/ufs/storage2 /storage/2 ufs rw 0 0\n",
+            "/dev/ufs/storage2 /storage/2 ufs rw 0 0\n"
+            "/dev/ufs/storage3 /storage/3 ufs rw 0 0\n",
+        ])
+
+        def run(command, **_kwargs):
+            if command == ["/bin/df", "-Pk"]:
+                return SimpleNamespace(stdout=next(df_outputs))
+            if command == ["/sbin/mount", "-p"]:
+                return SimpleNamespace(stdout=next(mount_outputs))
+            return SimpleNamespace(stdout="")
+
+        with patch("swallowtail_storage.worker.subprocess.run", run):
+            first = worker.mount_signature()
+            second = worker.mount_signature()
+
+        self.assertNotEqual(first, second)
+
     def test_health_checks_validate_storage_status_and_redis(self) -> None:
-        worker = StorageWorker(self.config())
+        worker = self.worker()
 
         ok, lines = worker.health_checks()
 
         self.assertTrue(ok)
-        self.assertEqual(["OK storage status", "OK redis"], lines)
+        self.assertEqual(["OK storage discovery", "OK redis"], lines)
 
     def test_health_checks_fail_when_redis_is_unavailable(self) -> None:
         config = self.config()
-        worker = StorageWorker(
-            StorageConfig(
-                php=config.php,
-                project_root=config.project_root,
-                interval_seconds=config.interval_seconds,
-                mount_poll_seconds=config.mount_poll_seconds,
-                migration_limit=config.migration_limit,
-                log_file=config.log_file,
-                log_level=config.log_level,
-            )
-        )
-        original_php_json = worker.php_json
-        worker.php_json = lambda *args: {
-            **original_php_json(*args),
-            "cache": {"redis_available": False},
-        }
+        redis = FakeRedis()
+        redis.available = False
+        worker = StorageWorker(config, redis)
 
         ok, lines = worker.health_checks()
 
         self.assertFalse(ok)
-        self.assertEqual("OK storage status", lines[0])
+        self.assertEqual("OK storage discovery", lines[0])
         self.assertEqual("FAIL redis: Redis ping failed", lines[1])
 
     def test_cli_accepts_rc_conf_style_arguments(self) -> None:
@@ -171,15 +282,16 @@ class StorageWorkerTest(unittest.TestCase):
                 sys.executable,
                 "--interval-seconds",
                 "300",
-                "--migration-limit",
+                "--migration-item-limit",
                 "5",
                 "--log-file",
                 str(self.log_file),
                 "--status",
             ]
 
-            with redirect_stdout(StringIO()):
-                self.assertEqual(0, main())
+            with patch("swallowtail_storage.worker.RedisClient", return_value=FakeRedis()):
+                with redirect_stdout(StringIO()):
+                    self.assertEqual(0, main())
         finally:
             sys.argv = original_argv
 
@@ -199,9 +311,10 @@ class StorageWorkerTest(unittest.TestCase):
             ]
 
             output = StringIO()
-            with redirect_stdout(output):
-                self.assertEqual(0, main())
-            self.assertEqual("OK storage status\nOK redis\n", output.getvalue())
+            with patch("swallowtail_storage.worker.RedisClient", return_value=FakeRedis()):
+                with redirect_stdout(output):
+                    self.assertEqual(0, main())
+            self.assertEqual("OK storage discovery\nOK redis\n", output.getvalue())
         finally:
             sys.argv = original_argv
 

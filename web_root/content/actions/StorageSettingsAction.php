@@ -151,11 +151,8 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             ]]);
         }
 
-        $jobId = (new SwallowtailStorageMigrationService())->enqueueIfPhotosExist(
+        $jobId = (new SwallowtailStorageMigrationService())->enqueueAndExcludeSource(
             $storageBaseLocation,
-            null,
-            null,
-            null,
             $this->currentUserId($session)
         );
 

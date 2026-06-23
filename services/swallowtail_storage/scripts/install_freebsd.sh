@@ -47,5 +47,5 @@ chmod 0644 "${NEWSYSLOG_FILE}"
 sysrc swallowtail_storage_enable=YES
 echo "Installed ${RC_FILE}"
 echo "Installed ${NEWSYSLOG_FILE}"
-echo "Optional rc.conf tunables: swallowtail_storage_project_root, swallowtail_storage_python, swallowtail_storage_php, swallowtail_storage_interval_seconds, swallowtail_storage_mount_poll_seconds, swallowtail_storage_migration_limit, swallowtail_storage_log, swallowtail_storage_log_level"
+echo "Optional rc.conf tunables: swallowtail_storage_project_root, swallowtail_storage_python, swallowtail_storage_php, swallowtail_storage_interval_seconds, swallowtail_storage_mount_poll_seconds, swallowtail_storage_migration_item_limit, swallowtail_storage_log, swallowtail_storage_log_level"
 echo "Run: service swallowtail_storage start"

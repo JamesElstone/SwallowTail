@@ -365,7 +365,7 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         job_id INTEGER NOT NULL,
         photo_id INTEGER NOT NULL,
         source_base_location TEXT NOT NULL,
-        destination_base_location TEXT NOT NULL,
+        destination_base_location TEXT NULL,
         status TEXT NOT NULL DEFAULT 'queued',
         file_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NULL,
