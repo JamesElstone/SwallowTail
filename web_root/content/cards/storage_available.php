@@ -35,6 +35,7 @@ final class _storage_availableCard extends CardBaseFramework
             $snapshot = (new SwallowtailStorageService())->storageSnapshot(true);
             $locations = (array)($snapshot['locations'] ?? []);
             $zpools = (array)($snapshot['zpools'] ?? []);
+            $cr2CountsByStorageBaseLocation = $this->cr2CountsByStorageBaseLocation();
         } catch (Throwable $exception) {
             return '<div class="panel-soft warn">Storage status is unavailable: ' . HelperFramework::escape($exception->getMessage()) . '</div>';
         }
@@ -52,6 +53,7 @@ final class _storage_availableCard extends CardBaseFramework
             $html .= $this->zpoolCard((array)$zpool, $context);
         }
         foreach ($locations as $location) {
+            $location['cr2_file_count'] = $cr2CountsByStorageBaseLocation[(string)($location['storage_base_location'] ?? '')] ?? 0;
             $html .= $this->locationCard((array)$location, $context);
         }
 
@@ -72,6 +74,7 @@ final class _storage_availableCard extends CardBaseFramework
         $availableBytes = $location['available_bytes'] ?? null;
         $totalBytes = $location['total_bytes'] ?? null;
         $freePercent = $location['free_percent'] ?? null;
+        $cr2FileCount = max(0, (int)($location['cr2_file_count'] ?? 0));
         $threshold = (float)($location['full_threshold_percent'] ?? 5);
         $permissionError = trim((string)($location['permission_error'] ?? ''));
         $permissionCheckedPath = trim((string)($location['permission_checked_path'] ?? ''));
@@ -143,6 +146,10 @@ final class _storage_availableCard extends CardBaseFramework
                 <div>
                     <dt>Threshold</dt>
                     <dd>' . HelperFramework::escape(number_format($threshold, 1) . '%') . '</dd>
+                </div>
+                <div>
+                    <dt>CR2 files</dt>
+                    <dd>' . HelperFramework::escape((string)$cr2FileCount) . '</dd>
                 </div>
             </dl>
             <p class="storage-location-path">' . HelperFramework::escape((string)($location['root_path'] ?? '')) . '</p>
@@ -315,6 +322,44 @@ final class _storage_availableCard extends CardBaseFramework
             . '. Uploads and conversion jobs will pause until storage is added, files are moved, or the threshold is changed. Conversion workers will check again every '
             . HelperFramework::escape((string)$blockedPollInterval)
             . ' seconds.</div>';
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function cr2CountsByStorageBaseLocation(): array
+    {
+        if (
+            !InterfaceDB::tableExists('photos')
+            || !InterfaceDB::columnsExists('photos', ['storage_base_location', 'original_extension'])
+        ) {
+            return [];
+        }
+
+        $where = "LOWER(original_extension) = 'cr2'
+             AND storage_base_location <> ''";
+        if (InterfaceDB::columnExists('photos', 'upload_state')) {
+            $where .= "
+             AND upload_state = 'uploaded'";
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT storage_base_location, COUNT(*) AS cr2_file_count
+             FROM photos
+             WHERE " . $where . "
+             GROUP BY storage_base_location"
+        );
+        $counts = [];
+        foreach ($rows as $row) {
+            $baseLocation = (string)($row['storage_base_location'] ?? '');
+            if ($baseLocation === '') {
+                continue;
+            }
+
+            $counts[$baseLocation] = max(0, (int)($row['cr2_file_count'] ?? 0));
+        }
+
+        return $counts;
     }
 
     private function hiddenFields(array $context): string

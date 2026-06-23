@@ -322,6 +322,56 @@ $harness->check(_storage_availableCard::class, 'renders zpool dataset select and
     $harness->assertTrue(!str_contains($zfsLocationHtml, 'name="zpool_name"'));
 });
 
+$harness->check(_storage_availableCard::class, 'counts uploaded CR2 photos by storage location', function () use ($harness): void {
+    InterfaceDB::execute('DROP TABLE IF EXISTS photos');
+    InterfaceDB::execute("CREATE TABLE photos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_filename TEXT NOT NULL,
+        original_extension TEXT NOT NULL,
+        storage_base_location TEXT NOT NULL,
+        upload_state TEXT NOT NULL DEFAULT 'uploaded'
+    )");
+    InterfaceDB::execute("INSERT INTO photos (original_filename, original_extension, storage_base_location, upload_state) VALUES
+        ('A.CR2', 'cr2', '/storage/1', 'uploaded'),
+        ('B.CR2', 'CR2', '/storage/1', 'uploaded'),
+        ('C.CR2', 'cr2', '/storage/2', 'uploaded'),
+        ('D.CR2', 'cr2', '/storage/1', 'removed'),
+        ('E.JPG', 'jpg', '/storage/1', 'uploaded')");
+
+    $card = new _storage_availableCard();
+    $counts = new ReflectionMethod($card, 'cr2CountsByStorageBaseLocation');
+    $counts->setAccessible(true);
+
+    $result = (array)$counts->invoke($card);
+
+    $harness->assertSame(2, (int)($result['/storage/1'] ?? 0));
+    $harness->assertSame(1, (int)($result['/storage/2'] ?? 0));
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => false,
+        'can_write' => true,
+        'cr2_file_count' => $result['/storage/1'] ?? 0,
+    ], [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($locationHtml, 'CR2 files'));
+    $harness->assertTrue(str_contains($locationHtml, '<dd>2</dd>'));
+});
+
 $harness->check(SwallowtailStoragePermissionRepairService::class, 'runs sudo permission helper only for known storage locations', function () use ($harness): void {
     $capturedArgv = [];
     $service = new SwallowtailStoragePermissionRepairService(
