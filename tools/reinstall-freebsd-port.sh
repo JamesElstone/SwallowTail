@@ -95,10 +95,24 @@ restart_or_start_service()
 	fi
 }
 
+stop_service_before_reinstall()
+{
+	service_name=$1
+
+	echo "==> stopping $service_name"
+	service "$service_name" onestop || {
+		echo "==> $service_name was not running or did not stop cleanly"
+	}
+}
+
 if [ -f "$PORT_DIR/Makefile" ]; then
 	echo "==> make distclean in $PORT_DIR"
 	( cd "$PORT_DIR" && make distclean )
 fi
+
+for service_name in $SERVICE_NAMES; do
+	stop_service_before_reinstall "$service_name"
+done
 
 echo "==> git pull --ff-only in $PORTS_TREE_DIR"
 ( cd "$PORTS_TREE_DIR" && git pull --ff-only )
