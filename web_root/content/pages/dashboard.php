@@ -36,7 +36,6 @@ final class _dashboard extends PageContextFramework
             'service_status',
             'statistics',
             'activity',
-            'dashboard_notes',
             // 'dump_context',
         ];
     }
