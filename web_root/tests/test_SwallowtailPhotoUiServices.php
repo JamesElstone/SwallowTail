@@ -233,6 +233,7 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         token_hash TEXT NOT NULL UNIQUE,
         token_label TEXT NOT NULL,
         created_by_user_id INTEGER NULL,
+        hidden INTEGER NOT NULL DEFAULT 0,
         can_upload_raw INTEGER NOT NULL DEFAULT 1,
         is_active INTEGER NOT NULL DEFAULT 1,
         last_used_at TEXT NULL,

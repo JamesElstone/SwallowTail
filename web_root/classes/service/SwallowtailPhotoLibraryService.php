@@ -295,6 +295,7 @@ final class SwallowtailPhotoLibraryService
             "SELECT *
              FROM api_upload_tokens
              WHERE token_hash = :token_hash
+               AND hidden = 0
                AND can_upload_raw = 1
                AND is_active = 1
                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
@@ -594,6 +595,7 @@ final class SwallowtailPhotoLibraryService
              FROM api_upload_tokens token
              LEFT JOIN users created_by_user
                 ON created_by_user.id = token.created_by_user_id
+             WHERE token.hidden = 0
              ORDER BY token.is_active DESC, token.created_at DESC, token.id DESC"
         );
         $tokens = [];
@@ -685,12 +687,13 @@ final class SwallowtailPhotoLibraryService
         }
 
         InterfaceDB::prepareExecute(
-            'DELETE FROM api_upload_token_cidrs WHERE token_id = :token_id',
-            ['token_id' => $tokenId]
-        );
-
-        InterfaceDB::prepareExecute(
-            'DELETE FROM api_upload_tokens WHERE id = :id',
+            "UPDATE api_upload_tokens
+             SET hidden = 1,
+                 can_upload_raw = 0,
+                 is_active = 0,
+                 expires_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = :id",
             ['id' => $tokenId]
         );
     }

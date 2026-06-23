@@ -186,7 +186,7 @@ final class _upload_tokensCard extends CardBaseFramework
     {
         $rows = array_values(array_filter(
             (array)(($context['services'] ?? [])['upload_tokens'] ?? []),
-            static fn(mixed $row): bool => is_array($row)
+            static fn(mixed $row): bool => is_array($row) && (int)($row['hidden'] ?? 0) === 0
         ));
 
         if ($this->selectedOwnershipFilter($context) !== 'owned') {

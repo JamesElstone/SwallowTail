@@ -167,6 +167,9 @@ final class SwallowtailRawUploadApiService
                         'move_source' => $temporaryFile !== null,
                         'uploaded_via' => 'api',
                         'upload_token_id' => (int)$uploadToken['id'],
+                        'uploaded_by_user_id' => is_numeric($uploadToken['created_by_user_id'] ?? null)
+                            ? (int)$uploadToken['created_by_user_id']
+                            : null,
                         'max_raw_bytes' => $maxRawBytes,
                         'expected_sha256' => (string)$request->header('X-Swallowtail-Checksum-SHA256', (string)$request->post('sha256', '')),
                         'sha256' => $verifiedSha256,

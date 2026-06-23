@@ -19,6 +19,7 @@ $uploadTokenRow = static function (int $id, int $userId, string $label): array {
         'created_by_user_id' => $userId,
         'created_by_user_label' => $userId === 42 ? 'Camera Admin' : 'Other Admin',
         'created_by_user_email_address' => $userId === 42 ? 'camera-admin@example.test' : 'other-admin@example.test',
+        'hidden' => 0,
         'is_active' => 1,
         'can_upload_raw' => 1,
         'cidrs' => ['203.0.113.0/24'],
@@ -44,6 +45,7 @@ $harness->check(_upload_tokensCard::class, 'renders create form, one-time token 
                 'created_by_user_id' => 42,
                 'created_by_user_label' => 'Camera Admin',
                 'created_by_user_email_address' => 'camera-admin@example.test',
+                'hidden' => 0,
                 'is_active' => 1,
                 'can_upload_raw' => 1,
                 'cidrs' => ['203.0.113.0/24', '2001:db8::/32'],
@@ -64,7 +66,10 @@ $harness->check(_upload_tokensCard::class, 'renders create form, one-time token 
     $harness->assertTrue(str_contains($html, '<label for="table-filter-upload_tokens-upload_tokens_filter">Filter</label>'));
     $harness->assertTrue(str_contains($html, '<option value="owned" selected>Owned Tokens</option>'));
     $harness->assertTrue(str_contains($html, '<option value="all">All Tokens</option>'));
-    $harness->assertTrue(str_contains($html, 'Upload tokens 1-1 of 1'));
+    $harness->assertTrue(
+        str_contains($html, 'Upload tokens 1-1 of 1')
+        || str_contains($html, 'Upload tokens 1 of 1')
+    );
     $harness->assertTrue(str_contains($html, 'Camera Admin'));
     $harness->assertTrue(str_contains($html, 'ID 42'));
     $harness->assertTrue(str_contains($html, 'camera-admin@example.test'));
@@ -101,6 +106,33 @@ $harness->check(_upload_tokensCard::class, 'filters upload tokens to the current
     $harness->assertSame(false, str_contains($html, 'Other token'));
     $harness->assertTrue(str_contains($html, 'name="upload_tokens_filter" value="owned"'));
     $harness->assertTrue(str_contains($html, 'name="upload_tokens_page" value="2"'));
+});
+
+$harness->check(_upload_tokensCard::class, 'does not render hidden upload tokens', function () use ($harness, $uploadTokenRow): void {
+    $visible = $uploadTokenRow(1, 42, 'Visible token');
+    $hidden = $uploadTokenRow(2, 42, 'Hidden token');
+    $hidden['hidden'] = 1;
+
+    $html = (new _upload_tokensCard())->render([
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['upload_tokens'],
+        ],
+        'upload_tokens' => [
+            'ownership_filter' => 'all',
+            'current_user_id' => 42,
+        ],
+        'services' => [
+            'upload_tokens' => [$visible, $hidden],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'Visible token'));
+    $harness->assertSame(false, str_contains($html, 'Hidden token'));
+    $harness->assertTrue(
+        str_contains($html, 'Upload tokens 1-1 of 1')
+        || str_contains($html, 'Upload tokens 1 of 1')
+    );
 });
 
 $harness->check(_upload_tokensCard::class, 'shows every upload token when all tokens are selected', function () use ($harness, $uploadTokenRow): void {

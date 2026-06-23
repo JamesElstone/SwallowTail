@@ -186,6 +186,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         token_hash TEXT NOT NULL UNIQUE,
         token_label TEXT NOT NULL,
         created_by_user_id INTEGER NULL,
+        hidden INTEGER NOT NULL DEFAULT 0,
         can_upload_raw INTEGER NOT NULL DEFAULT 1,
         is_active INTEGER NOT NULL DEFAULT 1,
         last_used_at TEXT NULL,
@@ -2270,7 +2271,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $swallowtailCreateSqliteSchema();
 
     $library = new SwallowtailPhotoLibraryService();
-    $token = $library->createUploadToken('ESP32 test rig', null, null, ['203.0.113.0/24']);
+    $token = $library->createUploadToken('ESP32 test rig', 12, null, ['203.0.113.0/24']);
     $source = swallowtail_backend_test_temp_file('swallowtail-body-test-');
 
     if (!is_string($source)) {
@@ -2317,8 +2318,10 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertSame($sha256, (string)($payload['sha256'] ?? ''));
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
-    $row = InterfaceDB::fetchOne('SELECT storage_base_location FROM photos WHERE original_sha256 = :sha256 LIMIT 1', ['sha256' => $sha256]);
+    $row = InterfaceDB::fetchOne('SELECT storage_base_location, uploaded_by_user_id, upload_token_id FROM photos WHERE original_sha256 = :sha256 LIMIT 1', ['sha256' => $sha256]);
     $harness->assertTrue(is_array($row));
+    $harness->assertSame(12, (int)($row['uploaded_by_user_id'] ?? 0));
+    $harness->assertSame((int)$token['id'], (int)($row['upload_token_id'] ?? 0));
     $temporaryPattern = rtrim((string)($row['storage_base_location'] ?? ''), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . SwallowtailStorageService::DATA_DIRECTORY . DIRECTORY_SEPARATOR . 'tmp' . DIRECTORY_SEPARATOR . '*_source.cr2';
     $harness->assertSame([], glob($temporaryPattern) ?: []);
 
@@ -2570,8 +2573,16 @@ $harness->check(SwallowtailPhotoLibraryService::class, 'manages upload token CID
     $harness->assertTrue($library->authenticateUploadToken((string)$created['token'], '198.51.100.42') !== null);
 
     $library->deleteUploadToken($tokenId);
-    $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_tokens'));
-    $harness->assertSame(0, InterfaceDB::tableRowCount('api_upload_token_cidrs'));
+    $hidden = $library->uploadTokenById($tokenId);
+    $harness->assertTrue(is_array($hidden));
+    $harness->assertSame(1, (int)($hidden['hidden'] ?? 0));
+    $harness->assertSame(0, (int)($hidden['can_upload_raw'] ?? 1));
+    $harness->assertSame(0, (int)($hidden['is_active'] ?? 1));
+    $harness->assertTrue(trim((string)($hidden['expires_at'] ?? '')) !== '');
+    $harness->assertSame(0, count($library->listUploadTokens()));
+    $harness->assertSame(1, InterfaceDB::tableRowCount('api_upload_tokens'));
+    $harness->assertSame(1, InterfaceDB::tableRowCount('api_upload_token_cidrs'));
+    $harness->assertTrue($library->authenticateUploadToken((string)$created['token'], '198.51.100.42') === null);
 });
 
 $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversion jobs and filesystem image readiness', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
