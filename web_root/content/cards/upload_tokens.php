@@ -265,7 +265,8 @@ final class _upload_tokensCard extends CardBaseFramework
         $canUploadRaw = (int)($token['can_upload_raw'] ?? 0) === 1;
         $cidrs = implode("\n", (array)($token['cidrs'] ?? []));
 
-        return '<label class="checkbox-item" for="upload-token-active-' . $escapedTokenId . '">
+        return '<div class="upload-token-access-flags">
+        <label class="checkbox-item" for="upload-token-active-' . $escapedTokenId . '">
             <input form="' . $updateFormId . '" type="hidden" name="is_active" value="0">
             <input form="' . $updateFormId . '" id="upload-token-active-' . $escapedTokenId . '" name="is_active" type="checkbox" value="1"' . ($isActive ? ' checked' : '') . '>
             <span class="checkbox-copy"><span>Active</span></span>
@@ -275,6 +276,7 @@ final class _upload_tokensCard extends CardBaseFramework
             <input form="' . $updateFormId . '" id="upload-token-raw-' . $escapedTokenId . '" name="can_upload_raw" type="checkbox" value="1"' . ($canUploadRaw ? ' checked' : '') . '>
             <span class="checkbox-copy"><span>Can upload CR2</span></span>
         </label>
+        </div>
         <div class="form-row full">
             <label for="upload-token-cidrs-' . $escapedTokenId . '">Allowed CIDRs</label>
             <textarea form="' . $updateFormId . '" class="input" id="upload-token-cidrs-' . $escapedTokenId . '" name="cidrs" rows="3" required>' . HelperFramework::escape($cidrs) . '</textarea>

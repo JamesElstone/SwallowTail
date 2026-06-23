@@ -62,6 +62,7 @@ $harness->check(_upload_tokensCard::class, 'renders create form, one-time token 
     $harness->assertTrue(str_contains($html, 'upload_token_action" value="create"'));
     $harness->assertTrue(str_contains($html, 'upload_token_action" value="update"'));
     $harness->assertTrue(str_contains($html, 'upload_token_action" value="delete"'));
+    $harness->assertTrue(str_contains($html, '<div class="upload-token-access-flags">'));
     $harness->assertTrue(str_contains($html, '<span class="table-sort-label">User</span>'));
     $harness->assertTrue(str_contains($html, '<label for="table-filter-upload_tokens-upload_tokens_filter">Filter</label>'));
     $harness->assertTrue(str_contains($html, '<option value="owned" selected>Owned Tokens</option>'));

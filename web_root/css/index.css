@@ -2335,6 +2335,16 @@ label {
   align-self: center;
 }
 
+.upload-token-access-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.upload-token-access-flags .checkbox-item {
+  flex: 1 1 150px;
+}
+
 .checkbox-copy strong {
   display: block;
   margin-bottom: 4px;
