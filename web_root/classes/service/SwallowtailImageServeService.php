@@ -12,9 +12,9 @@ final class SwallowtailImageServeService
     private const IMAGE_TYPES = ['original', 'embedded', 'thumbnail', 'filtered'];
 
     public function __construct(
-        private readonly SwallowtailEventAccessService $accessService = new SwallowtailEventAccessService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+        private readonly SwallowtailPhotoUiService $photoUiService = new SwallowtailPhotoUiService(),
     ) {
     }
 
@@ -68,30 +68,7 @@ final class SwallowtailImageServeService
 
     private function userCanServeImage(int $userId, int $photoId, string $imageType): bool
     {
-        if ($imageType !== 'filtered') {
-            return $this->accessService->userCanViewPhoto($userId, $photoId);
-        }
-
-        if ($this->accessService->userCanDownloadAllAccessible($userId)) {
-            return $this->accessService->userCanViewPhoto($userId, $photoId);
-        }
-
-        return (bool)InterfaceDB::fetchColumn(
-            "SELECT 1
-             FROM event_photos event_photo
-             INNER JOIN event_permissions permission
-                ON permission.event_id = event_photo.event_id
-             WHERE event_photo.photo_id = :photo_id
-               AND permission.user_id = :user_id
-               AND permission.can_view = 1
-               AND permission.can_download_single_jpeg = 1
-               AND (permission.expires_at IS NULL OR permission.expires_at > CURRENT_TIMESTAMP)
-             LIMIT 1",
-            [
-                'photo_id' => $photoId,
-                'user_id' => $userId,
-            ]
-        );
+        return $imageType !== '' && $this->photoUiService->userCanViewPhoto($photoId, $userId);
     }
 
     private function filenameForImage(string $originalFilename, string $imageType): string

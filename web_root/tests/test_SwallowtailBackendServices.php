@@ -1871,6 +1871,64 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
     @unlink($source);
 });
 
+$harness->check(SwallowtailImageServeService::class, 'serves admin-visible unassigned original images', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    foreach ([[901, 'Admin Test User', -1], [902, 'No Access Test User', 5]] as $user) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO users (
+                id,
+                display_name,
+                email_address,
+                password_hash,
+                role_id
+            ) VALUES (
+                :id,
+                :display_name,
+                :email_address,
+                '',
+                :role_id
+            )",
+            [
+                'id' => $user[0],
+                'display_name' => $user[1],
+                'email_address' => 'swallowtail-image-' . (string)$user[0] . '@example.test',
+                'role_id' => $user[2],
+            ]
+        );
+    }
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0011.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $originalPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), $sha256, 'original');
+
+    $storage->ensureDirectoryForPath($originalPath);
+    file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+
+    $service = new SwallowtailImageServeService();
+    $harness->assertSame(null, $service->derivativeImage($photoId, 'original', 902));
+
+    $image = $service->derivativeImage($photoId, 'original', 901);
+
+    $harness->assertTrue(is_array($image));
+    $harness->assertSame($originalPath, (string)$image['absolute_path']);
+    $harness->assertSame('original', (string)$image['image_type']);
+
+    @unlink($source);
+});
+
 $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edit settings and writes expected PP3', function () use ($harness): void {
     $service = new SwallowtailPreviewProfileService();
     $settings = $service->normaliseSettings([
