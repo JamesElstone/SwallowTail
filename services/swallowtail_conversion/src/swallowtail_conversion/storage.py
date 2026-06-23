@@ -71,7 +71,7 @@ class ConversionStorageManager:
         if checksum == "" or old_base == "":
             return job
 
-        if self.location_has_headroom(old_base):
+        if self.location_is_usable(old_base):
             return job
 
         destination = self._destination_for_relocation(old_base)
@@ -79,7 +79,10 @@ class ConversionStorageManager:
             raise StorageBlocked("No storage location is above the configured free-space threshold.")
 
         new_base = destination.base
-        copied_pairs = self._copy_checksum_family(old_base, new_base, checksum)
+        try:
+            copied_pairs = self._copy_checksum_family(old_base, new_base, checksum)
+        except PermissionError as exc:
+            raise StorageBlocked(f"Storage location is not writable: {new_base}") from exc
         old_root = self.data_root(old_base)
         new_root = self.data_root(new_base)
 
@@ -155,6 +158,19 @@ class ConversionStorageManager:
 
         return sorted(locations, key=lambda location: location.base)
 
+    def location_is_usable(self, base: str) -> bool:
+        try:
+            base = self._normalise_directory(base)
+            usage = self.disk_usage(base)
+        except (OSError, ValueError):
+            return False
+
+        return (
+            usage.total > 0
+            and usage.free > self._threshold_bytes(usage.total)
+            and self._location_accepts_writes(base)
+        )
+
     def _destination_for_relocation(self, old_base: str) -> StorageLocation | None:
         old_base = self._normalise_directory(old_base)
         for location in self.usable_locations():
@@ -198,7 +214,23 @@ class ConversionStorageManager:
         os.replace(temporary, destination)
 
     def _location_has_headroom(self, location: StorageLocation) -> bool:
-        return location.free_bytes > self._threshold_bytes(location.total_bytes)
+        return (
+            location.free_bytes > self._threshold_bytes(location.total_bytes)
+            and self._location_accepts_writes(location.base)
+        )
+
+    def _location_accepts_writes(self, base: str) -> bool:
+        data_root = Path(self.data_root(base))
+        if data_root.is_dir():
+            return os.access(data_root, os.W_OK | os.X_OK)
+
+        parent = data_root.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        if not parent.is_dir():
+            return False
+
+        return os.access(parent, os.W_OK | os.X_OK)
 
     def _threshold_bytes(self, total_bytes: int) -> float:
         return float(total_bytes) * (self.config.full_threshold_percent / 100.0)

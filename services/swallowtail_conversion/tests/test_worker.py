@@ -831,6 +831,7 @@ class StorageManagerTest(unittest.TestCase):
         checksum = "a" * 64
         old_base = self.root / "storage-old"
         new_base = self.root / "storage-new"
+        new_base.mkdir(parents=True)
         source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2 relocation test")
@@ -884,6 +885,106 @@ class StorageManagerTest(unittest.TestCase):
         self.assertIn(str(new_base), relocated.output_path)
         self.assertIsNotNone(db.updated)
         self.assertEqual(str(new_base.resolve()) + os.sep, db.updated[2])
+
+    def test_relocation_skips_unwritable_storage_destination(self) -> None:
+        checksum = "b" * 64
+        old_base = self.root / "storage-old"
+        new_base = self.root / "storage-new"
+        old_base.mkdir(parents=True)
+        new_base.mkdir(parents=True)
+
+        class FakeDb:
+            updated = None
+
+            def storage_location_properties(self):
+                return []
+
+            def photo_storage(self, _photo_id: int):
+                return {
+                    "original_sha256": checksum,
+                    "storage_base_location": str(old_base),
+                }
+
+            def update_photo_storage_location(self, *args) -> None:
+                self.updated = args
+
+        def disk_usage(path: str):
+            normalised = os.path.abspath(path).rstrip(os.sep) + os.sep
+            if normalised == os.path.abspath(str(old_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=950, free=50)
+            if normalised == os.path.abspath(str(new_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=800, free=200)
+            raise OSError(path)
+
+        db = FakeDb()
+        manager = ConversionStorageManager(
+            StorageConfig(
+                full_threshold_percent=10.0,
+                store_on_root_partition=False,
+                storage_blocked_poll_interval_seconds=3600,
+                project_root=str(self.root),
+            ),
+            db,
+            disk_usage=disk_usage,
+            mount_reader=lambda: [str(old_base), str(new_base)],
+            zfs_reader=lambda: {},
+        )
+        manager._location_accepts_writes = lambda base: os.path.abspath(base).rstrip(os.sep) != os.path.abspath(str(new_base)).rstrip(os.sep)
+
+        with self.assertRaises(StorageBlocked):
+            manager.relocate_job_if_needed(job(self.root))
+        self.assertIsNone(db.updated)
+
+    def test_relocation_permission_error_is_storage_blocked(self) -> None:
+        checksum = "c" * 64
+        old_base = self.root / "storage-old"
+        new_base = self.root / "storage-new"
+        source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2 relocation test")
+        new_base.mkdir(parents=True)
+
+        class FakeDb:
+            updated = None
+
+            def storage_location_properties(self):
+                return []
+
+            def photo_storage(self, _photo_id: int):
+                return {
+                    "original_sha256": checksum,
+                    "storage_base_location": str(old_base),
+                }
+
+            def update_photo_storage_location(self, *args) -> None:
+                self.updated = args
+
+        def disk_usage(path: str):
+            normalised = os.path.abspath(path).rstrip(os.sep) + os.sep
+            if normalised == os.path.abspath(str(old_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=950, free=50)
+            if normalised == os.path.abspath(str(new_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=800, free=200)
+            raise OSError(path)
+
+        db = FakeDb()
+        manager = ConversionStorageManager(
+            StorageConfig(
+                full_threshold_percent=10.0,
+                store_on_root_partition=False,
+                storage_blocked_poll_interval_seconds=3600,
+                project_root=str(self.root),
+            ),
+            db,
+            disk_usage=disk_usage,
+            mount_reader=lambda: [str(old_base), str(new_base)],
+            zfs_reader=lambda: {},
+        )
+        manager._copy_verified = lambda _source, _destination: (_ for _ in ()).throw(PermissionError("permission denied"))
+
+        with self.assertRaisesRegex(StorageBlocked, "not writable"):
+            manager.relocate_job_if_needed(job(self.root))
+        self.assertIsNone(db.updated)
 
     def test_has_usable_location_uses_threshold(self) -> None:
         base = self.root / "storage"
