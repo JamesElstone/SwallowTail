@@ -38,15 +38,17 @@ final class SwallowtailPreviewProfileService
         }
 
         $latestProfileVersion = $this->latestProfileVersion((int)$photo['id']);
+        $previewType = $this->previewImageType($photo);
 
         return [
             'photo' => $photo,
             'source_width' => $dimensions['width'],
             'source_height' => $dimensions['height'],
             'settings' => $settings,
-            'preview_ready' => $this->storageService->imageInfo($photo, 'filtered') !== null
-                || $this->storageService->imageInfo($photo, 'original') !== null,
-            'preview_url' => $this->previewUrl($photoId, $latestProfileVersion, null),
+            'preview_ready' => $previewType !== null,
+            'preview_url' => $previewType !== null
+                ? $this->previewUrl($photoId, $latestProfileVersion, null, $previewType)
+                : '',
         ];
     }
 
@@ -344,11 +346,22 @@ final class SwallowtailPreviewProfileService
         );
     }
 
-    private function previewUrl(int $photoId, int $profileVersion, ?int $jobId): string
+    private function previewImageType(array $photo): ?string
+    {
+        foreach (['filtered', 'original'] as $type) {
+            if ($this->storageService->imageInfo($photo, $type) !== null) {
+                return $type;
+            }
+        }
+
+        return null;
+    }
+
+    private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'filtered'): string
     {
         return '/api/photo-image.php?' . http_build_query([
             'photo_id' => $photoId,
-            'type' => 'filtered',
+            'type' => in_array($imageType, ['filtered', 'original'], true) ? $imageType : 'filtered',
             'v' => max(0, $profileVersion),
             'job_id' => $jobId,
         ]);

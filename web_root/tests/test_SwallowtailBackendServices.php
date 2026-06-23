@@ -1900,6 +1900,45 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
     $harness->assertTrue(!str_contains($content, "[Resize]"));
 });
 
+$harness->check(SwallowtailPreviewProfileService::class, 'uses original preview when filtered image is missing', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0010.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $originalPath = $storage->imagePath($base, $sha256, 'original');
+    $filteredPath = $storage->imagePath($base, $sha256, 'filtered');
+
+    $storage->ensureDirectoryForPath($originalPath);
+    file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    @unlink($filteredPath);
+
+    $event = $library->createEvent('Original Preview Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+
+    $state = (new SwallowtailPreviewProfileService())->editorState($photoId, 303);
+    $previewUrl = is_array($state) ? (string)($state['preview_url'] ?? '') : '';
+
+    $harness->assertTrue(is_array($state));
+    $harness->assertSame(true, (bool)($state['preview_ready'] ?? false));
+    $harness->assertTrue(str_contains($previewUrl, 'type=original'));
+    $harness->assertTrue(!str_contains($previewUrl, 'type=filtered'));
+
+    @unlink($source);
+});
+
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
