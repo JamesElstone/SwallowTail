@@ -45,6 +45,8 @@ final class _storage_availableCard extends CardBaseFramework
             return $html . '<p class="helper">No mounted storage locations are available.</p>';
         }
 
+        $html .= $this->storageExhaustedWarning($locations);
+
         $html .= '<div class="storage-location-grid">';
         foreach ($zpools as $zpool) {
             $html .= $this->zpoolCard((array)$zpool, $context);
@@ -80,6 +82,11 @@ final class _storage_availableCard extends CardBaseFramework
                 . HelperFramework::escape($permissionError !== '' ? $permissionError : 'PHP cannot write to this storage location.')
                 . ($permissionCheckedPath !== '' ? '<br><span>Checked: ' . HelperFramework::escape($permissionCheckedPath) . '</span>' : '')
                 . '</p>'
+            : '';
+        $thresholdDetail = $isFull && $permissionCanWrite !== false
+            ? '<p class="storage-location-path storage-location-warning">Free space is below the '
+                . HelperFramework::escape(number_format($threshold, 1) . '%')
+                . ' threshold. This location is not eligible for new writes.</p>'
             : '';
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $fixPermissionAction = $baseLocation === '' || $permissionCanWrite !== false ? '' : '
@@ -138,6 +145,7 @@ final class _storage_availableCard extends CardBaseFramework
             </dl>
             <p class="storage-location-path">' . HelperFramework::escape((string)($location['root_path'] ?? '')) . '</p>
             ' . $permissionDetail . '
+            ' . $thresholdDetail . '
             ' . $actions . '
         </article>';
     }
@@ -234,6 +242,7 @@ final class _storage_availableCard extends CardBaseFramework
         $storeOnRoot = (bool)AppConfigurationStore::get('swallowtail.storage.store_on_root_partition', false);
         $roundRobin = (bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false);
         $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
+        $blockedPollInterval = (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds', 3600);
 
         return '<form method="post" action="?page=settings" data-ajax="true" class="storage-settings-form">
             ' . $this->hiddenFields($context) . '
@@ -257,9 +266,53 @@ final class _storage_availableCard extends CardBaseFramework
                         <span>Full threshold</span>
                         <input type="number" name="full_threshold_percent" min="0" max="100" step="0.1" value="' . HelperFramework::escape((string)$threshold) . '" data-submit-on-change="true">
                     </label>
+                    <label>
+                        <span>Blocked poll interval</span>
+                        <input type="number" name="storage_blocked_poll_interval_seconds" min="60" max="86400" step="60" value="' . HelperFramework::escape((string)$blockedPollInterval) . '" data-submit-on-change="true">
+                    </label>
                 </div>
             </fieldset>
         </form>';
+    }
+
+    /**
+     * @param array<int, mixed> $locations
+     */
+    private function storageExhaustedWarning(array $locations): string
+    {
+        $included = 0;
+        $writable = 0;
+        $belowThreshold = 0;
+        $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
+
+        foreach ($locations as $location) {
+            if (!is_array($location) || !empty($location['is_excluded'])) {
+                continue;
+            }
+            if (!empty($location['is_zfs']) && empty($location['is_selected_zfs_dataset'])) {
+                continue;
+            }
+
+            $included++;
+            if (!empty($location['can_write'])) {
+                $writable++;
+            }
+            if (!empty($location['is_full'])) {
+                $belowThreshold++;
+            }
+        }
+
+        if ($included <= 0 || $writable > 0 || $belowThreshold < $included) {
+            return '';
+        }
+
+        $blockedPollInterval = (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds', 3600);
+
+        return '<div class="panel-soft warn storage-exhausted-warning">Storage is exhausted for new writes. All included locations are below the configured free-space threshold of '
+            . HelperFramework::escape(number_format($threshold, 1) . '%')
+            . '. Uploads and conversion jobs will pause until storage is added, files are moved, or the threshold is changed. Conversion workers will check again every '
+            . HelperFramework::escape((string)$blockedPollInterval)
+            . ' seconds.</div>';
     }
 
     private function hiddenFields(array $context): string

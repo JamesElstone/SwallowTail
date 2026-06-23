@@ -295,6 +295,7 @@ final class AppConfigurationStore
                     'store_on_root_partition' => false,
                     'round_robin_locations' => false,
                     'full_threshold_percent' => 5,
+                    'storage_blocked_poll_interval_seconds' => 3600,
                 ],
                 'raw_conversion' => [
                     'thumbnail_max_pixels' => 512,

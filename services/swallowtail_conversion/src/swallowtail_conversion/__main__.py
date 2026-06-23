@@ -16,6 +16,7 @@ def main() -> int:
     parser.add_argument("--config", help="Optional legacy INI path")
     parser.add_argument("--app-config", help="Optional secure/app.php path")
     parser.add_argument("--php-binary", help="PHP binary used to read --app-config")
+    parser.add_argument("--project-root")
     parser.add_argument("--database-driver")
     parser.add_argument("--database-dsn")
     parser.add_argument("--database-host")
@@ -161,6 +162,10 @@ def _apply_overrides(config, args):
                 prefix + "TEMP_RETENTION_HOURS",
                 config.worker.temp_retention_hours,
             )),
+        ),
+        storage=replace(
+            config.storage,
+            project_root=_setting(args, "project_root", prefix + "PROJECT_ROOT", config.storage.project_root),
         ),
         logging=replace(
             config.logging,

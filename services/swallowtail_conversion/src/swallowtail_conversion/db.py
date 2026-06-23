@@ -168,6 +168,94 @@ class ConversionDatabase:
         self.connection.rollback()
         return row is not None
 
+    def storage_location_properties(self) -> list[dict[str, Any]]:
+        rows = self._fetchall(
+            """
+            SELECT storage_base_location, is_excluded, is_zfs, dataset_name
+              FROM storage_location_properties
+            """
+        )
+        self.connection.rollback()
+        return rows
+
+    def photo_storage(self, photo_id: int) -> dict[str, Any] | None:
+        row = self._fetchone(
+            """
+            SELECT id, original_sha256, storage_base_location
+              FROM photos
+             WHERE id = %s
+             LIMIT 1
+            """,
+            (photo_id,),
+        )
+        self.connection.rollback()
+        return row
+
+    def update_photo_storage_location(
+        self,
+        photo_id: int,
+        old_base_location: str,
+        new_base_location: str,
+        old_data_root: str,
+        new_data_root: str,
+    ) -> None:
+        self._execute(
+            """
+            UPDATE photos
+               SET storage_base_location = %s
+             WHERE id = %s
+            """,
+            (new_base_location, photo_id),
+        )
+        self._execute(
+            """
+            UPDATE photo_conversion_jobs
+               SET input_path = REPLACE(input_path, %s, %s),
+                   output_path = REPLACE(output_path, %s, %s),
+                   profile_path = CASE
+                       WHEN profile_path IS NULL THEN NULL
+                       ELSE REPLACE(profile_path, %s, %s)
+                   END
+             WHERE photo_id = %s
+               AND status IN ('queued', 'processing')
+            """,
+            (
+                old_data_root,
+                new_data_root,
+                old_data_root,
+                new_data_root,
+                old_data_root,
+                new_data_root,
+                photo_id,
+            ),
+        )
+        self._insert_audit(
+            photo_id,
+            "photo_storage_relocated",
+            {
+                "old_storage_base_location": old_base_location,
+                "new_storage_base_location": new_base_location,
+            },
+        )
+        self.connection.commit()
+
+    def defer_job_for_storage(self, job: ConversionJob, message: str, delay_seconds: int) -> None:
+        self._execute(
+            """
+            UPDATE photo_conversion_jobs
+               SET status = 'queued',
+                   locked_at = NULL,
+                   locked_by = NULL,
+                   last_error = %s,
+                   attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
+                   available_at = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL %s SECOND)
+             WHERE id = %s
+            """,
+            (message[-4000:], max(60, int(delay_seconds)), job.id),
+        )
+        self._refresh_photo_conversion_state(job.photo_id)
+        self.connection.commit()
+
     def complete_job(self, job: ConversionJob, output_path: str, command: list[str], stderr: str, duration: float) -> None:
         sha256 = self._sha256(output_path)
         size = os.path.getsize(output_path)

@@ -48,6 +48,14 @@ class WorkerConfig:
 
 
 @dataclass(frozen=True)
+class StorageConfig:
+    full_threshold_percent: float
+    store_on_root_partition: bool
+    storage_blocked_poll_interval_seconds: int
+    project_root: str
+
+
+@dataclass(frozen=True)
 class LoggingConfig:
     file: str
     level: str
@@ -59,6 +67,7 @@ class AppConfig:
     redis: RedisConfig
     rawtherapee: RawTherapeeConfig
     worker: WorkerConfig
+    storage: StorageConfig
     logging: LoggingConfig
 
 
@@ -94,6 +103,12 @@ def default_config() -> AppConfig:
             retry_delay_seconds=60,
             work_dir="/var/tmp/swallowtail_conversion",
             temp_retention_hours=24,
+        ),
+        storage=StorageConfig(
+            full_threshold_percent=5.0,
+            store_on_root_partition=False,
+            storage_blocked_poll_interval_seconds=3600,
+            project_root="/usr/local/swallowtail",
         ),
         logging=LoggingConfig(
             file="/var/log/swallowtail/swallowtail_conversion.log",
@@ -164,6 +179,24 @@ def load_config(path: str | None = None) -> AppConfig:
                 fallback=defaults.worker.temp_retention_hours,
             )),
         ),
+        storage=StorageConfig(
+            full_threshold_percent=max(0.0, min(100.0, parser.getfloat(
+                "storage",
+                "full_threshold_percent",
+                fallback=defaults.storage.full_threshold_percent,
+            ))),
+            store_on_root_partition=parser.getboolean(
+                "storage",
+                "store_on_root_partition",
+                fallback=defaults.storage.store_on_root_partition,
+            ),
+            storage_blocked_poll_interval_seconds=max(60, min(86400, parser.getint(
+                "storage",
+                "storage_blocked_poll_interval_seconds",
+                fallback=defaults.storage.storage_blocked_poll_interval_seconds,
+            ))),
+            project_root=parser.get("storage", "project_root", fallback=defaults.storage.project_root),
+        ),
         logging=LoggingConfig(
             file=parser.get("logging", "file", fallback=defaults.logging.file),
             level=parser.get("logging", "level", fallback=defaults.logging.level).strip().upper(),
@@ -179,6 +212,7 @@ def load_php_app_config(path: str, php_binary: str = "php", base: AppConfig | No
 
     config = _apply_php_database_config(config, loaded.get("db"))
     config = _apply_php_redis_config(config, loaded.get("swallowtail"))
+    config = _apply_php_storage_config(config, loaded.get("swallowtail"))
 
     return config
 
@@ -291,6 +325,66 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             normal_queue=str(redis_config.get("normal_queue", config.redis.normal_queue)),
         ),
     )
+
+
+def _apply_php_storage_config(config: AppConfig, swallowtail_config: Any) -> AppConfig:
+    if not isinstance(swallowtail_config, dict):
+        return config
+
+    storage_config = swallowtail_config.get("storage")
+    if not isinstance(storage_config, dict):
+        return config
+
+    return replace(
+        config,
+        storage=replace(
+            config.storage,
+            full_threshold_percent=_clamped_float(
+                storage_config.get("full_threshold_percent"),
+                config.storage.full_threshold_percent,
+                0.0,
+                100.0,
+            ),
+            store_on_root_partition=_bool_value(
+                storage_config.get("store_on_root_partition"),
+                config.storage.store_on_root_partition,
+            ),
+            storage_blocked_poll_interval_seconds=_clamped_int(
+                storage_config.get("storage_blocked_poll_interval_seconds"),
+                config.storage.storage_blocked_poll_interval_seconds,
+                60,
+                86400,
+            ),
+        ),
+    )
+
+
+def _clamped_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _clamped_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _bool_value(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
 
 
 def _split_pdo_dsn(dsn: str) -> tuple[str, str]:

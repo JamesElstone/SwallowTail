@@ -42,7 +42,12 @@ final class _storage_summaryCard extends CardBaseFramework
             return '<div class="panel-soft warn">No included storage locations are available.</div>';
         }
 
-        return '<div class="storage-summary-dashboard">
+        $warning = (int)$summary['writable_locations'] === 0
+            && (int)$summary['below_threshold_locations'] >= (int)$summary['included_locations']
+            ? '<div class="panel-soft warn storage-exhausted-warning">No storage locations are currently available for new writes. SwallowTail has crossed the configured free-space threshold on all included storage locations.</div>'
+            : '';
+
+        return $warning . '<div class="storage-summary-dashboard">
             <dl class="storage-summary-metrics">
                 <div>
                     <dt>Available</dt>
@@ -65,8 +70,12 @@ final class _storage_summaryCard extends CardBaseFramework
                     <dd>' . HelperFramework::escape((string)$summary['included_locations']) . '</dd>
                 </div>
                 <div>
-                    <dt>Writable</dt>
+                    <dt>Writable targets</dt>
                     <dd>' . HelperFramework::escape((string)$summary['writable_locations']) . '</dd>
+                </div>
+                <div>
+                    <dt>Below threshold</dt>
+                    <dd>' . HelperFramework::escape((string)$summary['below_threshold_locations']) . '</dd>
                 </div>
             </dl>
             <div class="storage-summary-chart">' . $this->capacityChart($summary) . '</div>
@@ -81,6 +90,7 @@ final class _storage_summaryCard extends CardBaseFramework
     {
         $included = 0;
         $writable = 0;
+        $belowThreshold = 0;
         $totalBytes = 0;
         $availableBytes = 0;
         $hasCapacityData = false;
@@ -96,6 +106,9 @@ final class _storage_summaryCard extends CardBaseFramework
             $included++;
             if (!empty($location['can_write'])) {
                 $writable++;
+            }
+            if (!empty($location['is_full'])) {
+                $belowThreshold++;
             }
 
             if (!is_numeric($location['total_bytes'] ?? null) || !is_numeric($location['available_bytes'] ?? null)) {
@@ -118,6 +131,7 @@ final class _storage_summaryCard extends CardBaseFramework
         return [
             'included_locations' => $included,
             'writable_locations' => $writable,
+            'below_threshold_locations' => $belowThreshold,
             'total_bytes' => $hasCapacityData ? $totalBytes : null,
             'available_bytes' => $hasCapacityData ? $availableBytes : null,
             'used_bytes' => $hasCapacityData ? $usedBytes : null,

@@ -15,6 +15,7 @@ $harness->check(AppConfigurationStore::class, 'loads configuration from the test
     $harness->assertSame('T', AppConfigurationStore::get('brand-mark'));
     $harness->assertSame('Test strapline', AppConfigurationStore::get('app_strapline'));
     $harness->assertSame('Test strapline', AppConfigurationStore::appStrapline());
+    $harness->assertSame(3600, (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds'));
 });
 
 $harness->check(AppConfigurationStore::class, 'centralises the default application strapline', function () use ($harness): void {
@@ -58,6 +59,13 @@ $harness->check(AppConfigurationStore::class, 'does not generate a default datab
     $defaults = $method->invoke(null);
 
     $harness->assertSame('', $defaults['db']['dsn'] ?? null);
+});
+
+$harness->check(AppConfigurationStore::class, 'defaults storage-blocked conversion polling to one hour', function () use ($harness): void {
+    $method = new ReflectionMethod(AppConfigurationStore::class, 'defaults');
+    $defaults = $method->invoke(null);
+
+    $harness->assertSame(3600, (int)($defaults['swallowtail']['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
 });
 
 $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled by default', function () use ($harness): void {

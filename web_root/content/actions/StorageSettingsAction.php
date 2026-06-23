@@ -63,6 +63,10 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             'swallowtail.storage.full_threshold_percent',
             max(0.0, min(100.0, (float)$request->input('full_threshold_percent', 5)))
         );
+        AppConfigurationStore::set(
+            'swallowtail.storage.storage_blocked_poll_interval_seconds',
+            $this->clampedPollIntervalSeconds($request->input('storage_blocked_poll_interval_seconds', 3600))
+        );
         (new SwallowtailStorageCacheService())->clear();
 
         return ActionResultFramework::success(['storage.available'], [[
@@ -203,5 +207,10 @@ final class StorageSettingsAction implements ActionInterfaceFramework
         }
 
         return (string)$value === '1';
+    }
+
+    private function clampedPollIntervalSeconds(mixed $value): int
+    {
+        return max(60, min(86400, (int)$value));
     }
 }

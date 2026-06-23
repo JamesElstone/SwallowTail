@@ -17,6 +17,7 @@ from swallowtail_conversion.config import (
     LoggingConfig,
     RawTherapeeConfig,
     RedisConfig,
+    StorageConfig,
     WorkerConfig,
     default_config,
     load_php_app_config,
@@ -26,6 +27,7 @@ from swallowtail_conversion.embedded import EmbeddedJpegExtractor
 from swallowtail_conversion.health import _check_directory_writable, _check_log_writable
 from swallowtail_conversion.jobs import ConversionJob
 from swallowtail_conversion.rawtherapee import RawTherapeeRunner
+from swallowtail_conversion.storage import ConversionStorageManager, StorageBlocked
 from swallowtail_conversion.worker import ConversionWorker
 
 
@@ -80,6 +82,12 @@ def app_config(root: Path, rawtherapee_binary: str) -> AppConfig:
             retry_delay_seconds=1,
             work_dir=str(root / "work"),
             temp_retention_hours=24,
+        ),
+        storage=StorageConfig(
+            full_threshold_percent=5.0,
+            store_on_root_partition=False,
+            storage_blocked_poll_interval_seconds=3600,
+            project_root=str(root),
         ),
         logging=LoggingConfig(file=str(root / "raw.log"), level="INFO"),
     )
@@ -168,6 +176,36 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual("swallowtail", config.database.database)
         self.assertEqual("swallowtail_app", config.database.user)
         self.assertEqual("secret", config.database.password)
+
+    def test_php_app_config_loads_storage_settings(self) -> None:
+        payload = {
+            "swallowtail": {
+                "storage": {
+                    "full_threshold_percent": 7.5,
+                    "store_on_root_partition": True,
+                    "storage_blocked_poll_interval_seconds": 1800,
+                },
+            },
+        }
+
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+            config = load_php_app_config("secure/app.php", "php", default_config())
+
+        self.assertEqual(7.5, config.storage.full_threshold_percent)
+        self.assertTrue(config.storage.store_on_root_partition)
+        self.assertEqual(1800, config.storage.storage_blocked_poll_interval_seconds)
+
+    def test_php_app_config_defaults_storage_settings_when_missing(self) -> None:
+        with patch("swallowtail_conversion.config.subprocess.run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps({}), stderr="")
+
+            config = load_php_app_config("secure/app.php", "php", default_config())
+
+        self.assertEqual(5.0, config.storage.full_threshold_percent)
+        self.assertFalse(config.storage.store_on_root_partition)
+        self.assertEqual(3600, config.storage.storage_blocked_poll_interval_seconds)
 
     def test_php_app_config_rejects_unsupported_database_driver(self) -> None:
         payload = {"db": {"dsn": "sqlite:/tmp/swallowtail.sqlite"}}
@@ -389,6 +427,79 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertFalse(worker.run_once())
         self.assertEqual(["swallowtail_conversion"], redis.touched)
 
+    def test_run_once_does_not_claim_jobs_when_storage_is_blocked(self) -> None:
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.touched: list[str] = []
+
+            def touch_service(self, service_key: str) -> bool:
+                self.touched.append(service_key)
+                return True
+
+            def pop(self):
+                raise AssertionError("blocked storage should prevent queue polling")
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.selected = False
+
+            def next_queued_job_id(self):
+                self.selected = True
+                return 42
+
+        class FakeStorage:
+            def has_usable_location(self) -> bool:
+                return False
+
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.redis = FakeRedis()
+        worker.db = db
+        worker.storage = FakeStorage()
+        worker.last_storage_blocked_log_at = 0.0
+
+        self.assertFalse(worker.run_once())
+        self.assertFalse(db.selected)
+        self.assertEqual(["swallowtail_conversion"], worker.redis.touched)
+
+    def test_storage_blocked_job_is_deferred_without_normal_failure(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.deferred = False
+                self.failed = False
+
+            def is_stale_filtered(self, _job) -> bool:
+                return False
+
+            def defer_job_for_storage(self, _job, message: str, delay_seconds: int) -> None:
+                self.deferred = True
+                self.message = message
+                self.delay_seconds = delay_seconds
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                self.failed = True
+
+        class FakeStorage:
+            def relocate_job_if_needed(self, _job):
+                raise StorageBlocked("No storage location is above the configured free-space threshold.")
+
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.db = FakeDb()
+        worker.storage = FakeStorage()
+        worker.last_storage_blocked_log_at = 0.0
+
+        worker.process_job(job(self.root))
+        self.assertTrue(worker.db.deferred)
+        self.assertFalse(worker.db.failed)
+        self.assertEqual(3600, worker.db.delay_seconds)
+        self.assertIn("No storage location", worker.db.message)
+
     def test_cleanup_removes_only_stale_job_directories(self) -> None:
         config = app_config(self.root, str(self.fake))
         work_dir = Path(config.worker.work_dir)
@@ -438,6 +549,90 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "log directory not found"):
             _check_log_writable(str(self.root / "missing" / "raw.log"))
+
+
+class StorageManagerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = test_root("storage-manager-")
+
+    def tearDown(self) -> None:
+        remove_test_root(self.root)
+
+    def test_relocates_checksum_family_to_usable_storage_location(self) -> None:
+        checksum = "a" * 64
+        old_base = self.root / "storage-old"
+        new_base = self.root / "storage-new"
+        source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2 relocation test")
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.updated = None
+
+            def storage_location_properties(self):
+                return []
+
+            def photo_storage(self, _photo_id: int):
+                return {
+                    "original_sha256": checksum,
+                    "storage_base_location": str(old_base),
+                }
+
+            def update_photo_storage_location(self, *args) -> None:
+                self.updated = args
+
+        def disk_usage(path: str):
+            normalised = os.path.abspath(path).rstrip(os.sep) + os.sep
+            if normalised == os.path.abspath(str(old_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=950, free=50)
+            if normalised == os.path.abspath(str(new_base)).rstrip(os.sep) + os.sep:
+                return SimpleNamespace(total=1000, used=800, free=200)
+            raise OSError(path)
+
+        db = FakeDb()
+        manager = ConversionStorageManager(
+            StorageConfig(
+                full_threshold_percent=10.0,
+                store_on_root_partition=False,
+                storage_blocked_poll_interval_seconds=3600,
+                project_root=str(self.root),
+            ),
+            db,
+            disk_usage=disk_usage,
+            mount_reader=lambda: [str(old_base), str(new_base)],
+            zfs_reader=lambda: {},
+        )
+
+        old_input = str(source)
+        old_output = str(old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg")
+        relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
+        new_source = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+
+        self.assertTrue(new_source.is_file())
+        self.assertFalse(source.exists())
+        self.assertIn(str(new_base), relocated.input_path)
+        self.assertIn(str(new_base), relocated.output_path)
+        self.assertIsNotNone(db.updated)
+        self.assertEqual(str(new_base.resolve()) + os.sep, db.updated[2])
+
+    def test_has_usable_location_uses_threshold(self) -> None:
+        base = self.root / "storage"
+
+        manager = ConversionStorageManager(
+            StorageConfig(
+                full_threshold_percent=10.0,
+                store_on_root_partition=False,
+                storage_blocked_poll_interval_seconds=3600,
+                project_root=str(self.root),
+            ),
+            SimpleNamespace(storage_location_properties=lambda: []),
+            disk_usage=lambda _path: SimpleNamespace(total=1000, used=901, free=99),
+            mount_reader=lambda: [str(base)],
+            zfs_reader=lambda: {},
+        )
+
+        self.assertFalse(manager.has_usable_location())
 
 
 class ConversionDatabaseOrderingTest(unittest.TestCase):

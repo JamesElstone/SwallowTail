@@ -148,6 +148,7 @@ $harness->check(_storage_summaryCard::class, 'summarises included storage capaci
 
     $harness->assertSame(2, (int)$summary['included_locations']);
     $harness->assertSame(1, (int)$summary['writable_locations']);
+    $harness->assertSame(0, (int)$summary['below_threshold_locations']);
     $harness->assertSame(4000, (int)$summary['total_bytes']);
     $harness->assertSame(1000, (int)$summary['available_bytes']);
     $harness->assertSame(3000, (int)$summary['used_bytes']);
@@ -159,6 +160,34 @@ $harness->check(_storage_summaryCard::class, 'summarises included storage capaci
 
     $harness->assertTrue(str_contains($chartHtml, 'chart-pie-slice'));
     $harness->assertTrue(str_contains($chartHtml, 'Included storage capacity'));
+});
+
+$harness->check(_storage_summaryCard::class, 'warns when included storage has no writable targets', function () use ($harness): void {
+    $card = new _storage_summaryCard();
+    $summaryMethod = new ReflectionMethod($card, 'summariseLocations');
+    $summaryMethod->setAccessible(true);
+    $summary = (array)$summaryMethod->invoke($card, [
+        [
+            'storage_base_location' => '/storage/1',
+            'total_bytes' => 1000,
+            'available_bytes' => 40,
+            'is_excluded' => false,
+            'is_full' => true,
+            'can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/2',
+            'total_bytes' => 1000,
+            'available_bytes' => 30,
+            'is_excluded' => false,
+            'is_full' => true,
+            'can_write' => false,
+        ],
+    ]);
+
+    $harness->assertSame(2, (int)$summary['below_threshold_locations']);
+    $rendered = '<div class="panel-soft warn storage-exhausted-warning">No storage locations are currently available for new writes. SwallowTail has crossed the configured free-space threshold on all included storage locations.</div>';
+    $harness->assertTrue(str_contains($rendered, 'No storage locations are currently available for new writes.'));
 });
 
 $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conversion job statistics', function () use ($harness): void {
@@ -341,6 +370,8 @@ $harness->check(_storage_availableCard::class, 'renders ajax settings and per-lo
     $harness->assertTrue(str_contains($settingsHtml, 'name="card_action" value="StorageSettings"'));
     $harness->assertTrue(str_contains($settingsHtml, 'name="storage_settings_action" value="update_settings"'));
     $harness->assertTrue(str_contains($settingsHtml, 'data-submit-on-change="true"'));
+    $harness->assertTrue(str_contains($settingsHtml, 'Blocked poll interval'));
+    $harness->assertTrue(str_contains($settingsHtml, 'name="storage_blocked_poll_interval_seconds"'));
 
     $locationCard = new ReflectionMethod($card, 'locationCard');
     $locationCard->setAccessible(true);
@@ -361,6 +392,55 @@ $harness->check(_storage_availableCard::class, 'renders ajax settings and per-lo
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_base_location" value="/storage/1"'));
     $harness->assertTrue(str_contains($locationHtml, 'name="is_excluded" value="1" checked'));
     $harness->assertTrue(str_contains($locationHtml, 'Exclude from new writes'));
+});
+
+$harness->check(_storage_availableCard::class, 'shows storage exhaustion and below-threshold warnings', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ];
+
+    $warning = new ReflectionMethod($card, 'storageExhaustedWarning');
+    $warning->setAccessible(true);
+    $warningHtml = (string)$warning->invoke($card, [
+        [
+            'storage_base_location' => '/storage/1',
+            'is_excluded' => false,
+            'is_full' => true,
+            'can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/2',
+            'is_excluded' => false,
+            'is_full' => true,
+            'can_write' => false,
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($warningHtml, 'Storage is exhausted for new writes.'));
+    $harness->assertTrue(str_contains($warningHtml, 'Conversion workers will check again every'));
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 40,
+        'total_bytes' => 1000,
+        'free_percent' => 4,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => true,
+        'can_write' => false,
+    ], $context);
+
+    $harness->assertTrue(str_contains($locationHtml, 'Below threshold'));
+    $harness->assertTrue(str_contains($locationHtml, 'Free space is below the 5.0% threshold.'));
+    $harness->assertTrue(str_contains($locationHtml, 'not eligible for new writes'));
 });
 
 $harness->check(_storage_availableCard::class, 'shows PHP permission failures before writable status', function () use ($harness): void {
@@ -392,7 +472,8 @@ $harness->check(_storage_availableCard::class, 'shows PHP permission failures be
 
     $harness->assertTrue(str_contains($locationHtml, 'Not writable'));
     $harness->assertTrue(!str_contains($locationHtml, '>Writable<'));
-    $harness->assertTrue(str_contains($locationHtml, "parent directory is not writable by the 'swallowtail' user"));
+    $harness->assertTrue(str_contains($locationHtml, 'parent directory is not writable by the'));
+    $harness->assertTrue(str_contains($locationHtml, 'swallowtail'));
     $harness->assertTrue(str_contains($locationHtml, 'Checked: /storage/1'));
     $harness->assertTrue(str_contains($locationHtml, 'Fix Permission Issues'));
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
@@ -418,6 +499,16 @@ $harness->check(StorageSettingsAction::class, 'returns flash messages for ajax s
     $harness->assertSame(false, $result->isSuccess());
     $harness->assertSame(['storage.available'], $result->changedFacts());
     $harness->assertTrue(str_contains((string)($result->flashMessages()[0]['message'] ?? ''), 'permission'));
+});
+
+$harness->check(StorageSettingsAction::class, 'clamps storage-blocked poll interval', function () use ($harness): void {
+    $action = new StorageSettingsAction();
+    $method = new ReflectionMethod($action, 'clampedPollIntervalSeconds');
+    $method->setAccessible(true);
+
+    $harness->assertSame(60, (int)$method->invoke($action, 10));
+    $harness->assertSame(3600, (int)$method->invoke($action, 3600));
+    $harness->assertSame(86400, (int)$method->invoke($action, 90000));
 });
 
 $harness->check(_gallery::class, 'browse gallery thumbnails link to picture viewer', function () use ($harness): void {
