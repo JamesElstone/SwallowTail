@@ -18,6 +18,7 @@ from .storage import ConversionStorageManager, StorageBlocked
 
 class ConversionWorker:
     STATUS_REFRESH_INTERVAL_SECONDS = 300
+    STORAGE_WAKE_WAIT_INTERVAL_SECONDS = 5
 
     def __init__(self, config: AppConfig):
         self.config = config
@@ -34,7 +35,7 @@ class ConversionWorker:
 
     def request_shutdown(self) -> None:
         if not self.shutdown_requested.is_set():
-            self.log.info("Shutdown requested; finishing active conversion jobs before exit")
+            self.log.info("Shutdown requested; stopping after any active conversion jobs finish")
             self.shutdown_requested.set()
 
     def run_forever(self) -> None:
@@ -260,22 +261,27 @@ class ConversionWorker:
 
     def _wait_with_status(self, timeout_seconds: int) -> None:
         deadline = time.monotonic() + max(0, int(timeout_seconds))
+        next_status_at = time.monotonic() + self.STATUS_REFRESH_INTERVAL_SECONDS
         while not self.shutdown_requested.is_set():
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            remaining = deadline - now
             if remaining <= 0:
                 return
-            wait_seconds = min(self.STATUS_REFRESH_INTERVAL_SECONDS, remaining)
+            wait_seconds = min(next_status_at, deadline) - now
             if hasattr(self.redis, "pop_storage_wake"):
+                wait_seconds = min(self.STORAGE_WAKE_WAIT_INTERVAL_SECONDS, wait_seconds)
                 wait_started = time.monotonic()
-                if self.redis.pop_storage_wake(int(wait_seconds)):
+                if self.redis.pop_storage_wake(int(max(1, wait_seconds))):
                     return
                 elapsed = time.monotonic() - wait_started
                 if elapsed < min(1.0, wait_seconds):
                     self.shutdown_requested.wait(max(0.0, wait_seconds - elapsed))
             else:
                 self.shutdown_requested.wait(wait_seconds)
-            if not self.shutdown_requested.is_set() and deadline - time.monotonic() > 0:
+            now = time.monotonic()
+            if not self.shutdown_requested.is_set() and now >= next_status_at and deadline - now > 0:
                 self._touch_status()
+                next_status_at = now + self.STATUS_REFRESH_INTERVAL_SECONDS
 
     def cleanup_stale_temp_dirs(self) -> int:
         work_dir = Path(self.config.worker.work_dir)

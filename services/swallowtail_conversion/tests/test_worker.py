@@ -652,7 +652,7 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         worker._wait_with_status(3600)
 
-        self.assertEqual([ConversionWorker.STATUS_REFRESH_INTERVAL_SECONDS], worker.redis.waits)
+        self.assertEqual([ConversionWorker.STORAGE_WAKE_WAIT_INTERVAL_SECONDS], worker.redis.waits)
         self.assertEqual([], worker.redis.touched)
 
     def test_storage_blocked_job_is_deferred_without_normal_failure(self) -> None:
