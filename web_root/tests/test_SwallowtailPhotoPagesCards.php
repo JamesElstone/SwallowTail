@@ -816,3 +816,14 @@ $harness->check(_gallery::class, 'browse gallery shows failed status overlay', f
     $harness->assertTrue(!str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, '>Conversion failed<'));
 });
+
+$harness->check(_picture_viewer::class, 'picture editor exposes revert control', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'picture_editor.php');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to read picture editor card source.');
+    }
+
+    $harness->assertTrue(str_contains($source, 'data-picture-editor-revert'));
+    $harness->assertTrue(str_contains($source, 'Revert to Original'));
+});

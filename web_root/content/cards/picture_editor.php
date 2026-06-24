@@ -78,6 +78,7 @@ final class _picture_editorCard extends CardBaseFramework
                         . HelperFramework::escape((string)(int)($crop['height'] ?? $sourceHeight))
                     . '</output>
                 </div>
+                <button class="button button-inline picture-editor-revert" type="button" data-picture-editor-revert>Revert to Original</button>
             </div>
         </div>';
     }

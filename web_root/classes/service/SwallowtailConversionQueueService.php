@@ -14,8 +14,10 @@ final class SwallowtailConversionQueueService
     private const PRIORITY_ORIGINAL = 20;
     private const PRIORITY_THUMBNAIL = 30;
     private const PRIORITY_EMBEDDED = 40;
-    private const PRIORITY_PREVIEW_THUMBNAIL = 50;
-    private const PRIORITY_PREVIEW_FILTERED = 51;
+    private const PRIORITY_VIEWED_OTHER = 50;
+    private const PRIORITY_VIEWED_ORIGINAL = 51;
+    private const PRIORITY_PREVIEW_THUMBNAIL = 52;
+    private const PRIORITY_PREVIEW_FILTERED = 50;
     private const PRIORITY_PREEMPT_THRESHOLD = 50;
     private const ENQUEUE_ATTEMPTS = 3;
 
@@ -282,6 +284,75 @@ final class SwallowtailConversionQueueService
         );
     }
 
+    /**
+     * @return list<array{job_id: int, image_type: string, priority: int, previous_priority: int}>
+     */
+    public function boostQueuedJobsForViewedPhoto(int $photoId): array
+    {
+        if ($photoId <= 0) {
+            return [];
+        }
+
+        $notifyAfterCommit = !InterfaceDB::inTransaction();
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId): array {
+            $rows = InterfaceDB::fetchAll(
+                "SELECT id, image_type, priority
+                 FROM photo_conversion_jobs
+                 WHERE photo_id = :photo_id
+                   AND status = 'queued'",
+                ['photo_id' => $photoId]
+            );
+            $boosted = [];
+
+            foreach ($rows as $row) {
+                $jobId = $this->nullablePositiveInt($row['id'] ?? null);
+                if ($jobId === null) {
+                    continue;
+                }
+
+                $imageType = (string)($row['image_type'] ?? '');
+                $currentPriority = max(0, (int)($row['priority'] ?? 0));
+                $priority = $this->viewedPhotoPriorityForType($imageType);
+
+                if ($currentPriority >= $priority) {
+                    continue;
+                }
+
+                $updated = InterfaceDB::execute(
+                    "UPDATE photo_conversion_jobs
+                     SET priority = :priority
+                     WHERE id = :id
+                       AND status = 'queued'
+                       AND priority < :minimum_priority",
+                    [
+                        'id' => $jobId,
+                        'priority' => $priority,
+                        'minimum_priority' => $priority,
+                    ]
+                );
+
+                if ($updated <= 0) {
+                    continue;
+                }
+
+                $boosted[] = [
+                    'job_id' => $jobId,
+                    'image_type' => $imageType,
+                    'priority' => $priority,
+                    'previous_priority' => $currentPriority,
+                ];
+            }
+
+            return $boosted;
+        });
+
+        if ($notifyAfterCommit) {
+            $this->notifyRedisForJobs($jobs);
+        }
+
+        return $jobs;
+    }
+
     private function notifyRedis(int $jobId, string $imageType, int $priority): void
     {
         if ($this->redisNotifier instanceof Closure) {
@@ -333,8 +404,17 @@ final class SwallowtailConversionQueueService
         }
     }
 
+    private function viewedPhotoPriorityForType(string $imageType): int
+    {
+        return match (strtolower(trim($imageType))) {
+            'thumbnail' => self::PRIORITY_PREVIEW_THUMBNAIL,
+            'original' => self::PRIORITY_VIEWED_ORIGINAL,
+            default => self::PRIORITY_VIEWED_OTHER,
+        };
+    }
+
     /**
-     * @param array<string, array<string, mixed>> $jobs
+     * @param iterable<array<string, mixed>> $jobs
      */
     private function notifyRedisForJobs(array $jobs): void
     {

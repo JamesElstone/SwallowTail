@@ -276,4 +276,34 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
             "control.closest('.page-card-tabs') || document.querySelector('.page-card-tabs')"
         ));
     });
+
+    $harness->check(PageRendererFramework::class, 'frontend picture editor polls through interim preview images', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        $harness->assertTrue(str_contains($script, 'displayedPreviewStage'));
+        $harness->assertTrue(str_contains($script, 'response?.thumbnail_url'));
+        $harness->assertTrue(str_contains($script, 'response?.original_url'));
+        $harness->assertTrue(str_contains($script, 'Thumbnail ready; rendering filtered'));
+        $harness->assertTrue(str_contains($script, 'Original ready; rendering filtered'));
+        $harness->assertTrue(str_contains($script, "displayedPreviewStage = 'filtered';"));
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to neutral settings through preview flow', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        $harness->assertTrue(str_contains($script, 'data-picture-editor-revert'));
+        $harness->assertTrue(str_contains($script, 'function revertToOriginal()'));
+        $harness->assertTrue(str_contains($script, 'crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight }'));
+        $harness->assertTrue(str_contains($script, 'exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 }'));
+        $harness->assertTrue(str_contains($script, 'syncExposureControls();'));
+        $harness->assertTrue(str_contains($script, 'scheduleSubmit();'));
+    });
 });

@@ -1986,6 +1986,7 @@
             const cropNode = editor.querySelector('[data-picture-editor-crop]');
             const statusNode = editor.querySelector('[data-picture-editor-status]');
             const cropReadout = editor.querySelector('[data-picture-editor-crop-readout]');
+            const revertButton = editor.querySelector('[data-picture-editor-revert]');
             const profileUrl = String(editor.dataset.profileUrl || '').trim();
             const sourceWidth = Math.max(1, Number.parseInt(String(editor.dataset.sourceWidth || '1'), 10));
             const sourceHeight = Math.max(1, Number.parseInt(String(editor.dataset.sourceHeight || '1'), 10));
@@ -1994,6 +1995,7 @@
             let submitTimer = null;
             let pollTimer = null;
             let dragState = null;
+            let displayedPreviewStage = '';
 
             if (!(stage instanceof HTMLElement) || !(cropNode instanceof HTMLElement) || profileUrl === '') {
                 return;
@@ -2129,6 +2131,22 @@
                 };
             }
 
+            function syncExposureControls() {
+                Object.keys(settings.exposure).forEach((key) => {
+                    const value = String(settings.exposure[key]);
+                    const field = editor.querySelector(`[data-picture-editor-field="${escapeCssIdentifier(key)}"]`);
+                    const number = editor.querySelector(`[data-picture-editor-number="${escapeCssIdentifier(key)}"]`);
+
+                    if (field instanceof HTMLInputElement) {
+                        field.value = value;
+                    }
+
+                    if (number instanceof HTMLInputElement) {
+                        number.value = value;
+                    }
+                });
+            }
+
             function clearPoll() {
                 if (pollTimer !== null) {
                     window.clearTimeout(pollTimer);
@@ -2150,6 +2168,7 @@
 
             async function submitPreview() {
                 const sequence = ++requestSequence;
+                displayedPreviewStage = '';
                 clearPoll();
                 setStatus('Rendering', 'processing');
 
@@ -2196,8 +2215,25 @@
                     }
 
                     const state = String(response?.status || 'queued');
+                    let interimStatus = '';
+                    const thumbnailUrl = String(response?.thumbnail_url || '').trim();
+                    const originalUrl = String(response?.original_url || '').trim();
+
+                    if (thumbnailUrl !== '' && displayedPreviewStage === '') {
+                        swapPreviewImage(thumbnailUrl);
+                        displayedPreviewStage = 'thumbnail';
+                        interimStatus = 'Thumbnail ready; rendering filtered';
+                    }
+
+                    if (originalUrl !== '' && displayedPreviewStage !== 'original') {
+                        swapPreviewImage(originalUrl);
+                        displayedPreviewStage = 'original';
+                        interimStatus = 'Original ready; rendering filtered';
+                    }
+
                     if (state === 'succeeded' && response?.preview_url) {
                         swapPreviewImage(String(response.preview_url));
+                        displayedPreviewStage = 'filtered';
                         setStatus('Ready', 'ready');
                         return;
                     }
@@ -2207,7 +2243,7 @@
                         return;
                     }
 
-                    setStatus(state === 'processing' ? 'Rendering' : 'Queued', state);
+                    setStatus(interimStatus !== '' ? interimStatus : (state === 'processing' ? 'Rendering' : 'Queued'), state);
                     const delay = attempt < 5 ? 750 : 1500;
                     pollTimer = window.setTimeout(() => {
                         pollPreviewStatus(statusUrl, sequence, attempt + 1, startedAt);
@@ -2235,6 +2271,17 @@
                 }
 
                 imageNode.src = url;
+            }
+
+            function revertToOriginal() {
+                settings = {
+                    crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight },
+                    exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 },
+                };
+                settings.crop = normaliseCrop(settings.crop);
+                syncExposureControls();
+                renderCrop();
+                scheduleSubmit();
             }
 
             editor.querySelectorAll('[data-picture-editor-field]').forEach((field) => {
@@ -2374,6 +2421,9 @@
 
             if (imageNode instanceof HTMLImageElement) {
                 imageNode.addEventListener('load', renderCrop);
+            }
+            if (revertButton instanceof HTMLButtonElement) {
+                revertButton.addEventListener('click', revertToOriginal);
             }
             window.addEventListener('resize', renderCrop);
             renderCrop();

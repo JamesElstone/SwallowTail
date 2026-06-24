@@ -1178,6 +1178,63 @@ $harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in 
     $harness->assertSame(['embedded', 'thumbnail', 'original', 'filtered'], $types);
 });
 
+$harness->check(SwallowtailConversionQueueService::class, 'boosts queued viewed-photo jobs and sends preempt signals', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (
+            id,
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            priority,
+            status
+        ) VALUES
+            (9101, 77, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail.jpg', 30, 'queued'),
+            (9102, 77, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 20, 'queued'),
+            (9103, 77, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 40, 'queued'),
+            (9104, 77, 'image', 'filtered', '/tmp/source.cr2', '/tmp/filtered.jpg', 60, 'queued'),
+            (9105, 77, 'image', 'original', '/tmp/source.cr2', '/tmp/original-processing.jpg', 20, 'processing'),
+            (9106, 77, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail-done.jpg', 20, 'succeeded')"
+    );
+
+    $notifications = [];
+    $queue = new SwallowtailConversionQueueService(static function (int $jobId, string $imageType, int $priority, string $messageType) use (&$notifications): void {
+        $notifications[] = [
+            'job_id' => $jobId,
+            'image_type' => $imageType,
+            'priority' => $priority,
+            'message_type' => $messageType,
+        ];
+    });
+
+    $boosted = $queue->boostQueuedJobsForViewedPhoto(77);
+    $rows = InterfaceDB::fetchAll(
+        'SELECT id, priority FROM photo_conversion_jobs WHERE photo_id = 77 ORDER BY id'
+    );
+    $priorities = [];
+    foreach ($rows as $row) {
+        $priorities[(int)$row['id']] = (int)$row['priority'];
+    }
+    $preempts = array_values(array_filter(
+        $notifications,
+        static fn(array $notification): bool => (string)$notification['message_type'] === 'preempt'
+    ));
+
+    $harness->assertSame([9101, 9102, 9103], array_map(static fn(array $row): int => (int)$row['job_id'], $boosted));
+    $harness->assertSame(52, $priorities[9101] ?? 0);
+    $harness->assertSame(51, $priorities[9102] ?? 0);
+    $harness->assertSame(50, $priorities[9103] ?? 0);
+    $harness->assertSame(60, $priorities[9104] ?? 0);
+    $harness->assertSame(20, $priorities[9105] ?? 0);
+    $harness->assertSame(20, $priorities[9106] ?? 0);
+    $harness->assertCount(3, $preempts);
+    $harness->assertSame(['thumbnail', 'original', 'embedded'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
+    $harness->assertSame([52, 51, 50], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+});
+
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
@@ -2245,7 +2302,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $profilePath = (string)($job['profile_path'] ?? '');
     $harness->assertSame(1, (int)($job['profile_version'] ?? 0));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
-    $harness->assertSame(51, (int)($job['priority'] ?? 0));
+    $harness->assertSame(50, (int)($job['priority'] ?? 0));
     $harness->assertSame(0, (int)($job['output_width'] ?? 0));
     $harness->assertSame(0, (int)($job['output_height'] ?? 0));
     if ($profilePath === '') {
@@ -2277,7 +2334,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     if (!is_array($thumbnailJob)) {
         throw new RuntimeException('Preview thumbnail refresh job row was not found.');
     }
-    $harness->assertSame(50, (int)($thumbnailJob['priority'] ?? 0));
+    $harness->assertSame(52, (int)($thumbnailJob['priority'] ?? 0));
 
     $second = $service->enqueuePreview($photoId, 303, [
         'crop' => ['x' => 30, 'y' => 40, 'width' => 90, 'height' => 110],
@@ -2296,6 +2353,22 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         ['id' => (int)($thumbnailJob['id'] ?? 0)]
     ));
 
+    $storage = new SwallowtailStorageService();
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $thumbnailPath = $storage->imagePath($base, $sha256, 'thumbnail');
+    $originalPath = $storage->imagePath($base, $sha256, 'original');
+    $storage->ensureDirectoryForPath($thumbnailPath);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+
+    $queuedStatus = $service->previewStatus($photoId, (int)$second['job_id'], 2, 303);
+    $harness->assertSame('queued', (string)($queuedStatus['status'] ?? ''));
+    $harness->assertTrue(str_contains((string)($queuedStatus['thumbnail_url'] ?? ''), 'type=thumbnail'));
+    $harness->assertTrue(str_contains((string)($queuedStatus['original_url'] ?? ''), 'type=original'));
+    $harness->assertTrue(!array_key_exists('preview_url', $queuedStatus));
+
     InterfaceDB::prepareExecute(
         "UPDATE photo_conversion_jobs
          SET status = 'succeeded'
@@ -2310,6 +2383,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     if (!str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$second['job_id'])) {
         throw new RuntimeException('Preview status URL did not include the second job id: ' . (string)($status['preview_url'] ?? ''));
     }
+    $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'type=filtered'));
 
     @unlink($source);
 });
@@ -3233,7 +3307,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'sends Redis preempt s
     ));
     $harness->assertCount(2, $preempts);
     $harness->assertSame(['filtered', 'thumbnail'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
-    $harness->assertSame([51, 50], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+    $harness->assertSame([50, 52], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
     $harness->assertSame($filteredJobId, (int)$preempts[0]['job_id']);
 
     @unlink($source);
