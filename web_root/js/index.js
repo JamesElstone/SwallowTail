@@ -2691,6 +2691,8 @@
                 const cardKey = String(card.dataset.cardKey || '').trim();
                 const pageField = String(target.dataset.galleryPageField || '').trim();
                 const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
+                const perPageField = String(target.dataset.galleryPerPageField || '').trim();
+                const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
                 const payload = {
                     _ajax: '1',
                     _card_refresh: '1',
@@ -2700,6 +2702,10 @@
 
                 if (pageField !== '') {
                     payload[pageField] = String(pageValue);
+                }
+
+                if (perPageField !== '') {
+                    payload[perPageField] = String(perPageValue);
                 }
 
                 try {

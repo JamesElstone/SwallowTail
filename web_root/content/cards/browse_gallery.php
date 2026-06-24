@@ -9,6 +9,9 @@ declare(strict_types=1);
 
 final class _browse_galleryCard extends CardBaseFramework
 {
+    private const DEFAULT_PER_PAGE = 24;
+    private const PER_PAGE_OPTIONS = [24, 30, 40];
+
     public function key(): string
     {
         return 'browse_gallery';
@@ -35,15 +38,21 @@ final class _browse_galleryCard extends CardBaseFramework
         array $pageContext,
         ActionResultFramework $actionResult
     ): array {
-        return $this->applyPaginationContext($request, $pageContext);
+        $pageContext = $this->applyPaginationContext($request, $pageContext);
+        $pageContext['page'][$this->perPageField()] = $this->normalisePerPage(
+            (int)$request->input($this->perPageField(), self::DEFAULT_PER_PAGE)
+        );
+
+        return $pageContext;
     }
 
     public function render(array $context): string
     {
         $userId = $this->currentUserId();
         $service = new SwallowtailPhotoUiService();
+        $perPage = $this->perPage($context);
 
-        $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), 24);
+        $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), $perPage);
         $rows = (array)($gallery['rows'] ?? []);
         $pagination = (array)($gallery['pagination'] ?? []);
 
@@ -53,13 +62,16 @@ final class _browse_galleryCard extends CardBaseFramework
 
         $hasPendingPreviews = $this->hasPendingPreviews($rows);
         $pageField = $this->paginationPageField();
+        $perPageField = $this->perPageField();
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
 
         $html = '<div class="gallery-grid"
             data-gallery-auto-refresh="true"
             data-gallery-pending="' . ($hasPendingPreviews ? '1' : '0') . '"
             data-gallery-page="' . HelperFramework::escape((string)$page) . '"
-            data-gallery-page-field="' . HelperFramework::escape($pageField) . '">';
+            data-gallery-page-field="' . HelperFramework::escape($pageField) . '"
+            data-gallery-per-page="' . HelperFramework::escape((string)$perPage) . '"
+            data-gallery-per-page-field="' . HelperFramework::escape($perPageField) . '">';
         foreach ($rows as $photo) {
             $html .= $this->photoTile((array)$photo);
         }
@@ -70,11 +82,14 @@ final class _browse_galleryCard extends CardBaseFramework
             (array)$gallery['pagination'],
             'photos',
             null,
-            ['cards[]' => 'browse_gallery'],
+            [
+                'cards[]' => 'browse_gallery',
+                $perPageField => $perPage,
+            ],
             'post',
             [],
             'button primary',
-            $this->autoRefreshControl()
+            $this->galleryControls($perPage)
         );
 
         return $html;
@@ -138,6 +153,52 @@ final class _browse_galleryCard extends CardBaseFramework
             <input type="checkbox" value="1" data-gallery-auto-refresh-toggle>
             <span>Auto refresh</span>
         </label>';
+    }
+
+    private function galleryControls(int $perPage): string
+    {
+        return '<div class="gallery-footer-controls">'
+            . $this->perPageControl($perPage)
+            . $this->autoRefreshControl()
+            . '</div>';
+    }
+
+    private function perPageControl(int $perPage): string
+    {
+        $perPage = $this->normalisePerPage($perPage);
+        $options = '';
+
+        foreach (self::PER_PAGE_OPTIONS as $option) {
+            $options .= '<option value="' . HelperFramework::escape((string)$option) . '"'
+                . ($option === $perPage ? ' selected' : '')
+                . '>' . HelperFramework::escape((string)$option) . '</option>';
+        }
+
+        return '<form method="post" data-ajax="true" class="gallery-page-size-form">
+            <input type="hidden" name="cards[]" value="browse_gallery">
+            <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
+            <label class="gallery-page-size-control">
+                <span>Images</span>
+                <select name="' . HelperFramework::escape($this->perPageField()) . '" aria-label="Images per page">
+                    ' . $options . '
+                </select>
+            </label>
+        </form>';
+    }
+
+    private function perPage(array $context): int
+    {
+        return $this->normalisePerPage((int)($context['page'][$this->perPageField()] ?? self::DEFAULT_PER_PAGE));
+    }
+
+    private function perPageField(): string
+    {
+        return $this->key() . '_per_page';
+    }
+
+    private function normalisePerPage(int $perPage): int
+    {
+        return in_array($perPage, self::PER_PAGE_OPTIONS, true) ? $perPage : self::DEFAULT_PER_PAGE;
     }
 
     private function photoAssetUrl(int $photoId, string $type): string

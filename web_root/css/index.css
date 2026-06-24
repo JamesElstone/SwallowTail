@@ -3582,6 +3582,13 @@ label {
   gap: 14px;
 }
 
+.gallery-footer-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .gallery-auto-refresh-control {
   display: inline-flex;
   align-items: center;
@@ -3598,6 +3605,34 @@ label {
 
 .gallery-auto-refresh-control input {
   margin: 0;
+}
+
+.gallery-page-size-form {
+  margin: 0;
+}
+
+.gallery-page-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.gallery-page-size-control select {
+  min-width: 64px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
 }
 
 .gallery-tile {

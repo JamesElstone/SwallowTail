@@ -695,6 +695,44 @@ $harness->check(_gallery::class, 'browse gallery renders auto refresh control', 
     $harness->assertTrue(str_contains($html, '>Auto refresh<'));
 });
 
+$harness->check(_gallery::class, 'browse gallery renders page size selector', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'galleryControls');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, 30);
+
+    $harness->assertTrue(str_contains($html, 'class="gallery-footer-controls"'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_per_page"'));
+    $harness->assertTrue(str_contains($html, '<option value="24">24</option>'));
+    $harness->assertTrue(str_contains($html, '<option value="30" selected>30</option>'));
+    $harness->assertTrue(str_contains($html, '<option value="40">40</option>'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_page" value="1"'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-refresh-toggle'));
+});
+
+$harness->check(_gallery::class, 'browse gallery normalises page size context', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $services = new PageServiceFramework(new AppService(''));
+
+    $accepted = $card->handle(
+        new RequestFramework([], ['browse_gallery_page' => '3', 'browse_gallery_per_page' => '40'], ['REQUEST_METHOD' => 'POST'], [], []),
+        $services,
+        ['page' => []],
+        ActionResultFramework::none()
+    );
+    $fallback = $card->handle(
+        new RequestFramework([], ['browse_gallery_per_page' => '96'], ['REQUEST_METHOD' => 'POST'], [], []),
+        $services,
+        ['page' => []],
+        ActionResultFramework::none()
+    );
+
+    $harness->assertSame(3, (int)$accepted['page']['browse_gallery_page']);
+    $harness->assertSame(40, (int)$accepted['page']['browse_gallery_per_page']);
+    $harness->assertSame(24, (int)$fallback['page']['browse_gallery_per_page']);
+});
+
 $harness->check(_gallery::class, 'browse gallery status icons match upload icon stroke', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'statusIconSvg');
