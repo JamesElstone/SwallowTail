@@ -817,12 +817,10 @@ $harness->check(_gallery::class, 'browse gallery shows failed status overlay', f
     $harness->assertTrue(!str_contains($html, '>Conversion failed<'));
 });
 
-$harness->check(_picture_viewerCard::class, 'formats photo metadata in helper text', function () use ($harness): void {
-    $card = new _picture_viewerCard();
-    $method = new ReflectionMethod($card, 'photoHelperText');
-    $method->setAccessible(true);
+$harness->check(SwallowtailPhotoMetadataSummaryService::class, 'formats photo metadata in helper text', function () use ($harness): void {
+    $service = new SwallowtailPhotoMetadataSummaryService();
 
-    $summary = (string)$method->invoke($card, [
+    $summary = $service->summaryText([
         'original_filename' => 'IMG_0042.CR2',
     ], [
         'camera_model' => 'Canon EOS 760D',
@@ -834,9 +832,19 @@ $harness->check(_picture_viewerCard::class, 'formats photo metadata in helper te
     ]);
 
     $harness->assertSame('IMG_0042.CR2 : Canon EOS 760D with EF-S 18-135mm [ 100ASA 250ms 5.6 @ 50mm ]', $summary);
-    $harness->assertSame('IMG_0042.CR2', (string)$method->invoke($card, [
+    $harness->assertSame('IMG_0042.CR2', $service->summaryText([
         'original_filename' => 'IMG_0042.CR2',
     ], []));
+});
+
+$harness->check(_picture_editorCard::class, 'picture editor helper uses photo metadata summary', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'picture_editor.php');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to read picture editor card source.');
+    }
+
+    $harness->assertTrue(str_contains($source, 'SwallowtailPhotoMetadataSummaryService'));
 });
 
 $harness->check(_picture_viewer::class, 'picture editor exposes revert control', function () use ($harness): void {

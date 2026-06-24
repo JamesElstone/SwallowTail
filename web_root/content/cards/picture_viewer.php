@@ -21,17 +21,10 @@ final class _picture_viewerCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        $photoId = (int)($context['page']['photo_id'] ?? 0);
-        if ($photoId <= 0) {
-            return 'Preview and metadata for the selected photo.';
-        }
-
-        $photo = (new SwallowtailPhotoUiService())->photoDetails($photoId, $this->currentUserId());
-        if ($photo === null) {
-            return 'Preview and metadata for the selected photo.';
-        }
-
-        return $this->photoHelperText($photo, $this->metadataForPhoto($photoId));
+        return (new SwallowtailPhotoMetadataSummaryService())->helperForPhoto(
+            (int)($context['page']['photo_id'] ?? 0),
+            $this->currentUserId()
+        );
     }
 
     public function render(array $context): string
@@ -103,115 +96,6 @@ final class _picture_viewerCard extends CardBaseFramework
     private function metaRow(string $label, string $value): string
     {
         return '<div><dt>' . HelperFramework::escape($label) . '</dt><dd>' . HelperFramework::escape($value) . '</dd></div>';
-    }
-
-    private function metadataForPhoto(int $photoId): array
-    {
-        if ($photoId <= 0) {
-            return [];
-        }
-
-        try {
-            if (!InterfaceDB::tableExists('photo_metadata')) {
-                return [];
-            }
-
-            $metadata = InterfaceDB::fetchOne(
-                'SELECT camera_model, lens_model, iso, shutter_speed, aperture, focal_length_mm
-                 FROM photo_metadata
-                 WHERE photo_id = :photo_id
-                 LIMIT 1',
-                ['photo_id' => $photoId]
-            );
-        } catch (Throwable) {
-            return [];
-        }
-
-        return is_array($metadata) ? $metadata : [];
-    }
-
-    private function photoHelperText(array $photo, array $metadata): string
-    {
-        $filename = trim((string)($photo['original_filename'] ?? ''));
-        if ($filename === '') {
-            $filename = 'Photo';
-        }
-
-        $cameraModel = trim((string)($metadata['camera_model'] ?? ''));
-        $lensModel = trim((string)($metadata['lens_model'] ?? ''));
-        $exposureParts = [];
-
-        $iso = (int)($metadata['iso'] ?? 0);
-        if ($iso > 0) {
-            $exposureParts[] = (string)$iso . 'ASA';
-        }
-
-        $shutter = $this->formatShutterSpeed($metadata['shutter_speed'] ?? null);
-        if ($shutter !== '') {
-            $exposureParts[] = $shutter;
-        }
-
-        $aperture = $this->formatDecimal($metadata['aperture'] ?? null);
-        if ($aperture !== '') {
-            $exposureParts[] = $aperture;
-        }
-
-        $focalLength = $this->formatDecimal($metadata['focal_length_mm'] ?? null);
-        if ($focalLength !== '') {
-            $exposureParts[] = '@ ' . $focalLength . 'mm';
-        }
-
-        if ($cameraModel === '' && $lensModel === '' && count($exposureParts) === 0) {
-            return $filename;
-        }
-
-        $summary = $filename . ' : ' . ($cameraModel !== '' ? $cameraModel : 'Unknown camera');
-        if ($lensModel !== '') {
-            $summary .= ' with ' . $lensModel;
-        }
-        if (count($exposureParts) > 0) {
-            $summary .= ' [ ' . implode(' ', $exposureParts) . ' ]';
-        }
-
-        return $summary;
-    }
-
-    private function formatShutterSpeed(mixed $value): string
-    {
-        $raw = trim((string)$value);
-        if ($raw === '') {
-            return '';
-        }
-
-        $seconds = null;
-        if (preg_match('/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/', $raw, $matches) === 1) {
-            $numerator = (float)$matches[1];
-            $denominator = (float)$matches[2];
-            if ($denominator > 0.0) {
-                $seconds = $numerator / $denominator;
-            }
-        } elseif (is_numeric($raw)) {
-            $seconds = (float)$raw;
-        }
-
-        if ($seconds === null || $seconds <= 0.0) {
-            return $raw;
-        }
-
-        return (string)max(1, (int)round(1 / $seconds)) . 'ms';
-    }
-
-    private function formatDecimal(mixed $value): string
-    {
-        if ($value === null || $value === '') {
-            return '';
-        }
-
-        if (!is_numeric($value)) {
-            return trim((string)$value);
-        }
-
-        return rtrim(rtrim(number_format((float)$value, 3, '.', ''), '0'), '.');
     }
 
     private function labelFromState(string $state): string

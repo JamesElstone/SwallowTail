@@ -16,7 +16,10 @@ final class _picture_editorCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return '';
+        return (new SwallowtailPhotoMetadataSummaryService())->helperForPhoto(
+            max(0, (int)($context['page']['photo_id'] ?? 0)),
+            $this->currentUserId()
+        );
     }
 
     public function render(array $context): string
