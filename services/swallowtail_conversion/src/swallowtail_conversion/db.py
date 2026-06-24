@@ -83,7 +83,7 @@ class ConversionDatabase:
 
     def ping(self) -> None:
         self._fetchone("SELECT 1 AS ok")
-        self.connection.rollback()
+        self._rollback_read()
 
     def next_queued_job_id(self) -> int | None:
         row = self._fetchone(
@@ -98,7 +98,7 @@ class ConversionDatabase:
              LIMIT 1
             """
         )
-        self.connection.rollback()
+        self._rollback_read()
         return int(row["id"]) if row else None
 
     def preempt_target(self, job_id: int) -> dict[str, int] | None:
@@ -114,7 +114,7 @@ class ConversionDatabase:
             """,
             (job_id, self.PREEMPT_PRIORITY),
         )
-        self.connection.rollback()
+        self._rollback_read()
         if row is None:
             return None
         return {"id": int(row["id"]), "priority": int(row["priority"] or 0)}
@@ -159,7 +159,7 @@ class ConversionDatabase:
             """,
             (job.photo_id, job.profile_version),
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row is not None
 
     def is_obsolete_job(self, job: ConversionJob) -> bool:
@@ -172,7 +172,7 @@ class ConversionDatabase:
             """,
             (job.id,),
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row is not None and str(row.get("status") or "") == "obsolete"
 
     def storage_location_properties(self) -> list[dict[str, Any]]:
@@ -182,7 +182,7 @@ class ConversionDatabase:
               FROM storage_location_properties
             """
         )
-        self.connection.rollback()
+        self._rollback_read()
         return rows
 
     def photo_storage(self, photo_id: int) -> dict[str, Any] | None:
@@ -195,7 +195,7 @@ class ConversionDatabase:
             """,
             (photo_id,),
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row
 
     def update_photo_storage_location(
@@ -444,23 +444,46 @@ class ConversionDatabase:
 
     def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         cursor = self._execute(sql, params)
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        if isinstance(row, dict):
-            return row
-        columns = [column[0] for column in cursor.description]
-        return dict(zip(columns, row))
+        try:
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            if isinstance(row, dict):
+                return row
+            columns = [column[0] for column in cursor.description]
+            return dict(zip(columns, row))
+        finally:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
 
     def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         cursor = self._execute(sql, params)
-        rows = cursor.fetchall()
-        if rows is None:
-            return []
-        if rows and isinstance(rows[0], dict):
-            return list(rows)
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        try:
+            rows = cursor.fetchall()
+            if rows is None:
+                return []
+            if rows and isinstance(rows[0], dict):
+                return list(rows)
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+        finally:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
+
+    def _rollback_read(self) -> None:
+        try:
+            self.connection.rollback()
+        except Exception as exc:
+            if self.driver == "odbc" and self._is_odbc_function_sequence_error(exc):
+                return
+            raise
+
+    @staticmethod
+    def _is_odbc_function_sequence_error(exc: Exception) -> bool:
+        args = getattr(exc, "args", ())
+        return bool(args) and str(args[0]).upper() == "HY010"
 
     def _sql(self, sql: str) -> str:
         if self.paramstyle == "%s":

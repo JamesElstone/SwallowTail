@@ -1028,7 +1028,7 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
         queries: list[str] = []
         db = ConversionDatabase.__new__(ConversionDatabase)
         db._fetchone = lambda sql, params=(): queries.append(sql) or {"id": 7}
-        db.connection = SimpleNamespace(rollback=lambda: None)
+        db._rollback_read = lambda: None
 
         self.assertEqual(7, db.next_queued_job_id())
         self.assertIn("priority DESC", queries[0])
@@ -1036,6 +1036,49 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
 
     def test_preempt_priority_threshold_is_high_priority_only(self) -> None:
         self.assertEqual(50, ConversionDatabase.PREEMPT_PRIORITY)
+
+    def test_odbc_storage_properties_read_ignores_hy010_rollback_cleanup(self) -> None:
+        class FakeOdbcError(Exception):
+            pass
+
+        class FakeCursor:
+            description = [("storage_base_location",), ("is_excluded",), ("is_zfs",), ("dataset_name",)]
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def execute(self, _sql, _params) -> None:
+                return None
+
+            def fetchall(self):
+                return [("/storage/1", 0, 0, None)]
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.cursor_instance = FakeCursor()
+                self.rollback_called = False
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def rollback(self) -> None:
+                self.rollback_called = True
+                raise FakeOdbcError("HY010", "Function sequence error")
+
+        connection = FakeConnection()
+        db = ConversionDatabase.__new__(ConversionDatabase)
+        db.driver = "odbc"
+        db.paramstyle = "?"
+        db.connection = connection
+
+        rows = db.storage_location_properties()
+
+        self.assertEqual("/storage/1", rows[0]["storage_base_location"])
+        self.assertTrue(connection.cursor_instance.closed)
+        self.assertTrue(connection.rollback_called)
 
 
 if __name__ == "__main__":
