@@ -305,6 +305,20 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         ));
     });
 
+    $harness->check(PageRendererFramework::class, 'frontend picture editor contains portrait previews in stage', function () use ($harness): void {
+        $stylesheet = file_get_contents(APP_CSS . 'index.css');
+
+        if (!is_string($stylesheet)) {
+            throw new RuntimeException('Unable to read frontend stylesheet.');
+        }
+
+        $harness->assertTrue(str_contains($stylesheet, 'height: clamp(360px, 68vh, 720px);'));
+        $harness->assertTrue(str_contains($stylesheet, 'height: clamp(260px, 60vh, 560px);'));
+        $harness->assertTrue(str_contains($stylesheet, 'width: auto;'));
+        $harness->assertTrue(str_contains($stylesheet, 'max-height: 100%;'));
+        $harness->assertTrue(str_contains($stylesheet, 'object-fit: contain;'));
+    });
+
     $harness->check(PageRendererFramework::class, 'frontend picture editor waits for filtered preview after edits', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 

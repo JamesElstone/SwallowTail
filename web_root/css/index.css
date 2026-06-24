@@ -4083,6 +4083,7 @@ label {
   display: grid;
   place-items: center;
   min-height: 360px;
+  height: clamp(360px, 68vh, 720px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4092,9 +4093,11 @@ label {
 
 .picture-editor-stage img {
   display: block;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   height: auto;
+  max-height: 100%;
+  object-fit: contain;
   user-select: none;
 }
 
@@ -4291,5 +4294,6 @@ label {
 
   .picture-editor-stage {
     min-height: 260px;
+    height: clamp(260px, 60vh, 560px);
   }
 }
