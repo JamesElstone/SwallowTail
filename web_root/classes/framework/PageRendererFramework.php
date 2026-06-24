@@ -343,33 +343,12 @@ final class PageRendererFramework
 
     private function brandMark(): string
     {
-        $brandMark = trim((string)AppConfigurationStore::get('brand-mark', 'E'));
-
-        return $brandMark !== '' ? $brandMark : 'E';
+        return BrandMarkRenderer::configuredMark();
     }
 
     private function renderBrandMark(): string
     {
-        $brandMark = $this->brandMark();
-
-        if ($this->isBrandMarkImagePath($brandMark)) {
-            return '<img class="brand-mark-image" src="' . HelperFramework::escape($brandMark) . '" alt="" aria-hidden="true">';
-        }
-
-        return HelperFramework::escape($brandMark);
-    }
-
-    private function isBrandMarkImagePath(string $brandMark): bool
-    {
-        if (!preg_match('/\.(?:jpg|png)\z/i', $brandMark)) {
-            return false;
-        }
-
-        if (preg_match('/^[a-z][a-z0-9+.-]*:/i', $brandMark)) {
-            return false;
-        }
-
-        return !str_starts_with($brandMark, '//') && !str_contains($brandMark, '\\');
+        return BrandMarkRenderer::html('brand-mark-image');
     }
 
     private function hideCollapsedLinkInitials(): bool

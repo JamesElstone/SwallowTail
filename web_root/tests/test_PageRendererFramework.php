@@ -223,7 +223,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         try {
             AppConfigurationStore::set('brand-mark', 'swallowtail_butterfly_42x42.png');
             $harness->assertSame(
-                '<img class="brand-mark-image" src="swallowtail_butterfly_42x42.png" alt="" aria-hidden="true">',
+                '<img class="brand-mark-image" src="/swallowtail_butterfly_42x42.png" alt="" aria-hidden="true">',
                 $renderBrandMark->invoke($instance)
             );
 
