@@ -75,8 +75,8 @@ final class _picture_editorCard extends CardBaseFramework
                 </div>
             </div>
             <div class="picture-editor-controls">
-                <div class="picture-editor-status" data-picture-editor-status>' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
-                <div class="picture-editor-profile-state" data-picture-editor-profile-state>' . ($baselineReady ? 'Profile ready' : 'Preparing profile') . '</div>
+                <div class="picture-editor-status" data-picture-editor-status>Photo: ' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
+                <div class="picture-editor-profile-state" data-picture-editor-profile-state>Profile: ' . ($baselineReady ? 'Ready' : 'Preparing') . '</div>
                 ' . $this->accordionPanel('Exposure',
                     $this->checkboxField('exposure.enabled', 'Enabled', !empty($exposure['enabled']))
                     . $this->rangeField('exposure.black', 'Black', (float)($exposure['black'] ?? 0), -100, 100, 1)
@@ -124,7 +124,7 @@ final class _picture_editorCard extends CardBaseFramework
                     . $this->rangeField('perspective.horizontal', 'Horizontal', (float)($perspective['horizontal'] ?? 0), -100, 100, 1)
                     . $this->rangeField('perspective.vertical', 'Vertical', (float)($perspective['vertical'] ?? 0), -100, 100, 1)
                 ) . '
-                <button class="button button-inline picture-editor-revert" type="button" data-picture-editor-revert>Revert to Baseline</button>
+                <button class="button button-inline primary picture-editor-revert" type="button" data-picture-editor-revert>Revert to Baseline</button>
             </div>
         </div>';
     }

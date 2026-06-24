@@ -2134,7 +2134,7 @@
                     return;
                 }
 
-                statusNode.textContent = message;
+                statusNode.textContent = `Photo: ${message}`;
                 statusNode.dataset.pictureEditorState = state;
             }
 
@@ -2243,7 +2243,7 @@
                     }
                 });
                 if (profileState instanceof HTMLElement) {
-                    profileState.textContent = enabled ? 'Profile ready' : 'Preparing profile';
+                    profileState.textContent = `Profile: ${enabled ? 'Ready' : 'Preparing'}`;
                     profileState.dataset.pictureEditorProfileReady = enabled ? '1' : '0';
                 }
                 renderCrop();
@@ -2573,7 +2573,7 @@
                         return;
                     }
                     if (profileState instanceof HTMLElement) {
-                        profileState.textContent = status === 'failed' ? 'Profile failed' : 'Preparing profile';
+                        profileState.textContent = `Profile: ${status === 'failed' ? 'Failed' : 'Preparing'}`;
                         profileState.dataset.pictureEditorProfileReady = '0';
                     }
                     const delay = attempt < 5 ? 1000 : 2500;
