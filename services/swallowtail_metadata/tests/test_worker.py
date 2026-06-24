@@ -243,6 +243,42 @@ class RawTherapeeBaselineRunnerTest(unittest.TestCase):
             runner.health_check()
             self.assertEqual("RawTherapee, version 5.12, command line.", runner.version())
 
+    def test_generate_uses_contained_runtime_environment_next_to_baseline(self) -> None:
+        root = Path(__file__).resolve().parent / ".tmp" / f"rt_{uuid.uuid4().hex[0:8]}"
+        source = root / "swallowtail-data" / "ab" / "cd" / ("abcdef" + ("0" * 58) + "_source.cr2")
+        baseline = source.with_name("abcdef" + ("0" * 58) + "_baseline.pp3")
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"II*\0CR2")
+        captured_env = {}
+
+        def fake_run(command, **kwargs):
+            if "-O" in command:
+                captured_env.update(kwargs.get("env") or {})
+                scratch = Path(command[command.index("-O") + 1])
+                scratch.write_bytes(b"jpg")
+                scratch.with_suffix(scratch.suffix + ".pp3").write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+                return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("Result", (), {
+                "returncode": 0,
+                "stdout": "RawTherapee, version 5.12, command line.\n",
+                "stderr": "",
+            })()
+
+        try:
+            runner = RawTherapeeBaselineRunner("/usr/local/bin/rawtherapee-cli")
+            with patch("swallowtail_metadata.profile.subprocess.run", side_effect=fake_run):
+                runner.generate(source, baseline)
+
+            home = Path(captured_env["HOME"])
+            self.assertEqual(baseline.parent, home.parent)
+            self.assertTrue(home.name.startswith(baseline.stem[0:16] + "_rt_"))
+            self.assertTrue(str(captured_env["XDG_CONFIG_HOME"]).startswith(str(home)))
+            self.assertTrue(str(captured_env["XDG_CACHE_HOME"]).startswith(str(home)))
+            self.assertTrue(baseline.is_file())
+            self.assertEqual([], list(baseline.parent.glob(baseline.stem[0:16] + "_rt_*")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
 
 class MetadataWorkerTest(unittest.TestCase):
     def setUp(self) -> None:

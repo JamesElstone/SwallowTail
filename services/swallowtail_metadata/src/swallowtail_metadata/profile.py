@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +30,12 @@ class RawTherapeeBaselineRunner:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
         scratch = baseline_path.with_name(baseline_path.stem + "_scratch.jpg")
         command = [self.binary, "-Y", "-O", str(scratch), "-j1", "-c", str(source_path)]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        runtime_path = self._create_runtime_path(baseline_path)
+        try:
+            env = self._runtime_environment(runtime_path)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False, env=env)
+        finally:
+            shutil.rmtree(runtime_path, ignore_errors=True)
         stderr = (result.stderr or result.stdout or "").strip()
         if result.returncode != 0:
             raise RuntimeError(stderr or "RawTherapee baseline generation failed.")
@@ -45,6 +53,30 @@ class RawTherapeeBaselineRunner:
                     pass
 
         return BaselineResult(command=command, stderr=stderr, version=self.version())
+
+    def _create_runtime_path(self, baseline_path: Path) -> Path:
+        prefix = baseline_path.stem[0:16] + "_rt_"
+        for _attempt in range(10):
+            runtime_path = baseline_path.with_name(prefix + uuid.uuid4().hex[0:8])
+            try:
+                runtime_path.mkdir()
+                return runtime_path
+            except FileExistsError:
+                continue
+        raise RuntimeError("Unable to create a unique RawTherapee runtime directory.")
+
+    def _runtime_environment(self, runtime_path: Path) -> dict[str, str]:
+        config_home = runtime_path / "config"
+        cache_home = runtime_path / "cache"
+        config_home.mkdir(parents=True, exist_ok=True)
+        cache_home.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env.update({
+            "HOME": str(runtime_path),
+            "XDG_CONFIG_HOME": str(config_home),
+            "XDG_CACHE_HOME": str(cache_home),
+        })
+        return env
 
     def version(self) -> str:
         try:
