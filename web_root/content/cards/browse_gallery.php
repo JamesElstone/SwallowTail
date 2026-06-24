@@ -176,6 +176,8 @@ final class _browse_galleryCard extends CardBaseFramework
 
         return '<form method="post" data-ajax="true" class="gallery-page-size-form">
             <input type="hidden" name="cards[]" value="browse_gallery">
+            <input type="hidden" name="_card_refresh" value="1">
+            <input type="hidden" name="_invalidate_fact" value="browse.gallery">
             <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
             <label class="gallery-page-size-control">
                 <span>Images</span>
