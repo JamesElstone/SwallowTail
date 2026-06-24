@@ -12,16 +12,20 @@ def main() -> int:
         return 17
 
     output = None
+    output_profile = False
     for index, arg in enumerate(sys.argv):
-        if arg == "-o" and index + 1 < len(sys.argv):
+        if arg in {"-o", "-O"} and index + 1 < len(sys.argv):
             output = sys.argv[index + 1]
+            output_profile = arg == "-O"
             break
     if output is None:
-        print("missing -o", file=sys.stderr)
+        print("missing -o/-O", file=sys.stderr)
         return 2
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\xff\xd8fake-jpeg\xff\xd9")
+    if output_profile:
+        path.with_suffix(path.suffix + ".pp3").write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
     return 0
 
 

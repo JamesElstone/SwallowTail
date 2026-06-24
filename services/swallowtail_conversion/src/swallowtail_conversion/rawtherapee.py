@@ -16,6 +16,7 @@ from .jobs import ConversionJob
 @dataclass(frozen=True)
 class RenderResult:
     temp_output_path: str
+    temp_profile_path: str | None
     command: list[str]
     exit_code: int
     stderr: str
@@ -36,7 +37,8 @@ class RawTherapeeRunner:
         if binary.endswith(".py"):
             command = [sys.executable, binary]
 
-        command.extend(["-Y", "-o", temp_output, "-j85"])
+        output_option = "-O" if job.image_type == "original" else "-o"
+        command.extend(["-Y", output_option, temp_output, "-j85"])
 
         if job.profile_path:
             command.extend(["-p", job.profile_path])
@@ -83,6 +85,7 @@ class RawTherapeeRunner:
             stderr = "Conversion preempted by a higher priority job."
         return RenderResult(
             temp_output_path=temp_output,
+            temp_profile_path=temp_output + ".pp3" if job.image_type == "original" else None,
             command=command,
             exit_code=process.returncode if process.returncode is not None else 1,
             stderr=stderr[-self.config.stderr_chars:],

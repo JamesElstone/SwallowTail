@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import threading
 import time
+import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 
@@ -141,8 +143,12 @@ class ConversionWorker:
             final = Path(job.output_path)
             final.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(output), str(final))
+            baseline_path = self._preserve_original_baseline_profile(job, result)
             self.db.complete_job(job, str(final), result.command, result.stderr, result.duration_seconds)
-            self.log.info("Completed job=%s output=%s", job.id, final)
+            if baseline_path is not None:
+                self.log.info("Completed job=%s output=%s baseline_profile=%s", job.id, final, baseline_path)
+            else:
+                self.log.info("Completed job=%s output=%s", job.id, final)
         except StorageBlocked as exc:
             self._log_storage_blocked()
             if hasattr(self.db, "defer_job_for_storage"):
@@ -260,6 +266,32 @@ class ConversionWorker:
     def _touch_status(self) -> None:
         if not self.redis.touch_service("swallowtail_conversion"):
             self.log.debug("Unable to refresh Redis heartbeat for conversion worker")
+
+    def _preserve_original_baseline_profile(self, job, result) -> Path | None:
+        if job.image_type != "original" or not getattr(result, "temp_profile_path", None):
+            return None
+
+        source = Path(result.temp_profile_path)
+        if not source.is_file() or source.stat().st_size <= 0:
+            return None
+
+        output = Path(job.output_path)
+        stem = output.name
+        suffix = "_original.jpg"
+        if not stem.endswith(suffix):
+            return None
+        checksum = stem[:-len(suffix)]
+        if checksum == "":
+            return None
+
+        destination = output.with_name(f"{checksum}_baseline.pp3")
+        if destination.is_file() and destination.stat().st_size > 0:
+            return destination
+
+        temporary = destination.with_name(f".{destination.name}.moving-{uuid.uuid4().hex}")
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+        return destination
 
     def _wait_with_status(self, timeout_seconds: int) -> None:
         deadline = time.monotonic() + max(0, int(timeout_seconds))

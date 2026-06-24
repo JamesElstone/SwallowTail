@@ -127,14 +127,20 @@ class MetadataWorker:
 
             baseline_path = self.image_path(photo, "baseline")
             self.db.mark_profile_processing(photo_id)
-            result = self.profile_runner.generate(source_path, baseline_path)
+            profile_source = "existing"
+            version = self.profile_runner.version()
+            if not baseline_path.is_file() or baseline_path.stat().st_size <= 0:
+                profile_source = "generated"
+                result = self.profile_runner.generate(source_path, baseline_path)
+                version = result.version
             properties = parse_pp3_properties(baseline_path.read_text(encoding="utf-8"))
-            store_stats = self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
+            store_stats = self.db.replace_profile_data(photo_id, properties, str(baseline_path), version)
             duration_seconds = time.perf_counter() - started_at
             self.log.info(
-                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",
+                "Stored RawTherapee baseline profile for photo=%s path=%s source=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",
                 photo_id,
                 baseline_path,
+                profile_source,
                 duration_seconds,
                 int(store_stats.get("profile_rows_written", len(properties)) if store_stats else len(properties)),
                 int(store_stats.get("profile_sections", 0) if store_stats else 0),

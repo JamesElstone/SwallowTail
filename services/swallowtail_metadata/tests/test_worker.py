@@ -128,6 +128,9 @@ class FakeProfileRunner:
     def health_check(self):
         return None
 
+    def version(self):
+        return "RawTherapee 5.12"
+
 
 class FakeLog:
     def __init__(self):
@@ -560,8 +563,38 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(str(baseline), db.profile_ready[0][2])
         self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
         self.assertTrue(any(
-            message.startswith("Generated RawTherapee baseline profile for photo=9 ")
+            message.startswith("Stored RawTherapee baseline profile for photo=9 ")
+            and "source=generated" in message
             and "duration_seconds=" in message
+            for message in worker.log.infos
+        ))
+
+    def test_run_once_uses_existing_baseline_profile_without_regenerating(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        thumbnail.write_bytes(b"jpg")
+        baseline.write_text("[Version]\nAppVersion=5.12\n\n[Exposure]\nBlack=63\n", encoding="utf-8")
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 19, "storage_base_location": str(self.root), "original_sha256": checksum})
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual([], worker.profile_runner.generated)
+        self.assertEqual(19, db.profile_ready[0][0])
+        self.assertEqual(str(baseline), db.profile_ready[0][2])
+        self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
+        self.assertEqual(
+            {"type": "Exposure", "key": "Black", "value": "63", "value_type": "int"},
+            db.profile_ready[0][1][1],
+        )
+        self.assertTrue(any(
+            message.startswith("Stored RawTherapee baseline profile for photo=19 ")
+            and "source=existing" in message
             for message in worker.log.infos
         ))
 

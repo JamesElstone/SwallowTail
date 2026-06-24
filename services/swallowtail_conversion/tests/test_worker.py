@@ -261,7 +261,21 @@ class RawTherapeeRunnerTest(unittest.TestCase):
 
         self.assertEqual(0, result.exit_code)
         self.assertTrue(Path(result.temp_output_path).is_file())
+        self.assertIsNone(result.temp_profile_path)
+        self.assertIn("-o", result.command)
+        self.assertNotIn("-O", result.command)
         self.assertIn("-c", result.command)
+
+    def test_original_render_uses_copy_profile_output_option(self) -> None:
+        result = RawTherapeeRunner(
+            RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
+        ).render(job(self.root, image_type="original"), str(self.root / "work"))
+
+        self.assertEqual(0, result.exit_code)
+        self.assertIn("-O", result.command)
+        self.assertNotIn("-o", result.command)
+        self.assertIsNotNone(result.temp_profile_path)
+        self.assertTrue(Path(str(result.temp_profile_path)).is_file())
 
     def test_thumbnail_dimensions_add_resize_profile_after_user_profile(self) -> None:
         pp3 = self.root / "user.pp3"
@@ -689,6 +703,39 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertFalse(worker.db.failed)
         self.assertEqual(3600, worker.db.delay_seconds)
         self.assertIn("No storage location", worker.db.message)
+
+    def test_original_job_preserves_rawtherapee_pp3_as_baseline_profile(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.completed = False
+
+            def is_stale_filtered(self, _job) -> bool:
+                return False
+
+            def complete_job(self, _job, output_path: str, _command, _stderr, _duration) -> None:
+                self.completed = True
+                self.output_path = output_path
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                raise AssertionError("original job should not fail")
+
+        checksum = "abcdef" + ("0" * 58)
+        final = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_original.jpg"
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.db = FakeDb()
+        worker.runner = RawTherapeeRunner(worker.config.rawtherapee)
+        worker.redis = SimpleNamespace(pop_preempt=lambda: None)
+
+        worker.process_job(job(self.root, image_type="original", output_path=str(final)))
+
+        baseline = final.with_name(f"{checksum}_baseline.pp3")
+        self.assertTrue(worker.db.completed)
+        self.assertEqual(str(final), worker.db.output_path)
+        self.assertTrue(final.is_file())
+        self.assertEqual("[Version]\nAppVersion=5.12\n", baseline.read_text(encoding="utf-8"))
 
     def test_running_lower_priority_rawtherapee_job_is_requeued_when_preempted(self) -> None:
         class FakeRedis:
