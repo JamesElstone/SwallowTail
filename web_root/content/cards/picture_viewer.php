@@ -36,6 +36,8 @@ final class _picture_viewerCard extends CardBaseFramework
             return '<div class="panel-soft warn">The selected photo was not found or is not available to your account.</div>';
         }
 
+        (new SwallowtailProfileDataService())->requestUrgentProfile($photo, 'picture_viewer');
+
         return '<div class="picture-viewer-layout">
             <div class="picture-viewer-media">
                 ' . $this->mediaMarkup($photo) . '

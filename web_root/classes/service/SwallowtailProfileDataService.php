@@ -11,6 +11,14 @@ final class SwallowtailProfileDataService
 {
     private const TABLE = 'photo_profile_data';
     private const STATUS_TYPE = 'swallowtail';
+    private const DEFAULT_PROFILE_QUEUE = 'swallowtail:metadata:profile_urgent';
+
+    private object $redis;
+
+    public function __construct(?object $redis = null)
+    {
+        $this->redis = $redis ?? new SwallowtailRedisService();
+    }
 
     public function tableAvailable(): bool
     {
@@ -34,6 +42,37 @@ final class SwallowtailProfileDataService
         }
 
         return $this->status($photoId);
+    }
+
+    public function requestUrgentProfile(array $photo, string $reason): array
+    {
+        $status = $this->ensureQueued($photo, true);
+        if (empty($status['ready'])) {
+            $this->notifyUrgentProfile(max(0, (int)($photo['id'] ?? 0)), $reason);
+        }
+
+        return $status;
+    }
+
+    public function notifyUrgentProfile(int $photoId, string $reason): bool
+    {
+        if ($photoId <= 0 || !method_exists($this->redis, 'listPushJson')) {
+            return false;
+        }
+
+        $queue = trim((string)AppConfigurationStore::get(
+            'swallowtail.redis.metadata_profile_queue',
+            self::DEFAULT_PROFILE_QUEUE
+        ));
+        if ($queue === '') {
+            return false;
+        }
+
+        return (bool)$this->redis->listPushJson($queue, [
+            'photo_id' => $photoId,
+            'reason' => substr($reason, 0, 64),
+            'queued_at' => time(),
+        ], 512);
     }
 
     public function status(int $photoId): array

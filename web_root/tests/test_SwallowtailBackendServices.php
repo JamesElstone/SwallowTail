@@ -21,6 +21,7 @@ $harness->run(SwallowtailEventAccessService::class);
 $harness->run(SwallowtailConversionQueueService::class);
 $harness->run(SwallowtailStorageLocationService::class);
 $harness->run(SwallowtailImageServeService::class);
+$harness->run(SwallowtailProfileDataService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
 
 function swallowtail_backend_remove_tree(string $path): void
@@ -3260,6 +3261,58 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
             ? $metadataSql
             : $sql;
         $harness->assertTrue(!str_contains($targetSql, $needle));
+    }
+});
+
+$harness->check(SwallowtailProfileDataService::class, 'queues urgent profile notification for viewed photos', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $redis = new class {
+        public array $pushes = [];
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->pushes[] = [
+                'key' => $key,
+                'payload' => $payload,
+                'max_length' => $maxLength,
+            ];
+
+            return true;
+        }
+    };
+
+    try {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent_test');
+        $ingest = new SwallowtailPhotoIngestService(
+            new SwallowtailStorageService(),
+            new SwallowtailPhotoLibraryService(),
+            new SwallowtailConversionQueueService()
+        );
+        $result = $ingest->ingestLocalRawFile($source, 'IMG_0009.CR2');
+        $photoId = (int)$result['photo_id'];
+        $service = new SwallowtailProfileDataService($redis);
+        $status = $service->requestUrgentProfile(['id' => $photoId], 'picture_viewer');
+
+        $harness->assertSame('queued', (string)$status['status']);
+        $harness->assertSame('queued', (string)InterfaceDB::fetchColumn(
+            "SELECT value FROM photo_profile_data WHERE photo_id = :photo_id AND type = 'swallowtail' AND `key` = 'status' LIMIT 1",
+            ['photo_id' => $photoId]
+        ));
+        $harness->assertCount(1, $redis->pushes);
+        $harness->assertSame('swallowtail:metadata:profile_urgent_test', $redis->pushes[0]['key']);
+        $harness->assertSame(512, $redis->pushes[0]['max_length']);
+        $harness->assertSame($photoId, (int)$redis->pushes[0]['payload']['photo_id']);
+        $harness->assertSame('picture_viewer', (string)$redis->pushes[0]['payload']['reason']);
+    } finally {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+        @unlink($source);
     }
 });
 

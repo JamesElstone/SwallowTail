@@ -3,9 +3,16 @@ from __future__ import annotations
 import json
 import socket
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .config import RedisConfig
+
+
+@dataclass(frozen=True)
+class ProfileNotification:
+    photo_id: int
+    reason: str
 
 
 class RedisHeartbeat:
@@ -39,6 +46,46 @@ class RedisHeartbeat:
             response = self._read_resp(sock)
         if self._to_text(response) != "PONG":
             raise RuntimeError("Redis did not return PONG")
+
+    def pop_profile_notification(self) -> ProfileNotification | None:
+        queue = self.config.profile_queue.strip()
+        if queue == "":
+            return None
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("RPOP", queue))
+                response = self._read_resp(sock)
+        except (OSError, RuntimeError):
+            return None
+        if response is None:
+            return None
+        try:
+            payload = json.loads(self._to_text(response))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            photo_id = int(payload.get("photo_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if photo_id <= 0:
+            return None
+        return ProfileNotification(photo_id=photo_id, reason=str(payload.get("reason") or ""))
+
+    def has_profile_notification(self) -> bool:
+        queue = self.config.profile_queue.strip()
+        if queue == "":
+            return False
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("LLEN", queue))
+                response = self._read_resp(sock)
+        except (OSError, RuntimeError):
+            return False
+        return int(response or 0) > 0
 
     def _command(self, *parts: str) -> bytes:
         encoded = [part.encode("utf-8") for part in parts]

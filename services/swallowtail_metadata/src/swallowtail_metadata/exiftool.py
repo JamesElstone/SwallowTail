@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -42,7 +44,7 @@ class ExifToolRunner:
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout or "ExifTool did not run").strip())
 
-    def extract(self, path: str, metadata: MetadataConfig) -> MetadataResult:
+    def extract(self, path: str, metadata: MetadataConfig, should_interrupt: Callable[[], bool] | None = None) -> MetadataResult:
         if not Path(path).is_file():
             raise RuntimeError(f"Source CR2 file was not found: {path}")
         command = [
@@ -56,21 +58,45 @@ class ExifToolRunner:
             path,
         ]
         try:
-            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         except OSError as exc:
             raise RuntimeError(f"Unable to run ExifTool: {exc}") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("ExifTool timed out while reading metadata") from exc
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or "ExifTool failed").strip())
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired as exc:
+                if should_interrupt is not None and self._should_interrupt(should_interrupt):
+                    self._stop_process(process)
+                    raise InterruptedError("Urgent profile notification received while reading metadata") from exc
+                if time.monotonic() >= deadline:
+                    self._stop_process(process)
+                    raise RuntimeError("ExifTool timed out while reading metadata") from exc
+        if process.returncode != 0:
+            raise RuntimeError((stderr or stdout or "ExifTool failed").strip())
         try:
-            parsed = json.loads(result.stdout or "[]")
+            parsed = json.loads(stdout or "[]")
         except json.JSONDecodeError as exc:
             raise RuntimeError("ExifTool returned invalid JSON") from exc
         if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], dict):
             raise RuntimeError("ExifTool did not return a metadata object")
         raw = parsed[0]
         return MetadataResult(fields=parse_metadata(raw, metadata), properties=extract_properties(raw))
+
+    def _should_interrupt(self, callback: Callable[[], bool]) -> bool:
+        try:
+            return callback()
+        except Exception:
+            return False
+
+    def _stop_process(self, process: subprocess.Popen) -> None:
+        process.terminate()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
 
 
 def parse_metadata(raw: dict[str, Any], metadata: MetadataConfig) -> dict[str, Any]:

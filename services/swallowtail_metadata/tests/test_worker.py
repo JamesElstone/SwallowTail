@@ -22,6 +22,8 @@ class FakeDatabase:
         self.ready = []
         self.deferred = []
         self.profile_photos = []
+        self.profile_photos_by_id = {}
+        self.unprofiled_photos = []
         self.profile_deferred = []
         self.profile_processing = []
         self.profile_ready = []
@@ -32,6 +34,12 @@ class FakeDatabase:
 
     def next_profile_photo(self):
         return self.profile_photos.pop(0) if self.profile_photos else None
+
+    def profile_photo_by_id(self, photo_id):
+        return self.profile_photos_by_id.get(photo_id)
+
+    def next_unprofiled_photo(self):
+        return self.unprofiled_photos.pop(0) if self.unprofiled_photos else None
 
     def upsert_ready(self, photo_id, fields, raw):
         self.ready.append((photo_id, fields, raw))
@@ -58,11 +66,14 @@ class FakeDatabase:
 
 
 class FakeExifTool:
-    def __init__(self):
+    def __init__(self, interrupt: bool = False):
         self.paths = []
+        self.interrupt = interrupt
 
-    def extract(self, path, metadata):
+    def extract(self, path, metadata, should_interrupt=None):
         self.paths.append((path, metadata.server_timezone))
+        if self.interrupt and should_interrupt is not None and should_interrupt():
+            raise InterruptedError("Urgent profile notification received while reading metadata")
         return type("Result", (), {
             "fields": {"camera_make": "Canon"},
             "properties": [{"type": "exififd", "key": "Make", "value": "Canon", "value_type": "string"}],
@@ -75,10 +86,18 @@ class FakeExifTool:
 class FakeRedis:
     def __init__(self):
         self.touched = []
+        self.profile_notifications = []
+        self.profile_notification_available = False
 
     def touch_service(self, service_key):
         self.touched.append(service_key)
         return True
+
+    def pop_profile_notification(self):
+        return self.profile_notifications.pop(0) if self.profile_notifications else None
+
+    def has_profile_notification(self):
+        return self.profile_notification_available or bool(self.profile_notifications)
 
     def ping(self):
         return None
@@ -239,14 +258,14 @@ class MetadataWorkerTest(unittest.TestCase):
         except OSError:
             pass
 
-    def worker(self, db: FakeDatabase, exiftool: FakeExifTool | None = None) -> MetadataWorker:
+    def worker(self, db: FakeDatabase, exiftool: FakeExifTool | None = None, redis: FakeRedis | None = None) -> MetadataWorker:
         config = replace(default_config(), project_root=str(self.root))
         worker = object.__new__(MetadataWorker)
         worker.config = config
         worker.db = db
         worker.exiftool = exiftool or FakeExifTool()
         worker.profile_runner = FakeProfileRunner()
-        worker.redis = FakeRedis()
+        worker.redis = redis or FakeRedis()
         worker.shutdown_requested = None
         worker.idle_delay_seconds = config.worker.poll_min_seconds
         worker.log = FakeLog()
@@ -279,6 +298,52 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual([(str(source), "Europe/London")], exiftool.paths)
         self.assertEqual(["swallowtail_metadata", "swallowtail_metadata"], worker.redis.touched)
 
+    def test_metadata_extraction_is_interrupted_when_urgent_profile_arrives(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        db = FakeDatabase([{"id": 18, "storage_base_location": str(self.root), "original_sha256": checksum}])
+        redis = FakeRedis()
+        redis.profile_notification_available = True
+        worker = self.worker(db, FakeExifTool(interrupt=True), redis)
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual([], db.ready)
+        self.assertEqual([], db.deferred)
+        self.assertIn(
+            "Metadata extraction interrupted for urgent profile; photo=18: Urgent profile notification received while reading metadata",
+            worker.log.infos,
+        )
+
+    def test_run_once_processes_urgent_profile_notification_before_other_work(self) -> None:
+        urgent_checksum = "abcdef" + ("0" * 58)
+        queued_checksum = "123456" + ("0" * 58)
+        for checksum in [urgent_checksum, queued_checksum]:
+            source = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+            thumbnail = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"II*\0CR2")
+            thumbnail.write_bytes(b"jpg")
+        db = FakeDatabase([{"id": 14, "storage_base_location": str(self.root), "original_sha256": queued_checksum}])
+        db.profile_photos.append({"id": 15, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
+        db.unprofiled_photos.append({"id": 16, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
+        db.profile_photos_by_id[17] = {"id": 17, "storage_base_location": str(self.root), "original_sha256": urgent_checksum}
+        redis = FakeRedis()
+        redis.profile_notifications.append(type("Notification", (), {"photo_id": 17, "reason": "picture_viewer"})())
+        worker = self.worker(db, redis=redis)
+
+        self.assertTrue(worker.run_once())
+
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{urgent_checksum}_baseline.pp3"
+        self.assertEqual([17], db.profile_processing)
+        self.assertEqual([(self.root / "swallowtail-data" / "ab" / "cd" / f"{urgent_checksum}_source.cr2", baseline)], worker.profile_runner.generated)
+        self.assertEqual(1, len(db.photos))
+        self.assertEqual(1, len(db.profile_photos))
+        self.assertEqual(1, len(db.unprofiled_photos))
+        self.assertIn("Urgent profile notification received; photo=17 reason=picture_viewer", worker.log.infos)
+
     def test_run_once_generates_profile_baseline_when_metadata_is_idle(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
@@ -298,6 +363,50 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(9, db.profile_ready[0][0])
         self.assertEqual(str(baseline), db.profile_ready[0][2])
         self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
+        self.assertTrue(any(
+            message.startswith("Generated RawTherapee baseline profile for photo=9 ")
+            and "duration_seconds=" in message
+            for message in worker.log.infos
+        ))
+
+    def test_run_once_generates_unprofiled_baseline_when_profile_queue_is_idle(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        thumbnail.write_bytes(b"jpg")
+        db = FakeDatabase()
+        db.unprofiled_photos.append({"id": 11, "storage_base_location": str(self.root), "original_sha256": checksum})
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        self.assertEqual([11], db.profile_processing)
+        self.assertEqual([(source, baseline)], worker.profile_runner.generated)
+        self.assertIn("Found uploaded photo without profile data; photo=11", worker.log.infos)
+
+    def test_run_once_prefers_queued_profile_before_unprofiled_backfill(self) -> None:
+        queued_checksum = "abcdef" + ("0" * 58)
+        unprofiled_checksum = "123456" + ("0" * 58)
+        for checksum in [queued_checksum, unprofiled_checksum]:
+            source = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+            thumbnail = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"II*\0CR2")
+            thumbnail.write_bytes(b"jpg")
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 12, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
+        db.unprofiled_photos.append({"id": 13, "storage_base_location": str(self.root), "original_sha256": unprofiled_checksum})
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        queued_baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{queued_checksum}_baseline.pp3"
+        self.assertEqual([12], db.profile_processing)
+        self.assertEqual([(self.root / "swallowtail-data" / "ab" / "cd" / f"{queued_checksum}_source.cr2", queued_baseline)], worker.profile_runner.generated)
+        self.assertEqual(1, len(db.unprofiled_photos))
 
     def test_run_once_logs_when_no_metadata_or_profile_records_are_ready(self) -> None:
         worker = self.worker(FakeDatabase())

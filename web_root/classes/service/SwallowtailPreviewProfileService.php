@@ -33,7 +33,7 @@ final class SwallowtailPreviewProfileService
         }
 
         $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
-        $baselineStatus = $this->profileDataService->ensureQueued($photo, true);
+        $baselineStatus = $this->profileDataService->requestUrgentProfile($photo, 'picture_editor');
 
         $dimensions = $this->sourceDimensions($photo);
         $settings = $this->latestProfileSettings($photo);
@@ -84,7 +84,7 @@ final class SwallowtailPreviewProfileService
 
         $baseline = $this->profileDataService->status($photoId);
         if (empty($baseline['ready'])) {
-            $this->profileDataService->ensureQueued($photo, true);
+            $this->profileDataService->requestUrgentProfile($photo, 'preview_request');
             return [
                 'success' => false,
                 'errors' => ['RawTherapee baseline profile is still being prepared.'],
@@ -142,7 +142,7 @@ final class SwallowtailPreviewProfileService
             ];
         }
 
-        $status = $this->profileDataService->ensureQueued($photo, true);
+        $status = $this->profileDataService->requestUrgentProfile($photo, 'picture_editor_poll');
         $dimensions = $this->sourceDimensions($photo);
         $settings = $status['ready']
             ? $this->profileDataService->settingsFromRows(

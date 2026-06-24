@@ -121,6 +121,49 @@ class MetadataDatabase:
         self.connection.rollback()
         return row
 
+    def next_unprofiled_photo(self) -> dict[str, Any] | None:
+        if not self._table_exists("photo_profile_data"):
+            return None
+        row = self._fetchone(
+            """
+            SELECT p.*
+              FROM photos p
+              LEFT JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+             WHERE p.upload_state = 'uploaded'
+               AND LOWER(COALESCE(p.original_extension, 'cr2')) = 'cr2'
+               AND status.id IS NULL
+             ORDER BY p.id
+             LIMIT 1
+            """
+        )
+        self.connection.rollback()
+        return row
+
+    def profile_photo_by_id(self, photo_id: int) -> dict[str, Any] | None:
+        if photo_id <= 0 or not self._table_exists("photo_profile_data"):
+            return None
+        row = self._fetchone(
+            """
+            SELECT p.*
+              FROM photos p
+              LEFT JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+             WHERE p.id = %s
+               AND p.upload_state = 'uploaded'
+               AND LOWER(COALESCE(p.original_extension, 'cr2')) = 'cr2'
+               AND (status.id IS NULL OR status.value <> 'processed')
+             LIMIT 1
+            """,
+            (photo_id,),
+        )
+        self.connection.rollback()
+        return row
+
     def upsert_ready(self, photo_id: int, fields: dict[str, Any], properties: list[dict[str, Any]]) -> None:
         values = {name: fields.get(name) for name in self.FIELD_NAMES}
         columns = ["photo_id", "status", "attempts", "next_attempt_at", "last_error", *self.FIELD_NAMES, "extracted_at"]

@@ -23,6 +23,7 @@ class RedisConfig:
     host: str
     port: int
     timeout_seconds: int
+    profile_queue: str
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ def default_config() -> AppConfig:
             user="swallowtail_worker",
             password="",
         ),
-        redis=RedisConfig(host="127.0.0.1", port=6379, timeout_seconds=5),
+        redis=RedisConfig(host="127.0.0.1", port=6379, timeout_seconds=5, profile_queue="swallowtail:metadata:profile_urgent"),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
         metadata=MetadataConfig(
             exiftool_binary="/usr/local/bin/exiftool",
@@ -166,6 +167,7 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             config.redis,
             host=str(redis.get("host", config.redis.host)),
             port=int(redis.get("port", config.redis.port)),
+            profile_queue=str(redis.get("metadata_profile_queue", config.redis.profile_queue)),
         ),
     )
 

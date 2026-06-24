@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,12 @@ class MetadataWorker:
 
     def run_once(self) -> bool:
         self._touch_status()
+        urgent_profile_photo = self._urgent_profile_photo()
+        if urgent_profile_photo is not None:
+            self.process_profile_photo(urgent_profile_photo)
+            self._touch_status()
+            return True
+
         photo = self.db.next_photo()
         if photo is not None:
             self.process_photo(photo)
@@ -49,11 +56,33 @@ class MetadataWorker:
 
         profile_photo = self.db.next_profile_photo()
         if profile_photo is None:
-            self.log.info("No metadata or profile records returned; worker idle")
-            return False
+            profile_photo = self.db.next_unprofiled_photo()
+            if profile_photo is None:
+                self.log.info("No metadata or profile records returned; worker idle")
+                return False
+            self.log.info("Found uploaded photo without profile data; photo=%s", int(profile_photo.get("id") or 0))
         self.process_profile_photo(profile_photo)
         self._touch_status()
         return True
+
+    def _urgent_profile_photo(self) -> dict[str, Any] | None:
+        notification = self.redis.pop_profile_notification()
+        if notification is None:
+            return None
+        profile_photo = self.db.profile_photo_by_id(notification.photo_id)
+        if profile_photo is None:
+            self.log.info(
+                "Urgent profile notification ignored; photo=%s reason=%s",
+                notification.photo_id,
+                notification.reason,
+            )
+            return None
+        self.log.info(
+            "Urgent profile notification received; photo=%s reason=%s",
+            notification.photo_id,
+            notification.reason,
+        )
+        return profile_photo
 
     def process_photo(self, photo: dict[str, Any]) -> None:
         photo_id = int(photo.get("id") or 0)
@@ -61,9 +90,15 @@ class MetadataWorker:
             source_path = self.source_path(photo)
             if not source_path.is_file():
                 raise RuntimeError(f"Source CR2 file was not found: {source_path}")
-            result = self.exiftool.extract(str(source_path), self.config.metadata)
+            result = self.exiftool.extract(
+                str(source_path),
+                self.config.metadata,
+                should_interrupt=self.redis.has_profile_notification,
+            )
             self.db.upsert_ready(photo_id, result.fields, result.properties)
             self.log.info("Extracted metadata for photo=%s source=%s", photo_id, source_path)
+        except InterruptedError as exc:
+            self.log.info("Metadata extraction interrupted for urgent profile; photo=%s: %s", photo_id, exc)
         except Exception as exc:
             status = self.db.defer_or_fail(
                 photo_id,
@@ -75,6 +110,7 @@ class MetadataWorker:
 
     def process_profile_photo(self, photo: dict[str, Any]) -> None:
         photo_id = int(photo.get("id") or 0)
+        started_at = time.perf_counter()
         try:
             source_path = self.source_path(photo)
             if not source_path.is_file():
@@ -94,7 +130,13 @@ class MetadataWorker:
             result = self.profile_runner.generate(source_path, baseline_path)
             properties = parse_pp3_properties(baseline_path.read_text(encoding="utf-8"))
             self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
-            self.log.info("Generated RawTherapee baseline profile for photo=%s path=%s", photo_id, baseline_path)
+            duration_seconds = time.perf_counter() - started_at
+            self.log.info(
+                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f",
+                photo_id,
+                baseline_path,
+                duration_seconds,
+            )
         except Exception as exc:
             status = self.db.defer_profile(
                 photo_id,

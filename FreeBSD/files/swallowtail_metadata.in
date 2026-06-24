@@ -32,6 +32,7 @@ load_rc_config "$name"
 : ${swallowtail_metadata_poll_max_seconds:="60"}
 : ${swallowtail_metadata_retry_delay_seconds:="60"}
 : ${swallowtail_metadata_max_attempts:="3"}
+: ${swallowtail_metadata_redis_profile_queue:=""}
 : ${swallowtail_metadata_log_level:="INFO"}
 
 pidfile="/var/run/swallowtail/swallowtail_metadata.pid"
@@ -57,6 +58,7 @@ swallowtail_metadata_export_env()
 	export SWALLOWTAIL_METADATA_POLL_MAX_SECONDS="${swallowtail_metadata_poll_max_seconds}"
 	export SWALLOWTAIL_METADATA_RETRY_DELAY_SECONDS="${swallowtail_metadata_retry_delay_seconds}"
 	export SWALLOWTAIL_METADATA_MAX_ATTEMPTS="${swallowtail_metadata_max_attempts}"
+	export SWALLOWTAIL_METADATA_REDIS_PROFILE_QUEUE="${swallowtail_metadata_redis_profile_queue}"
 	export SWALLOWTAIL_METADATA_LOG_FILE="-"
 	export SWALLOWTAIL_METADATA_LOG_LEVEL="${swallowtail_metadata_log_level}"
 	export PATH="%%PREFIX%%/bin:%%PREFIX%%/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
