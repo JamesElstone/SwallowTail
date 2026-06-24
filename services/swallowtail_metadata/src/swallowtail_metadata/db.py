@@ -7,7 +7,8 @@ from .config import DatabaseConfig
 
 
 class MetadataDatabase:
-    PROFILE_INSERT_BATCH_ROWS = 100
+    PROFILE_INSERT_BATCH_ROWS = 500
+    ODBC_VALUE_CHUNK_CHARS = 100
 
     FIELD_NAMES = [
         "captured_at_local",
@@ -31,12 +32,14 @@ class MetadataDatabase:
 
     def __init__(self, database: DatabaseConfig):
         self.driver = database.driver
+        self.pyodbc = None
         self.paramstyle = "%s"
         if self.driver == "odbc":
             try:
                 import pyodbc
             except ImportError as exc:
                 raise RuntimeError("pyodbc is required. Install py311-pyodbc on FreeBSD.") from exc
+            self.pyodbc = pyodbc
             dsn = database.dsn.strip()
             if dsn == "":
                 raise RuntimeError("ODBC database.dsn must be set for the metadata worker.")
@@ -243,22 +246,27 @@ class MetadataDatabase:
 
         insert_batches = 0
         rows_written = 0
+        max_value_chunks = 0
         for rows in sections.values():
             for start in range(0, len(rows), self.PROFILE_INSERT_BATCH_ROWS):
                 batch = rows[start:start + self.PROFILE_INSERT_BATCH_ROWS]
                 if not batch:
                     continue
-                placeholders = ", ".join(["(%s, %s, %s, %s, %s)"] * len(batch))
+                row_placeholders: list[str] = []
                 params: list[Any] = []
                 for row in batch:
-                    params.extend([photo_id, row["type"], row["key"], row["value"], row["value_type"]])
+                    value_expression, value_params = self._profile_value_sql(row["value"])
+                    max_value_chunks = max(max_value_chunks, len(value_params))
+                    row_placeholders.append(f"(%s, %s, %s, {value_expression}, %s)")
+                    params.extend([photo_id, row["type"], row["key"], *value_params, row["value_type"]])
                 self._execute(
                     f"""
                     INSERT INTO photo_profile_data (
                         photo_id, type, `key`, value, value_type
-                    ) VALUES {placeholders}
+                    ) VALUES {", ".join(row_placeholders)}
                     """,
                     tuple(params),
+                    self._profile_insert_input_sizes(params),
                 )
                 insert_batches += 1
                 rows_written += len(batch)
@@ -268,7 +276,33 @@ class MetadataDatabase:
             "profile_sections": len(sections),
             "profile_insert_batches": insert_batches,
             "profile_largest_value_length": largest_value_length,
+            "profile_max_value_chunks": max_value_chunks,
         }
+
+    def _profile_value_sql(self, value: Any) -> tuple[str, list[Any]]:
+        if value is None or self.pyodbc is None:
+            return "%s", [value]
+        text = str(value)
+        chunks = [
+            text[start:start + self.ODBC_VALUE_CHUNK_CHARS]
+            for start in range(0, len(text), self.ODBC_VALUE_CHUNK_CHARS)
+        ] or [""]
+        if len(chunks) == 1:
+            return "%s", chunks
+        return "CONCAT(" + ", ".join(["%s"] * len(chunks)) + ")", chunks
+
+    def _profile_insert_input_sizes(self, params: list[Any]) -> list[tuple[int, int, int]] | None:
+        if self.pyodbc is None:
+            return None
+        sql_integer = getattr(self.pyodbc, "SQL_INTEGER", 4)
+        sql_varchar = getattr(self.pyodbc, "SQL_VARCHAR", 12)
+        sizes: list[tuple[int, int, int]] = []
+        for param in params:
+            if isinstance(param, int):
+                sizes.append((sql_integer, 0, 0))
+            else:
+                sizes.append((sql_varchar, max(1, len(str(param or ""))), 0))
+        return sizes
 
     def defer_profile(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
         attempts_row = self._fetchone(
@@ -366,10 +400,12 @@ class MetadataDatabase:
     def _now(self) -> datetime:
         return datetime.now().replace(microsecond=0)
 
-    def _execute(self, sql: str, params: tuple[Any, ...] = ()):
+    def _execute(self, sql: str, params: tuple[Any, ...] = (), input_sizes: list[tuple[int, int, int]] | None = None):
         cursor = self.connection.cursor()
         if self.paramstyle == "?":
             sql = sql.replace("%s", "?")
+        if input_sizes is not None and hasattr(cursor, "setinputsizes"):
+            cursor.setinputsizes(input_sizes)
         cursor.execute(sql, params)
         return cursor
 

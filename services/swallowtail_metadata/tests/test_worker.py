@@ -61,6 +61,7 @@ class FakeDatabase:
             "profile_sections": len(sections),
             "profile_insert_batches": len(sections),
             "profile_largest_value_length": largest_value_length,
+            "profile_max_value_chunks": max((max(1, (len(str(row.get("value") or "")) + 99) // 100) for row in rows), default=0),
         }
 
     def defer_profile(self, photo_id, message, max_attempts, retry_delay_seconds):
@@ -149,6 +150,9 @@ class FakeCursor:
         self.connection = connection
         self.description = []
 
+    def setinputsizes(self, input_sizes):
+        self.connection.input_sizes.append(input_sizes)
+
     def execute(self, sql, params=()):
         self.connection.executed.append((sql, params))
         return self
@@ -163,6 +167,7 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self):
         self.executed = []
+        self.input_sizes = []
         self.commits = 0
         self.rollbacks = 0
 
@@ -285,12 +290,24 @@ class MetadataParserTest(unittest.TestCase):
 
 
 class MetadataDatabaseProfileDataTest(unittest.TestCase):
+    class FakePyodbc:
+        SQL_INTEGER = 4
+        SQL_VARCHAR = 12
+
     def database(self) -> tuple[MetadataDatabase, FakeConnection]:
         connection = FakeConnection()
         database = object.__new__(MetadataDatabase)
         database.driver = "pymysql"
+        database.pyodbc = None
         database.paramstyle = "%s"
         database.connection = connection
+        return database, connection
+
+    def odbc_database(self) -> tuple[MetadataDatabase, FakeConnection]:
+        database, connection = self.database()
+        database.driver = "odbc"
+        database.pyodbc = self.FakePyodbc
+        database.paramstyle = "?"
         return database, connection
 
     def section_insert_statements(self, connection: FakeConnection) -> list[tuple[str, tuple]]:
@@ -340,6 +357,33 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertEqual(3, stats["profile_rows_written"])
         self.assertEqual(1, stats["profile_sections"])
         self.assertEqual(2, stats["profile_insert_batches"])
+
+    def test_odbc_profile_insert_binds_values_as_varchar(self) -> None:
+        database, connection = self.odbc_database()
+        curve = "x" * 250
+        properties = parse_pp3_properties(
+            f"[Exposure]\nBlack=63\nCurve={curve}\n"
+        )
+
+        stats = database.replace_profile_data(42, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+
+        section_inserts = self.section_insert_statements(connection)
+        self.assertEqual(1, len(section_inserts))
+        self.assertIn("CONCAT(?, ?, ?)", section_inserts[0][0])
+        self.assertEqual([2, 100, 100, 50], [
+            len(str(param)) for param in section_inserts[0][1]
+            if isinstance(param, str) and set(param) == {"x"} or param == "63"
+        ])
+        section_inputs = [
+            sizes for sizes in connection.input_sizes
+            if len(sizes) == 12
+        ]
+        self.assertEqual(1, len(section_inputs))
+        self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 2, 0), section_inputs[0][3])
+        self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 100, 0), section_inputs[0][8])
+        self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 100, 0), section_inputs[0][9])
+        self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 50, 0), section_inputs[0][10])
+        self.assertEqual(3, stats["profile_max_value_chunks"])
 
 
 class RawTherapeeBaselineRunnerTest(unittest.TestCase):

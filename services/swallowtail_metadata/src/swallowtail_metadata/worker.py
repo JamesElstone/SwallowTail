@@ -132,7 +132,7 @@ class MetadataWorker:
             store_stats = self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
             duration_seconds = time.perf_counter() - started_at
             self.log.info(
-                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s",
+                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",
                 photo_id,
                 baseline_path,
                 duration_seconds,
@@ -140,6 +140,7 @@ class MetadataWorker:
                 int(store_stats.get("profile_sections", 0) if store_stats else 0),
                 int(store_stats.get("profile_insert_batches", 0) if store_stats else 0),
                 int(store_stats.get("profile_largest_value_length", 0) if store_stats else 0),
+                int(store_stats.get("profile_max_value_chunks", 0) if store_stats else 0),
             )
         except Exception as exc:
             status = self.db.defer_profile(
