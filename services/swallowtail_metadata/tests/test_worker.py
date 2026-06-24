@@ -8,9 +8,11 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from swallowtail_metadata.config import DaylightSavingConfig, default_config
 from swallowtail_metadata.exiftool import extract_properties, parse_metadata
+from swallowtail_metadata.profile import RawTherapeeBaselineRunner
 from swallowtail_metadata.worker import MetadataWorker
 
 
@@ -190,6 +192,21 @@ class MetadataParserTest(unittest.TestCase):
             ],
             properties,
         )
+
+
+class RawTherapeeBaselineRunnerTest(unittest.TestCase):
+    def test_health_check_accepts_rawtherapee_version_output_with_nonzero_exit(self) -> None:
+        runner = RawTherapeeBaselineRunner("/usr/local/bin/rawtherapee-cli")
+
+        with patch("swallowtail_metadata.profile.subprocess.run") as run:
+            run.return_value = type("Result", (), {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": "RawTherapee, version 5.12, command line.\n",
+            })()
+
+            runner.health_check()
+            self.assertEqual("RawTherapee, version 5.12, command line.", runner.version())
 
 
 class MetadataWorkerTest(unittest.TestCase):

@@ -19,8 +19,9 @@ class RawTherapeeBaselineRunner:
 
     def health_check(self) -> None:
         result = subprocess.run([self.binary, "--version"], capture_output=True, text=True, timeout=10, check=False)
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or "RawTherapee did not run").strip())
+        version = self._version_output(result)
+        if result.returncode != 0 and "rawtherapee" not in version.lower():
+            raise RuntimeError(version or "RawTherapee did not run")
 
     def generate(self, source_path: Path, baseline_path: Path) -> BaselineResult:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +51,11 @@ class RawTherapeeBaselineRunner:
             result = subprocess.run([self.binary, "--version"], capture_output=True, text=True, timeout=10, check=False)
         except Exception:
             return ""
-        return (result.stdout or result.stderr or "").strip().splitlines()[0][:191] if result.returncode == 0 else ""
+        version = self._version_output(result)
+        return version[:191] if "rawtherapee" in version.lower() else ""
+
+    def _version_output(self, result: subprocess.CompletedProcess[str]) -> str:
+        return (result.stdout or result.stderr or "").strip().splitlines()[0] if (result.stdout or result.stderr or "").strip() else ""
 
     def _find_profile_output(self, scratch: Path) -> Path | None:
         candidates = [
