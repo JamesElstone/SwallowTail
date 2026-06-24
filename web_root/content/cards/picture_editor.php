@@ -73,9 +73,9 @@ final class _picture_editorCard extends CardBaseFramework
                         <span data-picture-editor-handle="se"></span>
                     </div>
                 </div>
-                <div class="picture-editor-status" data-picture-editor-status>' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
             </div>
             <div class="picture-editor-controls">
+                <div class="picture-editor-status" data-picture-editor-status>' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
                 <div class="picture-editor-profile-state" data-picture-editor-profile-state>' . ($baselineReady ? 'Profile ready' : 'Preparing profile') . '</div>
                 ' . $this->accordionPanel('Exposure',
                     $this->checkboxField('exposure.enabled', 'Enabled', !empty($exposure['enabled']))
