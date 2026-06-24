@@ -100,6 +100,22 @@ class FakeProfileRunner:
         return None
 
 
+class FakeLog:
+    def __init__(self):
+        self.infos = []
+        self.warnings = []
+        self.debugs = []
+
+    def info(self, message, *args, **_kwargs):
+        self.infos.append(message % args if args else message)
+
+    def warning(self, message, *args, **_kwargs):
+        self.warnings.append(message % args if args else message)
+
+    def debug(self, message, *args, **_kwargs):
+        self.debugs.append(message % args if args else message)
+
+
 class MetadataParserTest(unittest.TestCase):
     def metadata_config(self, enabled: bool = False) -> object:
         config = default_config()
@@ -233,7 +249,7 @@ class MetadataWorkerTest(unittest.TestCase):
         worker.redis = FakeRedis()
         worker.shutdown_requested = None
         worker.idle_delay_seconds = config.worker.poll_min_seconds
-        worker.log = type("Log", (), {"info": lambda *a, **k: None, "warning": lambda *a, **k: None, "debug": lambda *a, **k: None})()
+        worker.log = FakeLog()
         return worker
 
     def test_source_path_is_derived_from_current_photo_storage(self) -> None:
@@ -282,6 +298,13 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(9, db.profile_ready[0][0])
         self.assertEqual(str(baseline), db.profile_ready[0][2])
         self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
+
+    def test_run_once_logs_when_no_metadata_or_profile_records_are_ready(self) -> None:
+        worker = self.worker(FakeDatabase())
+
+        self.assertFalse(worker.run_once())
+
+        self.assertIn("No metadata or profile records returned; worker idle", worker.log.infos)
 
     def test_profile_baseline_waits_for_thumbnail(self) -> None:
         checksum = "abcdef" + ("0" * 58)

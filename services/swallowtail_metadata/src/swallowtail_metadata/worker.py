@@ -49,6 +49,7 @@ class MetadataWorker:
 
         profile_photo = self.db.next_profile_photo()
         if profile_photo is None:
+            self.log.info("No metadata or profile records returned; worker idle")
             return False
         self.process_profile_photo(profile_photo)
         self._touch_status()
