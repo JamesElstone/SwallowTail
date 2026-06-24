@@ -2436,6 +2436,7 @@
                 if (typeof html !== 'string' || html.trim() === '') {
                     if (current) {
                         current.remove();
+                        updateCardMaximizedBodyState();
                     }
                     return;
                 }
@@ -2459,6 +2460,7 @@
                     initialisePictureEditors(replacement);
                     initialiseGalleryAutoRefresh(replacement);
                     initialiseCardAutoRefresh(replacement);
+                    updateCardMaximizedBodyState();
                     return;
                 }
 
@@ -2878,6 +2880,56 @@
         });
     }
 
+    function updateCardMaximizedBodyState() {
+        if (!(body instanceof HTMLElement)) {
+            return;
+        }
+
+        body.classList.toggle('card-maximized-active', Boolean(document.querySelector('.card.card-maximized')));
+    }
+
+    function setCardMaximized(card, maximized, focusToggle = false) {
+        if (!(card instanceof HTMLElement)) {
+            return;
+        }
+
+        card.classList.toggle('card-maximized', maximized);
+
+        const toggle = card.querySelector('[data-card-size-toggle]');
+        if (toggle instanceof HTMLButtonElement) {
+            toggle.setAttribute('aria-pressed', maximized ? 'true' : 'false');
+            toggle.setAttribute('aria-label', maximized ? 'Minimize card' : 'Maximize card');
+
+            if (focusToggle) {
+                toggle.focus({preventScroll: true});
+            }
+        }
+
+        updateCardMaximizedBodyState();
+    }
+
+    function toggleCardMaximized(toggle) {
+        if (!(toggle instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        const card = toggle.closest('.card');
+        if (!(card instanceof HTMLElement)) {
+            return;
+        }
+
+        const nextMaximized = !card.classList.contains('card-maximized');
+        if (nextMaximized) {
+            document.querySelectorAll('.card.card-maximized').forEach((maximizedCard) => {
+                if (maximizedCard instanceof HTMLElement && maximizedCard !== card) {
+                    setCardMaximized(maximizedCard, false);
+                }
+            });
+        }
+
+        setCardMaximized(card, nextMaximized);
+    }
+
     function toggleCardBody(title) {
         if (!(title instanceof HTMLElement)) {
             return;
@@ -3284,6 +3336,13 @@
     });
 
     document.addEventListener('click', async (event) => {
+        const cardSizeToggle = event.target instanceof Element ? event.target.closest('[data-card-size-toggle]') : null;
+        if (cardSizeToggle instanceof HTMLButtonElement) {
+            event.preventDefault();
+            toggleCardMaximized(cardSizeToggle);
+            return;
+        }
+
         const link = event.target instanceof Element ? event.target.closest('[data-ajax-link="true"]') : null;
         if (!(link instanceof HTMLAnchorElement)) {
             const title = event.target instanceof Element ? event.target.closest('.card-title-toggle') : null;
@@ -3304,6 +3363,16 @@
     });
 
     document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            const maximizedCard = document.querySelector('.card.card-maximized');
+            if (maximizedCard instanceof HTMLElement) {
+                event.preventDefault();
+                setCardMaximized(maximizedCard, false, true);
+            }
+
+            return;
+        }
+
         if (event.key !== 'Enter' && event.key !== ' ') {
             return;
         }
