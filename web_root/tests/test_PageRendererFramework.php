@@ -305,7 +305,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         ));
     });
 
-    $harness->check(PageRendererFramework::class, 'frontend picture editor polls through interim preview images', function () use ($harness): void {
+    $harness->check(PageRendererFramework::class, 'frontend picture editor waits for filtered preview after edits', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 
         if (!is_string($script)) {
@@ -313,10 +313,10 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         }
 
         $harness->assertTrue(str_contains($script, 'displayedPreviewStage'));
-        $harness->assertTrue(str_contains($script, 'response?.thumbnail_url'));
-        $harness->assertTrue(str_contains($script, 'response?.original_url'));
-        $harness->assertTrue(str_contains($script, 'Thumbnail ready; rendering filtered'));
-        $harness->assertTrue(str_contains($script, 'Original ready; rendering filtered'));
+        $harness->assertTrue(!str_contains($script, 'response?.thumbnail_url'));
+        $harness->assertTrue(!str_contains($script, 'response?.original_url'));
+        $harness->assertTrue(!str_contains($script, 'Thumbnail ready; rendering filtered'));
+        $harness->assertTrue(!str_contains($script, 'Original ready; rendering filtered'));
         $harness->assertTrue(str_contains($script, "displayedPreviewStage = 'filtered';"));
     });
 

@@ -2384,8 +2384,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
 
     $queuedStatus = $service->previewStatus($photoId, (int)$second['job_id'], 2, 303);
     $harness->assertSame('queued', (string)($queuedStatus['status'] ?? ''));
-    $harness->assertTrue(str_contains((string)($queuedStatus['thumbnail_url'] ?? ''), 'type=thumbnail'));
-    $harness->assertTrue(str_contains((string)($queuedStatus['original_url'] ?? ''), 'type=original'));
+    $harness->assertTrue(!array_key_exists('thumbnail_url', $queuedStatus));
+    $harness->assertTrue(!array_key_exists('original_url', $queuedStatus));
     $harness->assertTrue(!array_key_exists('preview_url', $queuedStatus));
 
     InterfaceDB::prepareExecute(

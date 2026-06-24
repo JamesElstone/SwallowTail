@@ -2320,22 +2320,6 @@
                     }
 
                     const state = String(response?.status || 'queued');
-                    let interimStatus = '';
-                    const thumbnailUrl = String(response?.thumbnail_url || '').trim();
-                    const originalUrl = String(response?.original_url || '').trim();
-
-                    if (thumbnailUrl !== '' && displayedPreviewStage === '') {
-                        swapPreviewImage(thumbnailUrl, 'thumbnail');
-                        displayedPreviewStage = 'thumbnail';
-                        interimStatus = 'Thumbnail ready; rendering filtered';
-                    }
-
-                    if (originalUrl !== '' && displayedPreviewStage !== 'original') {
-                        swapPreviewImage(originalUrl, 'original');
-                        displayedPreviewStage = 'original';
-                        interimStatus = 'Original ready; rendering filtered';
-                    }
-
                     if (state === 'succeeded' && response?.preview_url) {
                         swapPreviewImage(String(response.preview_url), 'filtered');
                         displayedPreviewStage = 'filtered';
@@ -2348,7 +2332,7 @@
                         return;
                     }
 
-                    setStatus(interimStatus !== '' ? interimStatus : (state === 'processing' ? 'Rendering' : 'Queued'), state);
+                    setStatus(state === 'processing' ? 'Rendering' : 'Queued', state);
                     const delay = attempt < 5 ? 750 : 1500;
                     pollTimer = window.setTimeout(() => {
                         pollPreviewStatus(statusUrl, sequence, attempt + 1, startedAt);

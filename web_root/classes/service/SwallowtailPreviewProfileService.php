@@ -192,17 +192,12 @@ final class SwallowtailPreviewProfileService
         }
 
         $status = (string)($job['status'] ?? 'queued');
-        $photo = $this->photoLibraryService->photoById($photoId);
         $payload = [
             'success' => true,
             'job_id' => $jobId,
             'profile_version' => $profileVersion,
             'status' => $status,
         ];
-
-        if (is_array($photo)) {
-            $payload = array_merge($payload, $this->interimPreviewUrls($photoId, $profileVersion, $jobId, $photo));
-        }
 
         if ($status === 'succeeded') {
             $payload['preview_url'] = $this->previewUrl($photoId, $profileVersion, $jobId);
@@ -533,19 +528,6 @@ final class SwallowtailPreviewProfileService
         }
 
         return null;
-    }
-
-    private function interimPreviewUrls(int $photoId, int $profileVersion, int $jobId, array $photo): array
-    {
-        $urls = [];
-
-        foreach (['thumbnail', 'original'] as $type) {
-            if ($this->storageService->imageInfo($photo, $type) !== null) {
-                $urls[$type . '_url'] = $this->previewUrl($photoId, $profileVersion, $jobId, $type);
-            }
-        }
-
-        return $urls;
     }
 
     private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'filtered'): string
