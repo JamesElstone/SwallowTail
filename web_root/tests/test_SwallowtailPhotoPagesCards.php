@@ -704,7 +704,7 @@ $harness->check(_gallery::class, 'browse gallery renders page size selector', fu
 
     $harness->assertTrue(str_contains($html, 'class="gallery-footer-controls"'));
     $harness->assertTrue(str_contains($html, 'name="browse_gallery_per_page"'));
-    $harness->assertTrue(str_contains($html, 'name="_card_refresh" value="1"'));
+    $harness->assertTrue(str_contains($html, 'name="_pagination" value="1"'));
     $harness->assertTrue(str_contains($html, 'name="_invalidate_fact" value="browse.gallery"'));
     $harness->assertTrue(str_contains($html, '<option value="24">24</option>'));
     $harness->assertTrue(str_contains($html, '<option value="30" selected>30</option>'));
