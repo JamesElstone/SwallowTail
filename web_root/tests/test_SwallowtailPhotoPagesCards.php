@@ -825,13 +825,13 @@ $harness->check(SwallowtailPhotoMetadataSummaryService::class, 'formats photo me
     ], [
         'camera_model' => 'Canon EOS 760D',
         'lens_model' => 'EF-S 18-135mm',
-        'iso' => 100,
+        'iso' => 1000,
         'shutter_speed' => '1/250',
-        'aperture' => '5.600',
-        'focal_length_mm' => '50.000',
+        'aperture' => '4.000',
+        'focal_length_mm' => '17.000',
     ]);
 
-    $harness->assertSame('IMG_0042.CR2 : Canon EOS 760D with EF-S 18-135mm [ 100ASA 250ms 5.6 @ 50mm ]', $summary);
+    $harness->assertSame('IMG_0042.CR2 : Canon EOS 760D with EF-S 18-135mm @ 17mm [ 1/250 (4ms) @ f/4, 1000 ASA ]', $summary);
     $harness->assertSame('IMG_0042.CR2', $service->summaryText([
         'original_filename' => 'IMG_0042.CR2',
     ], []));

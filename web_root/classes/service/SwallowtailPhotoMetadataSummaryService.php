@@ -39,29 +39,23 @@ final class SwallowtailPhotoMetadataSummaryService
 
         $cameraModel = trim((string)($metadata['camera_model'] ?? ''));
         $lensModel = trim((string)($metadata['lens_model'] ?? ''));
+        $shutter = $this->formatShutterSpeed($metadata['shutter_speed'] ?? null);
+        $aperture = $this->formatDecimal($metadata['aperture'] ?? null);
+        $focalLength = $this->formatDecimal($metadata['focal_length_mm'] ?? null);
+        $iso = (int)($metadata['iso'] ?? 0);
         $exposureParts = [];
 
-        $iso = (int)($metadata['iso'] ?? 0);
-        if ($iso > 0) {
-            $exposureParts[] = (string)$iso . 'ASA';
-        }
-
-        $shutter = $this->formatShutterSpeed($metadata['shutter_speed'] ?? null);
         if ($shutter !== '') {
             $exposureParts[] = $shutter;
         }
-
-        $aperture = $this->formatDecimal($metadata['aperture'] ?? null);
         if ($aperture !== '') {
-            $exposureParts[] = $aperture;
+            $exposureParts[] = '@ f/' . $aperture;
+        }
+        if ($iso > 0) {
+            $exposureParts[] = (string)$iso . ' ASA';
         }
 
-        $focalLength = $this->formatDecimal($metadata['focal_length_mm'] ?? null);
-        if ($focalLength !== '') {
-            $exposureParts[] = '@ ' . $focalLength . 'mm';
-        }
-
-        if ($cameraModel === '' && $lensModel === '' && count($exposureParts) === 0) {
+        if ($cameraModel === '' && $lensModel === '' && $focalLength === '' && count($exposureParts) === 0) {
             return $filename;
         }
 
@@ -69,8 +63,29 @@ final class SwallowtailPhotoMetadataSummaryService
         if ($lensModel !== '') {
             $summary .= ' with ' . $lensModel;
         }
-        if (count($exposureParts) > 0) {
-            $summary .= ' [ ' . implode(' ', $exposureParts) . ' ]';
+        if ($focalLength !== '') {
+            $summary .= ' @ ' . $focalLength . 'mm';
+        }
+        $exposureText = $this->formatExposureSummary($exposureParts);
+        if ($exposureText !== '') {
+            $summary .= ' [ ' . $exposureText . ' ]';
+        }
+
+        return $summary;
+    }
+
+    private function formatExposureSummary(array $parts): string
+    {
+        if (count($parts) === 0) {
+            return '';
+        }
+
+        $summary = (string)array_shift($parts);
+        if (count($parts) > 0 && str_starts_with((string)$parts[0], '@ ')) {
+            $summary .= ' ' . (string)array_shift($parts);
+        }
+        if (count($parts) > 0) {
+            $summary .= ', ' . implode(', ', array_map('strval', $parts));
         }
 
         return $summary;
@@ -123,7 +138,22 @@ final class SwallowtailPhotoMetadataSummaryService
             return $raw;
         }
 
-        return (string)max(1, (int)round(1 / $seconds)) . 'ms';
+        $milliseconds = max(1, (int)round($seconds * 1000));
+
+        return $this->formatShutterLabel($raw, $seconds) . ' (' . (string)$milliseconds . 'ms)';
+    }
+
+    private function formatShutterLabel(string $raw, float $seconds): string
+    {
+        if (str_contains($raw, '/')) {
+            return $raw;
+        }
+
+        if ($seconds > 0.0 && $seconds < 1.0) {
+            return '1/' . (string)max(1, (int)round(1 / $seconds));
+        }
+
+        return $this->formatDecimal($seconds) . 's';
     }
 
     private function formatDecimal(mixed $value): string
