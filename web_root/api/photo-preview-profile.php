@@ -45,6 +45,10 @@ $photoId = max(0, (int)$request->input('photo_id', 0));
 $payload = [
     'crop' => (array)$request->input('crop', []),
     'exposure' => (array)$request->input('exposure', []),
+    'white_balance' => (array)$request->input('white_balance', []),
+    'shadows_highlights' => (array)$request->input('shadows_highlights', []),
+    'rotation' => (array)$request->input('rotation', []),
+    'perspective' => (array)$request->input('perspective', []),
 ];
 
 $result = (new SwallowtailPreviewProfileService())->enqueuePreview($photoId, $userId, $payload);

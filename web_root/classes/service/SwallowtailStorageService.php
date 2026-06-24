@@ -10,7 +10,7 @@ declare(strict_types=1);
 final class SwallowtailStorageService
 {
     public const DATA_DIRECTORY = 'swallowtail-data';
-    public const IMAGE_TYPES = ['source', 'original', 'embedded', 'thumbnail', 'filtered', 'profile'];
+    public const IMAGE_TYPES = ['source', 'original', 'embedded', 'thumbnail', 'filtered', 'profile', 'baseline'];
 
     public function storageLocations(int $requiredBytes = 0, ?string $checksum = null): array
     {
@@ -262,7 +262,7 @@ final class SwallowtailStorageService
         $imageType = $this->normaliseImageType($imageType);
         $extension = match ($imageType) {
             'source' => 'cr2',
-            'profile' => 'pp3',
+            'profile', 'baseline' => 'pp3',
             default => 'jpg',
         };
 

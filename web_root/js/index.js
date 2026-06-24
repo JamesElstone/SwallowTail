@@ -1986,47 +1986,69 @@
             const cropNode = editor.querySelector('[data-picture-editor-crop]');
             const statusNode = editor.querySelector('[data-picture-editor-status]');
             const cropReadout = editor.querySelector('[data-picture-editor-crop-readout]');
+            const cropState = editor.querySelector('[data-picture-editor-crop-state]');
             const revertButton = editor.querySelector('[data-picture-editor-revert]');
+            const profileState = editor.querySelector('[data-picture-editor-profile-state]');
             const profileUrl = String(editor.dataset.profileUrl || '').trim();
+            const profileStatusUrl = String(editor.dataset.profileStatusUrl || '').trim();
             const sourceWidth = Math.max(1, Number.parseInt(String(editor.dataset.sourceWidth || '1'), 10));
             const sourceHeight = Math.max(1, Number.parseInt(String(editor.dataset.sourceHeight || '1'), 10));
             let imageNode = editor.querySelector('[data-picture-editor-image]');
             let requestSequence = 0;
             let submitTimer = null;
             let pollTimer = null;
+            let baselinePollTimer = null;
             let dragState = null;
-            let displayedPreviewStage = '';
+            let displayedPreviewStage = String(editor.dataset.previewType || '').trim();
+            let baselineReady = editor.dataset.baselineReady === '1';
 
             if (!(stage instanceof HTMLElement) || !(cropNode instanceof HTMLElement) || profileUrl === '') {
                 return;
             }
 
-            let settings = {
-                crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight },
-                exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 },
-            };
+            const defaultSettings = () => ({
+                crop: { enabled: true, x: 0, y: 0, width: sourceWidth, height: sourceHeight },
+                exposure: { enabled: true, black: 63, lightness: 0, contrast: 26, saturation: 0 },
+                white_balance: { enabled: true, setting: 'Custom', temperature: 5324, green: 0.846 },
+                shadows_highlights: {
+                    enabled: true,
+                    highlights: 30,
+                    highlight_tonal_width: 80,
+                    shadows: 30,
+                    shadow_tonal_width: 80,
+                    radius: 40,
+                    lab: true,
+                    local_contrast: 0,
+                },
+                rotation: { enabled: false, degree: 0 },
+                perspective: { enabled: false, method: 'simple', horizontal: 0, vertical: 0 },
+            });
+            let settings = defaultSettings();
+            let baselineSettings = typeof structuredClone === 'function' ? structuredClone(settings) : JSON.parse(JSON.stringify(settings));
 
             try {
                 const parsed = JSON.parse(String(editor.dataset.settings || '{}'));
-                settings = {
-                    crop: {
-                        x: clampNumber(parsed?.crop?.x, 0, sourceWidth - 1),
-                        y: clampNumber(parsed?.crop?.y, 0, sourceHeight - 1),
-                        width: clampNumber(parsed?.crop?.width, 1, sourceWidth),
-                        height: clampNumber(parsed?.crop?.height, 1, sourceHeight),
-                    },
-                    exposure: {
-                        black: clampNumber(parsed?.exposure?.black, -100, 100),
-                        lightness: clampNumber(parsed?.exposure?.lightness, -100, 100),
-                        contrast: clampNumber(parsed?.exposure?.contrast, -100, 100),
-                        saturation: clampNumber(parsed?.exposure?.saturation, -100, 100),
-                    },
-                };
+                settings = normaliseSettings(parsed);
+                baselineSettings = cloneSettings(settings);
             } catch (error) {
                 // Use neutral defaults if the embedded state is malformed.
             }
 
-            settings.crop = normaliseCrop(settings.crop);
+            editor.querySelectorAll('[data-picture-editor-panel]').forEach((panel) => {
+                if (!(panel instanceof HTMLDetailsElement)) {
+                    return;
+                }
+                panel.addEventListener('toggle', () => {
+                    if (!panel.open) {
+                        return;
+                    }
+                    editor.querySelectorAll('[data-picture-editor-panel]').forEach((other) => {
+                        if (other instanceof HTMLDetailsElement && other !== panel) {
+                            other.open = false;
+                        }
+                    });
+                });
+            });
 
             function clampNumber(value, min, max) {
                 const number = Number(value);
@@ -2044,7 +2066,67 @@
                 const width = Math.round(clampNumber(crop.width, 1, sourceWidth - x));
                 const height = Math.round(clampNumber(crop.height, 1, sourceHeight - y));
 
-                return { x, y, width, height };
+                return { enabled: crop.enabled !== false, x, y, width, height };
+            }
+
+            function normaliseSettings(value) {
+                const next = defaultSettings();
+                next.crop = normaliseCrop({ ...next.crop, ...(value?.crop || {}) });
+                next.exposure = {
+                    enabled: value?.exposure?.enabled !== false,
+                    black: clampNumber(value?.exposure?.black ?? next.exposure.black, -100, 100),
+                    lightness: clampNumber(value?.exposure?.lightness ?? next.exposure.lightness, -100, 100),
+                    contrast: clampNumber(value?.exposure?.contrast ?? next.exposure.contrast, -100, 100),
+                    saturation: clampNumber(value?.exposure?.saturation ?? next.exposure.saturation, -100, 100),
+                };
+                next.white_balance = {
+                    enabled: value?.white_balance?.enabled !== false,
+                    setting: String(value?.white_balance?.setting || 'Custom'),
+                    temperature: clampNumber(value?.white_balance?.temperature ?? next.white_balance.temperature, 1500, 60000),
+                    green: clampNumber(value?.white_balance?.green ?? next.white_balance.green, 0.02, 5),
+                };
+                next.shadows_highlights = {
+                    enabled: value?.shadows_highlights?.enabled !== false,
+                    highlights: clampNumber(value?.shadows_highlights?.highlights ?? next.shadows_highlights.highlights, 0, 100),
+                    highlight_tonal_width: clampNumber(value?.shadows_highlights?.highlight_tonal_width ?? next.shadows_highlights.highlight_tonal_width, 0, 100),
+                    shadows: clampNumber(value?.shadows_highlights?.shadows ?? next.shadows_highlights.shadows, 0, 100),
+                    shadow_tonal_width: clampNumber(value?.shadows_highlights?.shadow_tonal_width ?? next.shadows_highlights.shadow_tonal_width, 0, 100),
+                    radius: clampNumber(value?.shadows_highlights?.radius ?? next.shadows_highlights.radius, 1, 100),
+                    lab: value?.shadows_highlights?.lab !== false,
+                    local_contrast: clampNumber(value?.shadows_highlights?.local_contrast ?? next.shadows_highlights.local_contrast, 0, 100),
+                };
+                next.rotation = {
+                    enabled: value?.rotation?.enabled === true,
+                    degree: clampNumber(value?.rotation?.degree ?? next.rotation.degree, -45, 45),
+                };
+                next.perspective = {
+                    enabled: value?.perspective?.enabled === true,
+                    method: 'simple',
+                    horizontal: clampNumber(value?.perspective?.horizontal ?? next.perspective.horizontal, -100, 100),
+                    vertical: clampNumber(value?.perspective?.vertical ?? next.perspective.vertical, -100, 100),
+                };
+                return next;
+            }
+
+            function cloneSettings(value) {
+                return JSON.parse(JSON.stringify(value));
+            }
+
+            function getSetting(path) {
+                return path.split('.').reduce((current, part) => current?.[part], settings);
+            }
+
+            function setSetting(path, value) {
+                const parts = path.split('.');
+                let current = settings;
+                while (parts.length > 1) {
+                    current = current[parts.shift()];
+                }
+                current[parts[0]] = value;
+            }
+
+            function cropIsInteractive() {
+                return baselineReady && displayedPreviewStage !== 'thumbnail' && settings.crop.enabled;
             }
 
             function setStatus(message, state = '') {
@@ -2085,6 +2167,14 @@
 
             function renderCrop() {
                 settings.crop = normaliseCrop(settings.crop);
+                const interactive = cropIsInteractive();
+                cropNode.hidden = !interactive;
+                cropNode.dataset.pictureEditorDisabled = interactive ? '0' : '1';
+                if (cropState instanceof HTMLElement) {
+                    cropState.textContent = displayedPreviewStage === 'thumbnail'
+                        ? 'Crop disabled while thumbnail preview is displayed.'
+                        : (baselineReady ? 'Crop follows original/filtered previews.' : 'Crop waiting for baseline profile.');
+                }
                 const box = displayBox();
                 const left = (settings.crop.x / sourceWidth) * box.width;
                 const top = (settings.crop.y / sourceHeight) * box.height;
@@ -2116,35 +2206,47 @@
                 return {
                     photo_id: Number.parseInt(String(editor.dataset.photoId || '0'), 10),
                     csrf_token: String(editor.dataset.csrfToken || ''),
-                    crop: {
-                        x: settings.crop.x,
-                        y: settings.crop.y,
-                        width: settings.crop.width,
-                        height: settings.crop.height,
-                    },
-                    exposure: {
-                        black: settings.exposure.black,
-                        lightness: settings.exposure.lightness,
-                        contrast: settings.exposure.contrast,
-                        saturation: settings.exposure.saturation,
-                    },
+                    crop: { ...settings.crop },
+                    exposure: { ...settings.exposure },
+                    white_balance: { ...settings.white_balance },
+                    shadows_highlights: { ...settings.shadows_highlights },
+                    rotation: { ...settings.rotation },
+                    perspective: { ...settings.perspective },
                 };
             }
 
-            function syncExposureControls() {
-                Object.keys(settings.exposure).forEach((key) => {
-                    const value = String(settings.exposure[key]);
-                    const field = editor.querySelector(`[data-picture-editor-field="${escapeCssIdentifier(key)}"]`);
+            function syncControls() {
+                editor.querySelectorAll('[data-picture-editor-field]').forEach((field) => {
+                    if (!(field instanceof HTMLInputElement)) {
+                        return;
+                    }
+                    const key = String(field.dataset.pictureEditorField || '');
+                    const value = String(getSetting(key) ?? 0);
                     const number = editor.querySelector(`[data-picture-editor-number="${escapeCssIdentifier(key)}"]`);
 
-                    if (field instanceof HTMLInputElement) {
-                        field.value = value;
-                    }
-
+                    field.value = value;
                     if (number instanceof HTMLInputElement) {
                         number.value = value;
                     }
                 });
+                editor.querySelectorAll('[data-picture-editor-check]').forEach((field) => {
+                    if (field instanceof HTMLInputElement) {
+                        field.checked = Boolean(getSetting(String(field.dataset.pictureEditorCheck || '')));
+                    }
+                });
+            }
+
+            function setEditorEnabled(enabled) {
+                editor.querySelectorAll('[data-picture-editor-field], [data-picture-editor-number], [data-picture-editor-check], [data-picture-editor-revert]').forEach((field) => {
+                    if (field instanceof HTMLInputElement || field instanceof HTMLButtonElement) {
+                        field.disabled = !enabled;
+                    }
+                });
+                if (profileState instanceof HTMLElement) {
+                    profileState.textContent = enabled ? 'Profile ready' : 'Preparing profile';
+                    profileState.dataset.pictureEditorProfileReady = enabled ? '1' : '0';
+                }
+                renderCrop();
             }
 
             function clearPoll() {
@@ -2155,6 +2257,9 @@
             }
 
             function scheduleSubmit() {
+                if (!baselineReady) {
+                    return;
+                }
                 if (submitTimer !== null) {
                     window.clearTimeout(submitTimer);
                 }
@@ -2220,19 +2325,19 @@
                     const originalUrl = String(response?.original_url || '').trim();
 
                     if (thumbnailUrl !== '' && displayedPreviewStage === '') {
-                        swapPreviewImage(thumbnailUrl);
+                        swapPreviewImage(thumbnailUrl, 'thumbnail');
                         displayedPreviewStage = 'thumbnail';
                         interimStatus = 'Thumbnail ready; rendering filtered';
                     }
 
                     if (originalUrl !== '' && displayedPreviewStage !== 'original') {
-                        swapPreviewImage(originalUrl);
+                        swapPreviewImage(originalUrl, 'original');
                         displayedPreviewStage = 'original';
                         interimStatus = 'Original ready; rendering filtered';
                     }
 
                     if (state === 'succeeded' && response?.preview_url) {
-                        swapPreviewImage(String(response.preview_url));
+                        swapPreviewImage(String(response.preview_url), 'filtered');
                         displayedPreviewStage = 'filtered';
                         setStatus('Ready', 'ready');
                         return;
@@ -2256,7 +2361,7 @@
                 }
             }
 
-            function swapPreviewImage(url) {
+            function swapPreviewImage(url, stageType = '') {
                 const emptyNode = editor.querySelector('[data-picture-editor-empty]');
                 if (!(imageNode instanceof HTMLImageElement)) {
                     imageNode = document.createElement('img');
@@ -2271,15 +2376,17 @@
                 }
 
                 imageNode.src = url;
+                if (stageType !== '') {
+                    displayedPreviewStage = stageType;
+                    editor.dataset.previewType = stageType;
+                    renderCrop();
+                }
             }
 
-            function revertToOriginal() {
-                settings = {
-                    crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight },
-                    exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 },
-                };
+            function revertToBaseline() {
+                settings = cloneSettings(baselineSettings);
                 settings.crop = normaliseCrop(settings.crop);
-                syncExposureControls();
+                syncControls();
                 renderCrop();
                 scheduleSubmit();
             }
@@ -2292,8 +2399,8 @@
                 const key = String(field.dataset.pictureEditorField || '');
                 const number = editor.querySelector(`[data-picture-editor-number="${escapeCssIdentifier(key)}"]`);
                 const sync = (value) => {
-                    const next = clampNumber(value, -100, 100);
-                    settings.exposure[key] = next;
+                    const next = clampNumber(value, Number(field.min), Number(field.max));
+                    setSetting(key, next);
                     field.value = String(next);
                     if (number instanceof HTMLInputElement) {
                         number.value = String(next);
@@ -2307,7 +2414,21 @@
                 }
             });
 
+            editor.querySelectorAll('[data-picture-editor-check]').forEach((field) => {
+                if (!(field instanceof HTMLInputElement)) {
+                    return;
+                }
+                field.addEventListener('change', () => {
+                    setSetting(String(field.dataset.pictureEditorCheck || ''), field.checked);
+                    renderCrop();
+                    scheduleSubmit();
+                });
+            });
+
             cropNode.addEventListener('pointerdown', (event) => {
+                if (!cropIsInteractive()) {
+                    return;
+                }
                 if (!(event.target instanceof HTMLElement)) {
                     return;
                 }
@@ -2325,6 +2446,9 @@
             });
 
             stage.addEventListener('pointerdown', (event) => {
+                if (!cropIsInteractive()) {
+                    return;
+                }
                 if (event.target === cropNode || (event.target instanceof HTMLElement && event.target.closest('[data-picture-editor-crop]'))) {
                     return;
                 }
@@ -2348,7 +2472,7 @@
             });
 
             const updateDrag = (event) => {
-                if (!dragState || dragState.pointerId !== event.pointerId) {
+                if (!cropIsInteractive() || !dragState || dragState.pointerId !== event.pointerId) {
                     return;
                 }
 
@@ -2423,10 +2547,43 @@
                 imageNode.addEventListener('load', renderCrop);
             }
             if (revertButton instanceof HTMLButtonElement) {
-                revertButton.addEventListener('click', revertToOriginal);
+                revertButton.addEventListener('click', revertToBaseline);
             }
             window.addEventListener('resize', renderCrop);
+            syncControls();
+            setEditorEnabled(baselineReady);
+            if (!baselineReady && profileStatusUrl !== '') {
+                pollProfileStatus(0);
+            }
             renderCrop();
+
+            async function pollProfileStatus(attempt) {
+                if (baselineReady || !editor.isConnected) {
+                    return;
+                }
+                try {
+                    const response = await sendAjax(profileStatusUrl);
+                    const status = String(response?.baseline?.status || '');
+                    if (response?.baseline?.ready && response?.settings) {
+                        baselineReady = true;
+                        settings = normaliseSettings(response.settings);
+                        baselineSettings = cloneSettings(settings);
+                        syncControls();
+                        setEditorEnabled(true);
+                        return;
+                    }
+                    if (profileState instanceof HTMLElement) {
+                        profileState.textContent = status === 'failed' ? 'Profile failed' : 'Preparing profile';
+                        profileState.dataset.pictureEditorProfileReady = '0';
+                    }
+                    const delay = attempt < 5 ? 1000 : 2500;
+                    baselinePollTimer = window.setTimeout(() => pollProfileStatus(attempt + 1), delay);
+                } catch (error) {
+                    const delay = attempt < 5 ? 1500 : 3000;
+                    baselinePollTimer = window.setTimeout(() => pollProfileStatus(attempt + 1), delay);
+                    console.error(error);
+                }
+            }
         });
     }
 

@@ -88,6 +88,39 @@ class MetadataDatabase:
         self.connection.rollback()
         return row
 
+    def next_profile_photo(self) -> dict[str, Any] | None:
+        if not self._table_exists("photo_profile_data"):
+            return None
+        row = self._fetchone(
+            """
+            SELECT p.*
+              FROM photos p
+              JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+              LEFT JOIN photo_profile_data viewed
+                ON viewed.photo_id = p.id
+               AND viewed.type = 'swallowtail'
+               AND viewed.`key` = 'viewed_at'
+              LEFT JOIN photo_profile_data next_attempt
+                ON next_attempt.photo_id = p.id
+               AND next_attempt.type = 'swallowtail'
+               AND next_attempt.`key` = 'next_attempt_at'
+             WHERE p.upload_state = 'uploaded'
+               AND status.value = 'queued'
+               AND (
+                    next_attempt.value IS NULL
+                    OR next_attempt.value = ''
+                    OR next_attempt.value <= CURRENT_TIMESTAMP
+               )
+             ORDER BY COALESCE(viewed.value, '0') DESC, status.updated_at, p.id
+             LIMIT 1
+            """
+        )
+        self.connection.rollback()
+        return row
+
     def upsert_ready(self, photo_id: int, fields: dict[str, Any], properties: list[dict[str, Any]]) -> None:
         values = {name: fields.get(name) for name in self.FIELD_NAMES}
         columns = ["photo_id", "status", "attempts", "next_attempt_at", "last_error", *self.FIELD_NAMES, "extracted_at"]
@@ -130,6 +163,42 @@ class MetadataDatabase:
                 str(property_row.get("value_type") or "string"),
             ))
 
+    def mark_profile_processing(self, photo_id: int) -> None:
+        self._set_profile_value(photo_id, "swallowtail", "status", "processing", "string")
+        self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
+        self.connection.commit()
+
+    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], baseline_path: str, rawtherapee_version: str) -> None:
+        self._execute("DELETE FROM photo_profile_data WHERE photo_id = %s AND type <> 'swallowtail'", (photo_id,))
+        for row in properties:
+            self._set_profile_value(
+                photo_id,
+                str(row.get("type") or "")[:32],
+                str(row.get("key") or "")[:191],
+                row.get("value"),
+                str(row.get("value_type") or "string"),
+            )
+        self._set_profile_value(photo_id, "swallowtail", "baseline_profile_path", baseline_path, "string")
+        self._set_profile_value(photo_id, "swallowtail", "rawtherapee_version", rawtherapee_version, "string")
+        self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
+        self._set_profile_value(photo_id, "swallowtail", "status", "processed", "string")
+        self.connection.commit()
+
+    def defer_profile(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
+        attempts_row = self._fetchone(
+            "SELECT value FROM photo_profile_data WHERE photo_id = %s AND type = 'swallowtail' AND `key` = 'attempts' LIMIT 1",
+            (photo_id,),
+        )
+        attempts = int(attempts_row.get("value") or 0) + 1 if attempts_row else 1
+        status = "failed" if attempts >= max_attempts else "queued"
+        next_attempt_at = "" if status == "failed" else (self._now() + timedelta(seconds=max(1, retry_delay_seconds))).strftime("%Y-%m-%d %H:%M:%S")
+        self._set_profile_value(photo_id, "swallowtail", "attempts", str(attempts), "int")
+        self._set_profile_value(photo_id, "swallowtail", "next_attempt_at", next_attempt_at, "string")
+        self._set_profile_value(photo_id, "swallowtail", "last_error", message[-4000:], "string")
+        self._set_profile_value(photo_id, "swallowtail", "status", status, "string")
+        self.connection.commit()
+        return status
+
     def defer_or_fail(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
         existing = self._fetchone("SELECT attempts FROM photo_metadata WHERE photo_id = %s LIMIT 1", (photo_id,))
         attempts = int(existing.get("attempts") or 0) + 1 if existing else 1
@@ -159,6 +228,54 @@ class MetadataDatabase:
             counts[str(row.get("status") or "")] = int(row.get("count") or 0)
         self.connection.rollback()
         return counts
+
+    def _set_profile_value(self, photo_id: int, type_name: str, key: str, value: Any, value_type: str) -> None:
+        value_type = value_type if value_type in {"null", "bool", "int", "float", "string"} else "string"
+        existing = self._fetchone(
+            "SELECT id FROM photo_profile_data WHERE photo_id = %s AND type = %s AND `key` = %s LIMIT 1",
+            (photo_id, type_name, key),
+        )
+        stored_value = None if value is None else str(value)
+        if existing:
+            self._execute(
+                """
+                UPDATE photo_profile_data
+                   SET value = %s,
+                       value_type = %s,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = %s
+                """,
+                (stored_value, value_type, int(existing["id"])),
+            )
+            return
+        self._execute(
+            """
+            INSERT INTO photo_profile_data (
+                photo_id, type, `key`, value, value_type
+            ) VALUES (
+                %s, %s, %s, %s, %s
+            )
+            """,
+            (photo_id, type_name[:32], key[:191], stored_value, value_type),
+        )
+
+    def _table_exists(self, table_name: str) -> bool:
+        try:
+            if self.driver == "odbc":
+                row = self._fetchone(
+                    "SELECT 1 AS ok FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = %s LIMIT 1",
+                    (table_name,),
+                )
+            else:
+                row = self._fetchone(
+                    "SELECT 1 AS ok FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s LIMIT 1",
+                    (table_name,),
+                )
+            self.connection.rollback()
+            return row is not None
+        except Exception:
+            self.connection.rollback()
+            return False
 
     def _now(self) -> datetime:
         return datetime.now().replace(microsecond=0)

@@ -825,5 +825,5 @@ $harness->check(_picture_viewer::class, 'picture editor exposes revert control',
     }
 
     $harness->assertTrue(str_contains($source, 'data-picture-editor-revert'));
-    $harness->assertTrue(str_contains($source, 'Revert to Original'));
+    $harness->assertTrue(str_contains($source, 'Revert to Baseline'));
 });

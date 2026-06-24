@@ -4181,8 +4181,46 @@ label {
 
 .picture-editor-controls {
   display: grid;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
+}
+
+.picture-editor-profile-state {
+  min-height: 26px;
+  align-content: center;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.picture-editor-profile-state[data-picture-editor-profile-ready="1"] {
+  color: var(--success);
+  border-color: #b7ebc8;
+  background: var(--success-soft);
+}
+
+.picture-editor-panel {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.picture-editor-panel summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.picture-editor-panel-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 10px 10px;
 }
 
 .picture-editor-field {
@@ -4206,6 +4244,20 @@ label {
 
 .picture-editor-field input[type="number"] {
   width: 76px;
+}
+
+.picture-editor-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.picture-editor-toggle input {
+  width: 16px;
+  height: 16px;
 }
 
 .picture-editor-readout {

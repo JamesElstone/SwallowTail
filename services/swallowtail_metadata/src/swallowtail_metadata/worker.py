@@ -9,6 +9,7 @@ from typing import Any
 from .config import AppConfig
 from .db import MetadataDatabase
 from .exiftool import ExifToolRunner
+from .profile import RawTherapeeBaselineRunner, parse_pp3_properties
 from .redis_heartbeat import RedisHeartbeat
 
 
@@ -18,6 +19,7 @@ class MetadataWorker:
         self.log = logging.getLogger("swallowtail_metadata.worker")
         self.db = MetadataDatabase(config.database)
         self.exiftool = ExifToolRunner(config.metadata.exiftool_binary)
+        self.profile_runner = RawTherapeeBaselineRunner(config.metadata.rawtherapee_binary)
         self.redis = RedisHeartbeat(config.redis)
         self.shutdown_requested = threading.Event()
         self.idle_delay_seconds = config.worker.poll_min_seconds
@@ -40,9 +42,15 @@ class MetadataWorker:
     def run_once(self) -> bool:
         self._touch_status()
         photo = self.db.next_photo()
-        if photo is None:
+        if photo is not None:
+            self.process_photo(photo)
+            self._touch_status()
+            return True
+
+        profile_photo = self.db.next_profile_photo()
+        if profile_photo is None:
             return False
-        self.process_photo(photo)
+        self.process_profile_photo(profile_photo)
         self._touch_status()
         return True
 
@@ -64,12 +72,47 @@ class MetadataWorker:
             )
             self.log.warning("Metadata extraction %s for photo=%s: %s", status, photo_id, exc)
 
+    def process_profile_photo(self, photo: dict[str, Any]) -> None:
+        photo_id = int(photo.get("id") or 0)
+        try:
+            source_path = self.source_path(photo)
+            if not source_path.is_file():
+                raise RuntimeError(f"Source CR2 file was not found: {source_path}")
+            thumbnail_path = self.image_path(photo, "thumbnail")
+            if not thumbnail_path.is_file():
+                self.db.defer_profile(
+                    photo_id,
+                    "Thumbnail is not ready for baseline profile generation.",
+                    self.config.worker.max_attempts,
+                    self.config.worker.poll_min_seconds,
+                )
+                return
+
+            baseline_path = self.image_path(photo, "baseline")
+            self.db.mark_profile_processing(photo_id)
+            result = self.profile_runner.generate(source_path, baseline_path)
+            properties = parse_pp3_properties(baseline_path.read_text(encoding="utf-8"))
+            self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
+            self.log.info("Generated RawTherapee baseline profile for photo=%s path=%s", photo_id, baseline_path)
+        except Exception as exc:
+            status = self.db.defer_profile(
+                photo_id,
+                str(exc),
+                self.config.worker.max_attempts,
+                self.config.worker.retry_delay_seconds,
+            )
+            self.log.warning("Baseline profile generation %s for photo=%s: %s", status, photo_id, exc)
+
     def source_path(self, photo: dict[str, Any]) -> Path:
+        return self.image_path(photo, "source")
+
+    def image_path(self, photo: dict[str, Any], image_type: str) -> Path:
         base = str(photo.get("storage_base_location") or "").strip()
         checksum = str(photo.get("original_sha256") or "").strip().lower()
         if base == "" or len(checksum) < 4:
             raise RuntimeError("Photo storage location or checksum is missing.")
-        return Path(base) / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        extension = {"source": ".cr2", "baseline": ".pp3"}.get(image_type, ".jpg")
+        return Path(base) / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_{image_type}{extension}"
 
     def status(self) -> dict[str, Any]:
         return {
@@ -99,6 +142,7 @@ class MetadataWorker:
 
         check("database", self.db.ping)
         check("exiftool", self.exiftool.health_check)
+        check("rawtherapee", self.profile_runner.health_check)
         check("redis", self.redis.ping)
         return healthy, results
 

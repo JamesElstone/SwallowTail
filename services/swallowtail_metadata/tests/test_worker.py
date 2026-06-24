@@ -19,10 +19,17 @@ class FakeDatabase:
         self.photos = list(photos or [])
         self.ready = []
         self.deferred = []
+        self.profile_photos = []
+        self.profile_deferred = []
+        self.profile_processing = []
+        self.profile_ready = []
         self.count_payload = {"ready": 0, "deferred": 0, "failed": 0}
 
     def next_photo(self):
         return self.photos.pop(0) if self.photos else None
+
+    def next_profile_photo(self):
+        return self.profile_photos.pop(0) if self.profile_photos else None
 
     def upsert_ready(self, photo_id, fields, raw):
         self.ready.append((photo_id, fields, raw))
@@ -30,6 +37,16 @@ class FakeDatabase:
     def defer_or_fail(self, photo_id, message, max_attempts, retry_delay_seconds):
         self.deferred.append((photo_id, message, max_attempts, retry_delay_seconds))
         return "deferred"
+
+    def mark_profile_processing(self, photo_id):
+        self.profile_processing.append(photo_id)
+
+    def replace_profile_data(self, photo_id, rows, baseline_path, rawtherapee_version):
+        self.profile_ready.append((photo_id, rows, baseline_path, rawtherapee_version))
+
+    def defer_profile(self, photo_id, message, max_attempts, retry_delay_seconds):
+        self.profile_deferred.append((photo_id, message, max_attempts, retry_delay_seconds))
+        return "queued"
 
     def counts(self):
         return self.count_payload
@@ -62,6 +79,22 @@ class FakeRedis:
         return True
 
     def ping(self):
+        return None
+
+
+class FakeProfileRunner:
+    def __init__(self):
+        self.generated = []
+
+    def generate(self, source_path, baseline_path):
+        self.generated.append((source_path, baseline_path))
+        baseline_path.write_text(
+            "[Version]\nAppVersion=5.12\n\n[Exposure]\nBlack=63\nBrightness=0\n",
+            encoding="utf-8",
+        )
+        return type("Result", (), {"version": "RawTherapee 5.12"})()
+
+    def health_check(self):
         return None
 
 
@@ -179,6 +212,7 @@ class MetadataWorkerTest(unittest.TestCase):
         worker.config = config
         worker.db = db
         worker.exiftool = exiftool or FakeExifTool()
+        worker.profile_runner = FakeProfileRunner()
         worker.redis = FakeRedis()
         worker.shutdown_requested = None
         worker.idle_delay_seconds = config.worker.poll_min_seconds
@@ -211,6 +245,41 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual([{"type": "exififd", "key": "Make", "value": "Canon", "value_type": "string"}], db.ready[0][2])
         self.assertEqual([(str(source), "Europe/London")], exiftool.paths)
         self.assertEqual(["swallowtail_metadata", "swallowtail_metadata"], worker.redis.touched)
+
+    def test_run_once_generates_profile_baseline_when_metadata_is_idle(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        thumbnail.write_bytes(b"jpg")
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 9, "storage_base_location": str(self.root), "original_sha256": checksum})
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        self.assertEqual([9], db.profile_processing)
+        self.assertEqual([(source, baseline)], worker.profile_runner.generated)
+        self.assertEqual(9, db.profile_ready[0][0])
+        self.assertEqual(str(baseline), db.profile_ready[0][2])
+        self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
+
+    def test_profile_baseline_waits_for_thumbnail(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 10, "storage_base_location": str(self.root), "original_sha256": checksum})
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual([], worker.profile_runner.generated)
+        self.assertEqual(10, db.profile_deferred[0][0])
+        self.assertIn("Thumbnail is not ready", db.profile_deferred[0][1])
 
     def test_missing_source_file_is_deferred(self) -> None:
         checksum = "abcdef" + ("0" * 58)

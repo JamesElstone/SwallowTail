@@ -17,6 +17,7 @@ final class SwallowtailPreviewProfileService
         private readonly SwallowtailPhotoUiService $photoUiService = new SwallowtailPhotoUiService(),
         private readonly SwallowtailConversionQueueService $queueService = new SwallowtailConversionQueueService(),
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+        private readonly SwallowtailProfileDataService $profileDataService = new SwallowtailProfileDataService(),
     ) {
     }
 
@@ -32,11 +33,19 @@ final class SwallowtailPreviewProfileService
         }
 
         $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
+        $baselineStatus = $this->profileDataService->ensureQueued($photo, true);
 
         $dimensions = $this->sourceDimensions($photo);
         $settings = $this->latestProfileSettings($photo);
         if ($settings === []) {
-            $settings = $this->defaultSettings($dimensions['width'], $dimensions['height']);
+            $settings = $baselineStatus['ready']
+                ? $this->profileDataService->settingsFromRows(
+                    (int)$photo['id'],
+                    $dimensions['width'],
+                    $dimensions['height'],
+                    $this->defaultSettings($dimensions['width'], $dimensions['height'])
+                )
+                : $this->defaultSettings($dimensions['width'], $dimensions['height']);
         }
 
         $latestProfileVersion = $this->latestProfileVersion((int)$photo['id']);
@@ -47,7 +56,9 @@ final class SwallowtailPreviewProfileService
             'source_width' => $dimensions['width'],
             'source_height' => $dimensions['height'],
             'settings' => $settings,
+            'baseline' => $baselineStatus,
             'preview_ready' => $previewType !== null,
+            'preview_type' => $previewType,
             'preview_url' => $previewType !== null
                 ? $this->previewUrl($photoId, $latestProfileVersion, null, $previewType)
                 : '',
@@ -68,6 +79,16 @@ final class SwallowtailPreviewProfileService
             return [
                 'success' => false,
                 'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $baseline = $this->profileDataService->status($photoId);
+        if (empty($baseline['ready'])) {
+            $this->profileDataService->ensureQueued($photo, true);
+            return [
+                'success' => false,
+                'errors' => ['RawTherapee baseline profile is still being prepared.'],
+                'baseline' => $baseline,
             ];
         }
 
@@ -101,6 +122,41 @@ final class SwallowtailPreviewProfileService
                 'job_id' => $jobId,
                 'profile_version' => $profileVersion,
             ]),
+        ];
+    }
+
+    public function baselineStatus(int $photoId, int $userId): array
+    {
+        if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $status = $this->profileDataService->ensureQueued($photo, true);
+        $dimensions = $this->sourceDimensions($photo);
+        $settings = $status['ready']
+            ? $this->profileDataService->settingsFromRows(
+                $photoId,
+                $dimensions['width'],
+                $dimensions['height'],
+                $this->defaultSettings($dimensions['width'], $dimensions['height'])
+            )
+            : $this->defaultSettings($dimensions['width'], $dimensions['height']);
+
+        return [
+            'success' => true,
+            'baseline' => $status,
+            'settings' => $settings,
         ];
     }
 
@@ -161,6 +217,10 @@ final class SwallowtailPreviewProfileService
     {
         $crop = (array)($payload['crop'] ?? []);
         $exposure = (array)($payload['exposure'] ?? []);
+        $whiteBalance = (array)($payload['white_balance'] ?? []);
+        $shadowsHighlights = (array)($payload['shadows_highlights'] ?? []);
+        $rotation = (array)($payload['rotation'] ?? []);
+        $perspective = (array)($payload['perspective'] ?? []);
         $sourceWidth = max(1, $sourceWidth);
         $sourceHeight = max(1, $sourceHeight);
 
@@ -171,49 +231,102 @@ final class SwallowtailPreviewProfileService
 
         return [
             'crop' => [
+                'enabled' => $this->boolValue($crop['enabled'] ?? true),
                 'x' => $x,
                 'y' => $y,
                 'width' => $width,
                 'height' => $height,
             ],
             'exposure' => [
+                'enabled' => $this->boolValue($exposure['enabled'] ?? true),
                 'black' => $this->clampFloat($exposure['black'] ?? 0, -100, 100),
                 'lightness' => $this->clampFloat($exposure['lightness'] ?? 0, -100, 100),
                 'contrast' => $this->clampFloat($exposure['contrast'] ?? 0, -100, 100),
                 'saturation' => $this->clampFloat($exposure['saturation'] ?? 0, -100, 100),
             ],
+            'white_balance' => [
+                'enabled' => $this->boolValue($whiteBalance['enabled'] ?? true),
+                'setting' => $this->optionString($whiteBalance['setting'] ?? 'Custom', ['Camera', 'Custom', 'autitcgreen'], 'Custom'),
+                'temperature' => $this->clampFloat($whiteBalance['temperature'] ?? 5324, 1500, 60000),
+                'green' => $this->clampFloat($whiteBalance['green'] ?? 0.846, 0.02, 5.0),
+            ],
+            'shadows_highlights' => [
+                'enabled' => $this->boolValue($shadowsHighlights['enabled'] ?? true),
+                'highlights' => $this->clampFloat($shadowsHighlights['highlights'] ?? 30, 0, 100),
+                'highlight_tonal_width' => $this->clampFloat($shadowsHighlights['highlight_tonal_width'] ?? 80, 0, 100),
+                'shadows' => $this->clampFloat($shadowsHighlights['shadows'] ?? 30, 0, 100),
+                'shadow_tonal_width' => $this->clampFloat($shadowsHighlights['shadow_tonal_width'] ?? 80, 0, 100),
+                'radius' => $this->clampFloat($shadowsHighlights['radius'] ?? 40, 1, 100),
+                'lab' => $this->boolValue($shadowsHighlights['lab'] ?? true),
+                'local_contrast' => $this->clampFloat($shadowsHighlights['local_contrast'] ?? 0, 0, 100),
+            ],
+            'rotation' => [
+                'enabled' => $this->boolValue($rotation['enabled'] ?? false),
+                'degree' => $this->clampFloat($rotation['degree'] ?? 0, -45, 45),
+            ],
+            'perspective' => [
+                'enabled' => $this->boolValue($perspective['enabled'] ?? false),
+                'method' => 'simple',
+                'horizontal' => $this->clampFloat($perspective['horizontal'] ?? 0, -100, 100),
+                'vertical' => $this->clampFloat($perspective['vertical'] ?? 0, -100, 100),
+            ],
         ];
     }
 
-    public function pp3Content(array $settings): string
+    public function pp3Content(array $settings, string $baseline = ''): string
     {
         $crop = (array)$settings['crop'];
         $exposure = (array)$settings['exposure'];
+        $whiteBalance = (array)($settings['white_balance'] ?? []);
+        $shadowsHighlights = (array)($settings['shadows_highlights'] ?? []);
+        $rotation = (array)($settings['rotation'] ?? []);
+        $perspective = (array)($settings['perspective'] ?? []);
+        $profile = $this->parsePp3Document($baseline);
 
-        return implode("\n", [
-            '[Version]',
-            'AppVersion=5.9',
-            'Version=349',
-            '',
-            '[Exposure]',
-            'Auto=false',
-            'Black=' . $this->formatNumber($exposure['black'] ?? 0),
-            'Brightness=' . $this->formatNumber($exposure['lightness'] ?? 0),
-            'Contrast=' . $this->formatNumber($exposure['contrast'] ?? 0),
-            'Saturation=' . $this->formatNumber($exposure['saturation'] ?? 0),
-            '',
-            '[Crop]',
-            'Enabled=true',
-            'X=' . (string)(int)($crop['x'] ?? 0),
-            'Y=' . (string)(int)($crop['y'] ?? 0),
-            'W=' . (string)(int)($crop['width'] ?? 1),
-            'H=' . (string)(int)($crop['height'] ?? 1),
-            'FixedRatio=false',
-            'Ratio=As Image',
-            'Orientation=As Image',
-            'Guide=Frame',
-            '',
-        ]);
+        $this->setPp3Value($profile, 'Version', 'AppVersion', '5.9');
+        $this->setPp3Value($profile, 'Version', 'Version', '349');
+        $this->setPp3Value($profile, 'Exposure', 'Auto', !empty($exposure['enabled']) ? 'false' : 'false');
+        $this->setPp3Value($profile, 'Exposure', 'Black', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['black'] ?? 0) : 0));
+        $this->setPp3Value($profile, 'Exposure', 'Brightness', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['lightness'] ?? 0) : 0));
+        $this->setPp3Value($profile, 'Exposure', 'Contrast', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['contrast'] ?? 0) : 0));
+        $this->setPp3Value($profile, 'Exposure', 'Saturation', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['saturation'] ?? 0) : 0));
+
+        $this->setPp3Value($profile, 'Crop', 'Enabled', !empty($crop['enabled']) ? 'true' : 'false');
+        $this->setPp3Value($profile, 'Crop', 'X', (string)(int)($crop['x'] ?? 0));
+        $this->setPp3Value($profile, 'Crop', 'Y', (string)(int)($crop['y'] ?? 0));
+        $this->setPp3Value($profile, 'Crop', 'W', (string)(int)($crop['width'] ?? 1));
+        $this->setPp3Value($profile, 'Crop', 'H', (string)(int)($crop['height'] ?? 1));
+        $this->setPp3Value($profile, 'Crop', 'FixedRatio', 'false');
+        $this->setPp3Value($profile, 'Crop', 'Ratio', 'As Image');
+        $this->setPp3Value($profile, 'Crop', 'Orientation', 'As Image');
+        $this->setPp3Value($profile, 'Crop', 'Guide', 'Frame');
+
+        $this->setPp3Value($profile, 'White Balance', 'Enabled', !empty($whiteBalance['enabled']) ? 'true' : 'false');
+        $this->setPp3Value($profile, 'White Balance', 'Setting', (string)($whiteBalance['setting'] ?? 'Custom'));
+        $this->setPp3Value($profile, 'White Balance', 'Temperature', $this->formatNumber($whiteBalance['temperature'] ?? 5324));
+        $this->setPp3Value($profile, 'White Balance', 'Green', $this->formatNumber($whiteBalance['green'] ?? 0.846));
+
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'Enabled', !empty($shadowsHighlights['enabled']) ? 'true' : 'false');
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'Highlights', $this->formatNumber($shadowsHighlights['highlights'] ?? 30));
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'HighlightTonalWidth', $this->formatNumber($shadowsHighlights['highlight_tonal_width'] ?? 80));
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'Shadows', $this->formatNumber($shadowsHighlights['shadows'] ?? 30));
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'ShadowTonalWidth', $this->formatNumber($shadowsHighlights['shadow_tonal_width'] ?? 80));
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'Radius', $this->formatNumber($shadowsHighlights['radius'] ?? 40));
+        $this->setPp3Value($profile, 'Shadows & Highlights', 'Lab', !empty($shadowsHighlights['lab']) ? 'true' : 'false');
+
+        $localContrast = (float)($shadowsHighlights['local_contrast'] ?? 0);
+        $this->setPp3Value($profile, 'Local Contrast', 'Enabled', $localContrast > 0 ? 'true' : 'false');
+        $this->setPp3Value($profile, 'Local Contrast', 'Amount', $this->formatNumber($localContrast / 30.0));
+        $this->setPp3Value($profile, 'Local Contrast', 'Radius', '80');
+        $this->setPp3Value($profile, 'Local Contrast', 'Darkness', '1');
+        $this->setPp3Value($profile, 'Local Contrast', 'Lightness', '1');
+
+        $this->setPp3Value($profile, 'Rotation', 'Degree', $this->formatNumber(!empty($rotation['enabled']) ? ($rotation['degree'] ?? 0) : 0));
+        $this->setPp3Value($profile, 'Perspective', 'Method', 'simple');
+        $this->setPp3Value($profile, 'Perspective', 'Horizontal', $this->formatNumber(!empty($perspective['enabled']) ? ($perspective['horizontal'] ?? 0) : 0));
+        $this->setPp3Value($profile, 'Perspective', 'Vertical', $this->formatNumber(!empty($perspective['enabled']) ? ($perspective['vertical'] ?? 0) : 0));
+
+        return $this->renderPp3Document($profile);
     }
 
     private function writeProfile(array $photo, array $settings): string
@@ -225,7 +338,8 @@ final class SwallowtailPreviewProfileService
         );
         $this->storageService->ensureDirectoryForPath($path);
 
-        if (file_put_contents($path, $this->pp3Content($settings), LOCK_EX) === false) {
+        $baseline = $this->baselineProfileContent($photo);
+        if (file_put_contents($path, $this->pp3Content($settings, $baseline), LOCK_EX) === false) {
             throw new RuntimeException('Unable to write PP3 profile.');
         }
 
@@ -236,7 +350,7 @@ final class SwallowtailPreviewProfileService
 
     private function sourceDimensions(array $photo): array
     {
-        foreach (['filtered', 'original', 'thumbnail', 'embedded'] as $type) {
+        foreach (['filtered', 'original', 'embedded'] as $type) {
             $info = $this->storageService->imageInfo($photo, $type);
             if ($info === null) {
                 continue;
@@ -301,16 +415,45 @@ final class SwallowtailPreviewProfileService
 
         return [
             'crop' => [
+                'enabled' => $this->boolFromString($values['Crop.Enabled'] ?? 'true'),
                 'x' => max(0, (int)($values['Crop.X'] ?? 0)),
                 'y' => max(0, (int)($values['Crop.Y'] ?? 0)),
                 'width' => max(1, (int)$values['Crop.W']),
                 'height' => max(1, (int)$values['Crop.H']),
             ],
             'exposure' => [
+                'enabled' => true,
                 'black' => (float)($values['Exposure.Black'] ?? 0),
                 'lightness' => (float)($values['Exposure.Brightness'] ?? 0),
                 'contrast' => (float)($values['Exposure.Contrast'] ?? 0),
                 'saturation' => (float)($values['Exposure.Saturation'] ?? 0),
+            ],
+            'white_balance' => [
+                'enabled' => $this->boolFromString($values['White Balance.Enabled'] ?? 'true'),
+                'setting' => (string)($values['White Balance.Setting'] ?? 'Custom'),
+                'temperature' => (float)($values['White Balance.Temperature'] ?? 5324),
+                'green' => (float)($values['White Balance.Green'] ?? 0.846),
+            ],
+            'shadows_highlights' => [
+                'enabled' => $this->boolFromString($values['Shadows & Highlights.Enabled'] ?? 'true'),
+                'highlights' => (float)($values['Shadows & Highlights.Highlights'] ?? 30),
+                'highlight_tonal_width' => (float)($values['Shadows & Highlights.HighlightTonalWidth'] ?? 80),
+                'shadows' => (float)($values['Shadows & Highlights.Shadows'] ?? 30),
+                'shadow_tonal_width' => (float)($values['Shadows & Highlights.ShadowTonalWidth'] ?? 80),
+                'radius' => (float)($values['Shadows & Highlights.Radius'] ?? 40),
+                'lab' => $this->boolFromString($values['Shadows & Highlights.Lab'] ?? 'true'),
+                'local_contrast' => ((float)($values['Local Contrast.Amount'] ?? 0)) * 30.0,
+            ],
+            'rotation' => [
+                'enabled' => abs((float)($values['Rotation.Degree'] ?? 0)) > 0.000001,
+                'degree' => (float)($values['Rotation.Degree'] ?? 0),
+            ],
+            'perspective' => [
+                'enabled' => abs((float)($values['Perspective.Horizontal'] ?? 0)) > 0.000001
+                    || abs((float)($values['Perspective.Vertical'] ?? 0)) > 0.000001,
+                'method' => (string)($values['Perspective.Method'] ?? 'simple'),
+                'horizontal' => (float)($values['Perspective.Horizontal'] ?? 0),
+                'vertical' => (float)($values['Perspective.Vertical'] ?? 0),
             ],
         ];
     }
@@ -319,16 +462,44 @@ final class SwallowtailPreviewProfileService
     {
         return [
             'crop' => [
+                'enabled' => true,
                 'x' => 0,
                 'y' => 0,
                 'width' => max(1, $width),
                 'height' => max(1, $height),
             ],
             'exposure' => [
-                'black' => 0.0,
+                'enabled' => true,
+                'black' => 63.0,
                 'lightness' => 0.0,
-                'contrast' => 0.0,
+                'contrast' => 26.0,
                 'saturation' => 0.0,
+            ],
+            'white_balance' => [
+                'enabled' => true,
+                'setting' => 'Custom',
+                'temperature' => 5324.0,
+                'green' => 0.846,
+            ],
+            'shadows_highlights' => [
+                'enabled' => true,
+                'highlights' => 30.0,
+                'highlight_tonal_width' => 80.0,
+                'shadows' => 30.0,
+                'shadow_tonal_width' => 80.0,
+                'radius' => 40.0,
+                'lab' => true,
+                'local_contrast' => 0.0,
+            ],
+            'rotation' => [
+                'enabled' => false,
+                'degree' => 0.0,
+            ],
+            'perspective' => [
+                'enabled' => false,
+                'method' => 'simple',
+                'horizontal' => 0.0,
+                'vertical' => 0.0,
             ],
         ];
     }
@@ -397,6 +568,110 @@ final class SwallowtailPreviewProfileService
     private function clampFloat(mixed $value, float $min, float $max): float
     {
         return max($min, min($max, (float)$value));
+    }
+
+    private function boolValue(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        return in_array(strtolower((string)$value), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    private function boolFromString(mixed $value): bool
+    {
+        return !in_array(strtolower((string)$value), ['0', 'false', 'no', 'off'], true);
+    }
+
+    private function optionString(mixed $value, array $allowed, string $fallback): string
+    {
+        $value = trim((string)$value);
+
+        return in_array($value, $allowed, true) ? $value : $fallback;
+    }
+
+    private function baselineProfileContent(array $photo): string
+    {
+        $info = $this->storageService->imageInfo($photo, 'baseline');
+        if ($info === null) {
+            return '';
+        }
+
+        $contents = file_get_contents((string)$info['absolute_path']);
+
+        return is_string($contents) ? $contents : '';
+    }
+
+    private function parsePp3Document(string $contents): array
+    {
+        $profile = [
+            'order' => [],
+            'sections' => [],
+        ];
+        $section = '';
+        foreach (preg_split('/\R/', $contents) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#') || str_starts_with($line, ';')) {
+                continue;
+            }
+            if (preg_match('/^\[([^\]]+)\]$/', $line, $match) === 1) {
+                $section = (string)$match[1];
+                $this->ensurePp3Section($profile, $section);
+                continue;
+            }
+            if ($section === '' || !str_contains($line, '=')) {
+                continue;
+            }
+            [$key, $value] = explode('=', $line, 2);
+            $key = trim($key);
+            $this->ensurePp3Section($profile, $section);
+            if (!array_key_exists($key, $profile['sections'][$section]['values'])) {
+                $profile['sections'][$section]['order'][] = $key;
+            }
+            $profile['sections'][$section]['values'][$key] = trim($value);
+        }
+
+        return $profile;
+    }
+
+    private function ensurePp3Section(array &$profile, string $section): void
+    {
+        if (isset($profile['sections'][$section])) {
+            return;
+        }
+
+        $profile['order'][] = $section;
+        $profile['sections'][$section] = [
+            'order' => [],
+            'values' => [],
+        ];
+    }
+
+    private function setPp3Value(array &$profile, string $section, string $key, string $value): void
+    {
+        $this->ensurePp3Section($profile, $section);
+        if (!array_key_exists($key, $profile['sections'][$section]['values'])) {
+            $profile['sections'][$section]['order'][] = $key;
+        }
+        $profile['sections'][$section]['values'][$key] = $value;
+    }
+
+    private function renderPp3Document(array $profile): string
+    {
+        $lines = [];
+        foreach ((array)$profile['order'] as $section) {
+            $section = (string)$section;
+            $data = (array)($profile['sections'][$section] ?? []);
+            $lines[] = '[' . $section . ']';
+            foreach ((array)($data['order'] ?? []) as $key) {
+                $key = (string)$key;
+                $lines[] = $key . '=' . (string)($data['values'][$key] ?? '');
+            }
+            $lines[] = '';
+        }
+
+        return implode("\n", $lines);
     }
 
     private function formatNumber(mixed $value): string

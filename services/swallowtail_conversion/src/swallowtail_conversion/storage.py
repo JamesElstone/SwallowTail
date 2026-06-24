@@ -33,6 +33,7 @@ class ConversionStorageManager:
         "original": ".jpg",
         "filtered": ".jpg",
         "profile": ".pp3",
+        "baseline": ".pp3",
     }
 
     def __init__(

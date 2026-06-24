@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--php-binary", default=_env("PHP_BINARY", "php"))
     parser.add_argument("--app-config", default=_env("APP_CONFIG", ""))
     parser.add_argument("--exiftool-binary", default=_env("EXIFTOOL_BINARY", defaults.metadata.exiftool_binary))
+    parser.add_argument("--rawtherapee-binary", default=_env("RAWTHERAPEE_BINARY", defaults.metadata.rawtherapee_binary))
     parser.add_argument("--poll-min-seconds", type=int, default=_env_int("POLL_MIN_SECONDS", defaults.worker.poll_min_seconds))
     parser.add_argument("--poll-max-seconds", type=int, default=_env_int("POLL_MAX_SECONDS", defaults.worker.poll_max_seconds))
     parser.add_argument("--retry-delay-seconds", type=int, default=_env_int("RETRY_DELAY_SECONDS", defaults.worker.retry_delay_seconds))
@@ -43,7 +44,7 @@ def main() -> int:
     config = replace(
         config,
         project_root=args.project_root,
-        metadata=replace(config.metadata, exiftool_binary=args.exiftool_binary),
+        metadata=replace(config.metadata, exiftool_binary=args.exiftool_binary, rawtherapee_binary=args.rawtherapee_binary),
         worker=replace(
             config.worker,
             poll_min_seconds=max(1, args.poll_min_seconds),

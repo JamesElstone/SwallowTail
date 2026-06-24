@@ -156,6 +156,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         'photo_audit',
         'storage_migration_job_items',
         'storage_migration_jobs',
+        'photo_profile_data',
         'photo_conversion_jobs',
         'event_permissions',
         'event_photos',
@@ -293,6 +294,18 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         duration_seconds REAL NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE photo_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        value TEXT NULL,
+        value_type TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (photo_id, type, `key`)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_audit (
@@ -843,9 +856,11 @@ $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file 
     try {
         $sourcePath = $storage->imagePath($sourceBase, $sha256, 'source');
         $thumbnailPath = $storage->imagePath($sourceBase, $sha256, 'thumbnail');
+        $baselinePath = $storage->imagePath($sourceBase, $sha256, 'baseline');
         $storage->ensureDirectoryForPath($sourcePath);
         file_put_contents($sourcePath, 'source-bytes', LOCK_EX);
         file_put_contents($thumbnailPath, 'thumbnail-bytes', LOCK_EX);
+        file_put_contents($baselinePath, 'baseline-bytes', LOCK_EX);
 
         InterfaceDB::prepareExecute(
             "INSERT INTO photos (
@@ -881,8 +896,10 @@ $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file 
         $harness->assertSame(rtrim($destinationBase, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR, (string)($row['storage_base_location'] ?? ''));
         $harness->assertTrue(is_file($storage->imagePath($destinationBase, $sha256, 'source')));
         $harness->assertTrue(is_file($storage->imagePath($destinationBase, $sha256, 'thumbnail')));
+        $harness->assertTrue(is_file($storage->imagePath($destinationBase, $sha256, 'baseline')));
         $harness->assertTrue(!is_file($sourcePath));
         $harness->assertTrue(!is_file($thumbnailPath));
+        $harness->assertTrue(!is_file($baselinePath));
         $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', [
             'photo_id' => $photoId,
             'action_type' => 'storage_location_migrated',
@@ -2255,6 +2272,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0009.CR2');
     $photoId = (int)$result['photo_id'];
+    (new SwallowtailProfileDataService())->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
     $event = $library->createEvent('Preview Edit Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
     $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
@@ -3172,6 +3190,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $removeQuickHashPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_22_001_remove_original_quick_hash.sql';
     $metadataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_23_003_normalize_photo_metadata.sql';
     $conversionPriorityPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_23_004_conversion_priority_preempt.sql';
+    $profileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_24_001_photo_profile_data.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3183,12 +3202,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $removeQuickHashSql = file_get_contents($removeQuickHashPath);
     $metadataSql = file_get_contents($metadataPath);
     $conversionPrioritySql = file_get_contents($conversionPriorityPath);
+    $profileDataSql = file_get_contents($profileDataPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3213,6 +3233,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'DROP COLUMN IF EXISTS original_quick_hash',
         'CREATE TABLE IF NOT EXISTS photo_metadata',
         'CREATE TABLE IF NOT EXISTS photo_metadata_property',
+        'CREATE TABLE IF NOT EXISTS photo_profile_data',
+        'UNIQUE KEY uq_photo_profile_data_key (photo_id, type, `key`)',
         "status enum('queued','processing','succeeded','failed','cancelled','obsolete')",
         'MODIFY priority int(10) unsigned NOT NULL DEFAULT 20',
         'ADD INDEX idx_conversion_jobs_priority (status, priority, available_at, id)',

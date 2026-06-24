@@ -27,6 +27,7 @@ load_rc_config "$name"
 : ${swallowtail_metadata_worker_group:="swallowtail"}
 : ${swallowtail_metadata_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_metadata.log"}
 : ${swallowtail_metadata_exiftool_binary:="%%PREFIX%%/bin/exiftool"}
+: ${swallowtail_metadata_rawtherapee_binary:="%%PREFIX%%/bin/rawtherapee-cli"}
 : ${swallowtail_metadata_poll_min_seconds:="5"}
 : ${swallowtail_metadata_poll_max_seconds:="60"}
 : ${swallowtail_metadata_retry_delay_seconds:="60"}
@@ -37,7 +38,7 @@ pidfile="/var/run/swallowtail/swallowtail_metadata.pid"
 procname="${swallowtail_metadata_python}"
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -u ${swallowtail_metadata_worker_user} -o ${swallowtail_metadata_log} ${swallowtail_metadata_python} -m swallowtail_metadata"
-required_files="${swallowtail_metadata_python} ${swallowtail_metadata_php} ${swallowtail_metadata_app_config} ${swallowtail_metadata_exiftool_binary}"
+required_files="${swallowtail_metadata_python} ${swallowtail_metadata_php} ${swallowtail_metadata_app_config} ${swallowtail_metadata_exiftool_binary} ${swallowtail_metadata_rawtherapee_binary}"
 required_dirs="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
 extra_commands="reload onestatus"
 start_precmd="swallowtail_metadata_precmd"
@@ -51,6 +52,7 @@ swallowtail_metadata_export_env()
 	export SWALLOWTAIL_METADATA_APP_CONFIG="${swallowtail_metadata_app_config}"
 	export SWALLOWTAIL_METADATA_PHP_BINARY="${swallowtail_metadata_php}"
 	export SWALLOWTAIL_METADATA_EXIFTOOL_BINARY="${swallowtail_metadata_exiftool_binary}"
+	export SWALLOWTAIL_METADATA_RAWTHERAPEE_BINARY="${swallowtail_metadata_rawtherapee_binary}"
 	export SWALLOWTAIL_METADATA_POLL_MIN_SECONDS="${swallowtail_metadata_poll_min_seconds}"
 	export SWALLOWTAIL_METADATA_POLL_MAX_SECONDS="${swallowtail_metadata_poll_max_seconds}"
 	export SWALLOWTAIL_METADATA_RETRY_DELAY_SECONDS="${swallowtail_metadata_retry_delay_seconds}"

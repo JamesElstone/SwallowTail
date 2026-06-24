@@ -44,6 +44,7 @@ class DaylightSavingConfig:
 @dataclass(frozen=True)
 class MetadataConfig:
     exiftool_binary: str
+    rawtherapee_binary: str
     server_timezone: str
     daylight_saving: DaylightSavingConfig
 
@@ -79,6 +80,7 @@ def default_config() -> AppConfig:
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
         metadata=MetadataConfig(
             exiftool_binary="/usr/local/bin/exiftool",
+            rawtherapee_binary="/usr/local/bin/rawtherapee-cli",
             server_timezone="Europe/London",
             daylight_saving=DaylightSavingConfig(enabled=False, start="03-31", end="10-31", offset_minutes=60),
         ),

@@ -833,8 +833,10 @@ class StorageManagerTest(unittest.TestCase):
         new_base = self.root / "storage-new"
         new_base.mkdir(parents=True)
         source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        baseline = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_baseline.pp3"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2 relocation test")
+        baseline.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
 
         class FakeDb:
             def __init__(self) -> None:
@@ -879,9 +881,12 @@ class StorageManagerTest(unittest.TestCase):
         with self.assertLogs("swallowtail_conversion.storage", level="INFO") as logs:
             relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
         new_source = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        new_baseline = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_baseline.pp3"
 
         self.assertTrue(new_source.is_file())
+        self.assertTrue(new_baseline.is_file())
         self.assertFalse(source.exists())
+        self.assertFalse(baseline.exists())
         self.assertIn(str(new_base), relocated.input_path)
         self.assertIn(str(new_base), relocated.output_path)
         self.assertIsNotNone(db.updated)
@@ -892,7 +897,7 @@ class StorageManagerTest(unittest.TestCase):
         self.assertTrue(any("old_free_bytes=50" in line for line in logs.output))
         self.assertTrue(any("old_threshold_bytes=100" in line for line in logs.output))
         self.assertTrue(any(f"new_base={str(new_base.resolve()) + os.sep}" in line for line in logs.output))
-        self.assertTrue(any(f"copied_files={checksum}_source.cr2" in line for line in logs.output))
+        self.assertTrue(any(f"{checksum}_source.cr2" in line and f"{checksum}_baseline.pp3" in line for line in logs.output))
 
     def test_relocation_skips_unwritable_storage_destination(self) -> None:
         checksum = "b" * 64

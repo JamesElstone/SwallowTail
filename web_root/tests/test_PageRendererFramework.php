@@ -292,7 +292,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(str_contains($script, "displayedPreviewStage = 'filtered';"));
     });
 
-    $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to neutral settings through preview flow', function () use ($harness): void {
+    $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to baseline settings through preview flow', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 
         if (!is_string($script)) {
@@ -300,10 +300,9 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         }
 
         $harness->assertTrue(str_contains($script, 'data-picture-editor-revert'));
-        $harness->assertTrue(str_contains($script, 'function revertToOriginal()'));
-        $harness->assertTrue(str_contains($script, 'crop: { x: 0, y: 0, width: sourceWidth, height: sourceHeight }'));
-        $harness->assertTrue(str_contains($script, 'exposure: { black: 0, lightness: 0, contrast: 0, saturation: 0 }'));
-        $harness->assertTrue(str_contains($script, 'syncExposureControls();'));
+        $harness->assertTrue(str_contains($script, 'function revertToBaseline()'));
+        $harness->assertTrue(str_contains($script, 'baselineSettings'));
+        $harness->assertTrue(str_contains($script, 'syncControls();'));
         $harness->assertTrue(str_contains($script, 'scheduleSubmit();'));
     });
 });
