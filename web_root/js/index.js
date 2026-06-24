@@ -17,6 +17,7 @@
     const afPersistentCookieName = 'af_client_device_id';
     const tableCondensedStoragePrefix = 'table_condensed_view:';
     const galleryAutoRefreshStorageKey = 'gallery:auto-refresh:browse_gallery';
+    const cardMaximizedStorageKey = 'card:maximized';
     const galleryAutoRefreshIntervalMs = 5000;
     let afEphemeralDeviceId = null;
     const ajaxNonceBootstrapId = 'ajax-security-bootstrap';
@@ -2446,7 +2447,11 @@
                 const replacement = template.content.firstElementChild;
 
                 if (replacement instanceof HTMLElement && current) {
+                    const wasMaximized = current.classList.contains('card-maximized');
                     current.replaceWith(replacement);
+                    if (wasMaximized) {
+                        setCardMaximized(replacement, true);
+                    }
                     initialisePageCardTabs(replacement);
                     initialiseCardToggles(replacement);
                     initStateWatchers(replacement);
@@ -2863,7 +2868,19 @@
     }
 
     function initialiseCardToggles(scope = document) {
-        const cards = scope.querySelectorAll ? scope.querySelectorAll('.card') : [];
+        const cards = [];
+
+        if (scope instanceof HTMLElement && scope.matches('.card')) {
+            cards.push(scope);
+        }
+
+        if (scope.querySelectorAll) {
+            scope.querySelectorAll('.card').forEach((card) => {
+                if (card instanceof HTMLElement) {
+                    cards.push(card);
+                }
+            });
+        }
 
         cards.forEach((card) => {
             const title = card.querySelector('.card-title');
@@ -2883,6 +2900,8 @@
             title.setAttribute('tabindex', '0');
             title.setAttribute('aria-controls', cardBody.id);
             title.setAttribute('aria-expanded', cardBody.hidden ? 'false' : 'true');
+
+            restoreStoredCardMaximized(card);
         });
     }
 
@@ -2894,12 +2913,77 @@
         body.classList.toggle('card-maximized-active', Boolean(document.querySelector('.card.card-maximized')));
     }
 
-    function setCardMaximized(card, maximized, focusToggle = false) {
+    function currentPageId() {
+        const main = document.querySelector('.main[data-current-page]');
+
+        return main instanceof HTMLElement ? String(main.dataset.currentPage || '').trim() : '';
+    }
+
+    function cardStorageIdentity(card) {
+        if (!(card instanceof HTMLElement)) {
+            return '';
+        }
+
+        const cardKey = String(card.dataset.cardKey || '').trim();
+        const pageId = currentPageId();
+
+        return pageId !== '' && cardKey !== '' ? `${pageId}:${cardKey}` : '';
+    }
+
+    function storedMaximizedCardIdentity() {
+        if (!afStorageAvailable('localStorage')) {
+            return '';
+        }
+
+        try {
+            return String(window.localStorage.getItem(cardMaximizedStorageKey) || '').trim();
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function setStoredMaximizedCard(card, maximized) {
+        if (!afStorageAvailable('localStorage')) {
+            return;
+        }
+
+        const identity = cardStorageIdentity(card);
+        if (identity === '') {
+            return;
+        }
+
+        try {
+            if (maximized) {
+                window.localStorage.setItem(cardMaximizedStorageKey, identity);
+                return;
+            }
+
+            if (storedMaximizedCardIdentity() === identity) {
+                window.localStorage.removeItem(cardMaximizedStorageKey);
+            }
+        } catch (error) {
+            // Storage may be disabled; the visible card state still applies.
+        }
+    }
+
+    function restoreStoredCardMaximized(card) {
+        const identity = cardStorageIdentity(card);
+
+        if (identity !== '' && storedMaximizedCardIdentity() === identity) {
+            setCardMaximized(card, true, false, false);
+        }
+    }
+
+    function setCardMaximized(card, maximized, focusToggle = false, persist = true) {
         if (!(card instanceof HTMLElement)) {
             return;
         }
 
         card.classList.toggle('card-maximized', maximized);
+
+        if (persist) {
+            setStoredMaximizedCard(card, maximized);
+        }
 
         const toggle = card.querySelector('[data-card-size-toggle]');
         if (toggle instanceof HTMLButtonElement) {

@@ -237,13 +237,31 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
             throw new RuntimeException('Unable to read frontend script.');
         }
 
-        $harness->assertTrue(str_contains(
-            $script,
-            "current.replaceWith(replacement);\r\n                    initialisePageCardTabs(replacement);"
-        ) || str_contains(
-            $script,
-            "current.replaceWith(replacement);\n                    initialisePageCardTabs(replacement);"
-        ));
+        $replacePosition = strpos($script, 'current.replaceWith(replacement);');
+        $rebindPosition = strpos($script, 'initialisePageCardTabs(replacement);');
+
+        $harness->assertTrue($replacePosition !== false);
+        $harness->assertTrue($rebindPosition !== false);
+        $harness->assertTrue($replacePosition < $rebindPosition);
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend preserves maximized cards after AJAX card replacement', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        $harness->assertTrue(str_contains($script, "const wasMaximized = current.classList.contains('card-maximized');"));
+        $harness->assertTrue(str_contains($script, 'setCardMaximized(replacement, true);'));
+        $harness->assertTrue(str_contains($script, "const cardMaximizedStorageKey = 'card:maximized';"));
+        $harness->assertTrue(str_contains($script, 'function cardStorageIdentity(card)'));
+        $harness->assertTrue(str_contains($script, 'function restoreStoredCardMaximized(card)'));
+        $harness->assertTrue(str_contains($script, 'restoreStoredCardMaximized(card);'));
+        $harness->assertTrue(
+            strpos($script, "const wasMaximized = current.classList.contains('card-maximized');") <
+            strpos($script, 'current.replaceWith(replacement);')
+        );
     });
 
     $harness->check(PageRendererFramework::class, 'frontend page card switchers can target page-level tab root', function () use ($harness): void {
