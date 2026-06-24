@@ -129,13 +129,17 @@ class MetadataWorker:
             self.db.mark_profile_processing(photo_id)
             result = self.profile_runner.generate(source_path, baseline_path)
             properties = parse_pp3_properties(baseline_path.read_text(encoding="utf-8"))
-            self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
+            store_stats = self.db.replace_profile_data(photo_id, properties, str(baseline_path), result.version)
             duration_seconds = time.perf_counter() - started_at
             self.log.info(
-                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f",
+                "Generated RawTherapee baseline profile for photo=%s path=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s",
                 photo_id,
                 baseline_path,
                 duration_seconds,
+                int(store_stats.get("profile_rows_written", len(properties)) if store_stats else len(properties)),
+                int(store_stats.get("profile_sections", 0) if store_stats else 0),
+                int(store_stats.get("profile_insert_batches", 0) if store_stats else 0),
+                int(store_stats.get("profile_largest_value_length", 0) if store_stats else 0),
             )
         except Exception as exc:
             status = self.db.defer_profile(

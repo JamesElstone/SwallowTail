@@ -11,8 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from swallowtail_metadata.config import DaylightSavingConfig, default_config
+from swallowtail_metadata.db import MetadataDatabase
 from swallowtail_metadata.exiftool import extract_properties, parse_metadata
-from swallowtail_metadata.profile import RawTherapeeBaselineRunner
+from swallowtail_metadata.profile import RawTherapeeBaselineRunner, parse_pp3_properties
 from swallowtail_metadata.worker import MetadataWorker
 
 
@@ -53,6 +54,14 @@ class FakeDatabase:
 
     def replace_profile_data(self, photo_id, rows, baseline_path, rawtherapee_version):
         self.profile_ready.append((photo_id, rows, baseline_path, rawtherapee_version))
+        sections = {row["type"] for row in rows}
+        largest_value_length = max((len(str(row.get("value") or "")) for row in rows), default=0)
+        return {
+            "profile_rows_written": len(rows),
+            "profile_sections": len(sections),
+            "profile_insert_batches": len(sections),
+            "profile_largest_value_length": largest_value_length,
+        }
 
     def defer_profile(self, photo_id, message, max_attempts, retry_delay_seconds):
         self.profile_deferred.append((photo_id, message, max_attempts, retry_delay_seconds))
@@ -133,6 +142,38 @@ class FakeLog:
 
     def debug(self, message, *args, **_kwargs):
         self.debugs.append(message % args if args else message)
+
+
+class FakeCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.description = []
+
+    def execute(self, sql, params=()):
+        self.connection.executed.append((sql, params))
+        return self
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+
+class FakeConnection:
+    def __init__(self):
+        self.executed = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    def cursor(self):
+        return FakeCursor(self)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 class MetadataParserTest(unittest.TestCase):
@@ -227,6 +268,78 @@ class MetadataParserTest(unittest.TestCase):
             ],
             properties,
         )
+
+    def test_pp3_parser_keeps_real_baseline_properties_as_rows(self) -> None:
+        pp3_path = Path(__file__).resolve().parents[3] / "examples" / "TEST.CR2.pp3"
+
+        properties = parse_pp3_properties(pp3_path.read_text(encoding="utf-8"))
+
+        exposure_curve = next(
+            row for row in properties
+            if row["type"] == "Exposure" and row["key"] == "Curve"
+        )
+        self.assertEqual("string", exposure_curve["value_type"])
+        self.assertTrue(str(exposure_curve["value"]).startswith("4;0;0;0.050000000000000003;"))
+        self.assertIn({"type": "Version", "key": "AppVersion", "value": "5.9", "value_type": "float"}, properties)
+        self.assertGreater(len(properties), 100)
+
+
+class MetadataDatabaseProfileDataTest(unittest.TestCase):
+    def database(self) -> tuple[MetadataDatabase, FakeConnection]:
+        connection = FakeConnection()
+        database = object.__new__(MetadataDatabase)
+        database.driver = "pymysql"
+        database.paramstyle = "%s"
+        database.connection = connection
+        return database, connection
+
+    def section_insert_statements(self, connection: FakeConnection) -> list[tuple[str, tuple]]:
+        return [
+            (sql, params) for sql, params in connection.executed
+            if "INSERT INTO photo_profile_data" in sql
+            and len(params) >= 5
+            and params[1] != "swallowtail"
+        ]
+
+    def test_replace_profile_data_inserts_one_multi_row_batch_per_section(self) -> None:
+        database, connection = self.database()
+        properties = parse_pp3_properties(
+            "[Version]\nAppVersion=5.9\nVersion=349\n\n"
+            "[Exposure]\nBlack=63\nCurve=4;0;0;0.050000000000000003;0.035148935901110998;\n"
+        )
+
+        stats = database.replace_profile_data(42, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+
+        section_inserts = self.section_insert_statements(connection)
+        self.assertEqual(2, len(section_inserts))
+        self.assertEqual(10, len(section_inserts[0][1]))
+        self.assertEqual([42, "Version", "AppVersion", "5.9", "float"], list(section_inserts[0][1][0:5]))
+        self.assertEqual([42, "Version", "Version", "349", "int"], list(section_inserts[0][1][5:10]))
+        self.assertEqual("Exposure", section_inserts[1][1][1])
+        self.assertIn("Curve", section_inserts[1][1])
+        self.assertEqual(4, stats["profile_rows_written"])
+        self.assertEqual(2, stats["profile_sections"])
+        self.assertEqual(2, stats["profile_insert_batches"])
+        self.assertGreater(stats["profile_largest_value_length"], 40)
+        self.assertEqual(1, connection.commits)
+        self.assertTrue(connection.executed[0][0].strip().startswith("DELETE FROM photo_profile_data"))
+
+    def test_replace_profile_data_splits_large_sections_by_batch_limit(self) -> None:
+        database, connection = self.database()
+        database.PROFILE_INSERT_BATCH_ROWS = 2
+        properties = parse_pp3_properties(
+            "[Exposure]\nBlack=63\nBrightness=0\nContrast=26\n"
+        )
+
+        stats = database.replace_profile_data(7, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+
+        section_inserts = self.section_insert_statements(connection)
+        self.assertEqual(2, len(section_inserts))
+        self.assertEqual(10, len(section_inserts[0][1]))
+        self.assertEqual(5, len(section_inserts[1][1]))
+        self.assertEqual(3, stats["profile_rows_written"])
+        self.assertEqual(1, stats["profile_sections"])
+        self.assertEqual(2, stats["profile_insert_batches"])
 
 
 class RawTherapeeBaselineRunnerTest(unittest.TestCase):

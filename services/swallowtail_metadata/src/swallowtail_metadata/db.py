@@ -7,6 +7,8 @@ from .config import DatabaseConfig
 
 
 class MetadataDatabase:
+    PROFILE_INSERT_BATCH_ROWS = 100
+
     FIELD_NAMES = [
         "captured_at_local",
         "camera_timezone_city_code",
@@ -211,21 +213,62 @@ class MetadataDatabase:
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self.connection.commit()
 
-    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], baseline_path: str, rawtherapee_version: str) -> None:
+    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], baseline_path: str, rawtherapee_version: str) -> dict[str, int]:
         self._execute("DELETE FROM photo_profile_data WHERE photo_id = %s AND type <> 'swallowtail'", (photo_id,))
-        for row in properties:
-            self._set_profile_value(
-                photo_id,
-                str(row.get("type") or "")[:32],
-                str(row.get("key") or "")[:191],
-                row.get("value"),
-                str(row.get("value_type") or "string"),
-            )
+        stats = self._insert_profile_properties_by_section(photo_id, properties)
         self._set_profile_value(photo_id, "swallowtail", "baseline_profile_path", baseline_path, "string")
         self._set_profile_value(photo_id, "swallowtail", "rawtherapee_version", rawtherapee_version, "string")
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self._set_profile_value(photo_id, "swallowtail", "status", "processed", "string")
         self.connection.commit()
+        return stats
+
+    def _insert_profile_properties_by_section(self, photo_id: int, properties: list[dict[str, Any]]) -> dict[str, int]:
+        sections: dict[str, list[dict[str, Any]]] = {}
+        largest_value_length = 0
+        for row in properties:
+            type_name = str(row.get("type") or "")[:32]
+            key = str(row.get("key") or "")[:191]
+            value = row.get("value")
+            value_type = str(row.get("value_type") or "string")
+            value_type = value_type if value_type in {"null", "bool", "int", "float", "string"} else "string"
+            stored_value = None if value is None else str(value)
+            largest_value_length = max(largest_value_length, len(stored_value or ""))
+            sections.setdefault(type_name, []).append({
+                "type": type_name,
+                "key": key,
+                "value": stored_value,
+                "value_type": value_type,
+            })
+
+        insert_batches = 0
+        rows_written = 0
+        for rows in sections.values():
+            for start in range(0, len(rows), self.PROFILE_INSERT_BATCH_ROWS):
+                batch = rows[start:start + self.PROFILE_INSERT_BATCH_ROWS]
+                if not batch:
+                    continue
+                placeholders = ", ".join(["(%s, %s, %s, %s, %s)"] * len(batch))
+                params: list[Any] = []
+                for row in batch:
+                    params.extend([photo_id, row["type"], row["key"], row["value"], row["value_type"]])
+                self._execute(
+                    f"""
+                    INSERT INTO photo_profile_data (
+                        photo_id, type, `key`, value, value_type
+                    ) VALUES {placeholders}
+                    """,
+                    tuple(params),
+                )
+                insert_batches += 1
+                rows_written += len(batch)
+
+        return {
+            "profile_rows_written": rows_written,
+            "profile_sections": len(sections),
+            "profile_insert_batches": insert_batches,
+            "profile_largest_value_length": largest_value_length,
+        }
 
     def defer_profile(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
         attempts_row = self._fetchone(
