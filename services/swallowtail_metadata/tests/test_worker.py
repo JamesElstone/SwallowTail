@@ -407,9 +407,11 @@ class RawTherapeeBaselineRunnerTest(unittest.TestCase):
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"II*\0CR2")
         captured_env = {}
+        captured_command = {}
 
         def fake_run(command, **kwargs):
             if "-O" in command:
+                captured_command["command"] = command
                 captured_env.update(kwargs.get("env") or {})
                 scratch = Path(command[command.index("-O") + 1])
                 scratch.write_bytes(b"jpg")
@@ -426,6 +428,7 @@ class RawTherapeeBaselineRunnerTest(unittest.TestCase):
             with patch("swallowtail_metadata.profile.subprocess.run", side_effect=fake_run):
                 runner.generate(source, baseline)
 
+            self.assertIn("-q", captured_command["command"])
             home = Path(captured_env["HOME"])
             self.assertEqual(baseline.parent, home.parent)
             self.assertTrue(home.name.startswith(baseline.stem[0:16] + "_rt_"))

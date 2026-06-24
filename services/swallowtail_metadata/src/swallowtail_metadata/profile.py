@@ -29,7 +29,7 @@ class RawTherapeeBaselineRunner:
     def generate(self, source_path: Path, baseline_path: Path) -> BaselineResult:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
         scratch = baseline_path.with_name(baseline_path.stem + "_scratch.jpg")
-        command = [self.binary, "-Y", "-O", str(scratch), "-j1", "-c", str(source_path)]
+        command = [self.binary, "-q", "-Y", "-O", str(scratch), "-j1", "-c", str(source_path)]
         runtime_path = self._create_runtime_path(baseline_path)
         try:
             env = self._runtime_environment(runtime_path)
