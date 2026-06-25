@@ -43,7 +43,10 @@ class RedisQueue:
         return self._to_text(response) == "OK"
 
     def pop(self) -> RedisMessage | None:
-        return self._blocking_pop([self.config.urgent_queue, self.config.normal_queue], self.config.timeout_seconds)
+        return self._blocking_pop(
+            [self.config.urgent_queue, self.config.normal_queue, self.config.storage_wake_queue],
+            self.config.timeout_seconds,
+        )
 
     def pop_storage_wake(self, timeout_seconds: int) -> bool:
         if self.config.storage_wake_queue == "":

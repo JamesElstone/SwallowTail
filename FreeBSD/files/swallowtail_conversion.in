@@ -30,6 +30,7 @@ load_rc_config "$name"
 : ${swallowtail_conversion_redis_port:="6379"}
 : ${swallowtail_conversion_redis_urgent_queue:="swallowtail:conversion:urgent"}
 : ${swallowtail_conversion_redis_normal_queue:="swallowtail:conversion:normal"}
+: ${swallowtail_conversion_redis_storage_wake_queue:="swallowtail:conversion:storage_wake"}
 : ${swallowtail_conversion_redis_timeout_seconds:="5"}
 : ${swallowtail_conversion_rawtherapee_binary:="%%PREFIX%%/bin/rawtherapee-cli"}
 : ${swallowtail_conversion_rawtherapee_maximum_threads:="1"}
@@ -67,6 +68,7 @@ swallowtail_conversion_export_env()
 	export SWALLOWTAIL_CONVERSION_REDIS_PORT="${swallowtail_conversion_redis_port}"
 	export SWALLOWTAIL_CONVERSION_REDIS_URGENT_QUEUE="${swallowtail_conversion_redis_urgent_queue}"
 	export SWALLOWTAIL_CONVERSION_REDIS_NORMAL_QUEUE="${swallowtail_conversion_redis_normal_queue}"
+	export SWALLOWTAIL_CONVERSION_REDIS_STORAGE_WAKE_QUEUE="${swallowtail_conversion_redis_storage_wake_queue}"
 	export SWALLOWTAIL_CONVERSION_REDIS_TIMEOUT_SECONDS="${swallowtail_conversion_redis_timeout_seconds}"
 	export SWALLOWTAIL_CONVERSION_RAWTHERAPEE_BINARY="${swallowtail_conversion_rawtherapee_binary}"
 	export SWALLOWTAIL_CONVERSION_RAWTHERAPEE_MAXIMUM_THREADS="${swallowtail_conversion_rawtherapee_maximum_threads}"

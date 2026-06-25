@@ -169,11 +169,23 @@ class ConversionWorker:
         target = self._consume_preempt_target()
         if target is not None:
             return target
-        self.redis.pop()
+        message = self.redis.pop()
+        if self._is_storage_wake_message(message):
+            self.log.info("Storage wake received; rechecking storage availability")
         target = self._consume_preempt_target()
         if target is not None:
             return target
         return self.db.next_queued_job_id()
+
+    def _is_storage_wake_message(self, message) -> bool:
+        if message is None:
+            return False
+        config = getattr(self, "config", None)
+        redis_config = getattr(config, "redis", None)
+        storage_wake_queue = str(getattr(redis_config, "storage_wake_queue", "") or "")
+        if storage_wake_queue == "":
+            return False
+        return str(getattr(message, "queue", "") or "") == storage_wake_queue
 
     def _should_preempt(self, job: ConversionJob) -> bool:
         if self._job_is_obsolete(job):

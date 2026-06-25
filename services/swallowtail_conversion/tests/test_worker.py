@@ -28,6 +28,7 @@ from swallowtail_conversion.embedded import EmbeddedJpegExtractor
 from swallowtail_conversion.health import _check_directory_writable, _check_log_writable
 from swallowtail_conversion.jobs import ConversionJob
 from swallowtail_conversion.rawtherapee import RawTherapeeRunner
+from swallowtail_conversion.redis_queue import RedisQueue
 from swallowtail_conversion.storage import ConversionStorageManager, StorageBlocked
 from swallowtail_conversion.worker import ConversionWorker
 
@@ -476,6 +477,54 @@ class WorkerBehaviourTest(unittest.TestCase):
         worker.db = FakeDb()
 
         self.assertEqual(12, worker._next_job_id())
+
+    def test_redis_job_pop_listens_for_storage_wake_queue(self) -> None:
+        config = app_config(self.root, str(self.fake)).redis
+
+        class CapturingRedisQueue(RedisQueue):
+            def __init__(self):
+                super().__init__(config)
+                self.queues: list[str] = []
+                self.timeout_seconds = 0
+
+            def _blocking_pop(self, queues: list[str], timeout_seconds: int):
+                self.queues = queues
+                self.timeout_seconds = timeout_seconds
+                return None
+
+        redis = CapturingRedisQueue()
+
+        self.assertIsNone(redis.pop())
+        self.assertEqual(["urgent", "normal", "storage-wake"], redis.queues)
+        self.assertEqual(1, redis.timeout_seconds)
+
+    def test_storage_wake_message_during_idle_is_logged_and_database_is_checked(self) -> None:
+        class FakeRedis:
+            def pop(self):
+                return SimpleNamespace(queue="storage-wake", job_id=0, reason="storage_refresh")
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.selected = False
+
+            def next_queued_job_id(self):
+                self.selected = True
+                return 15
+
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.redis = FakeRedis()
+        worker.db = db
+        worker.preempt_lock = threading.Lock()
+        worker.preempt_target = None
+        worker.log = logging.getLogger("swallowtail_conversion.worker")
+
+        with self.assertLogs("swallowtail_conversion.worker", level="INFO") as logs:
+            self.assertEqual(15, worker._next_job_id())
+
+        self.assertTrue(db.selected)
+        self.assertTrue(any("Storage wake received; rechecking storage availability" in line for line in logs.output))
 
     def test_preempt_message_is_verified_and_consumed_before_database_polling(self) -> None:
         class FakeRedis:

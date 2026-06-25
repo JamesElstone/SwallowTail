@@ -1,7 +1,8 @@
 # SwallowTail Conversion Service
 
 This service consumes SwallowTail conversion jobs from MariaDB, wakes quickly via
-Redis, and renders `.CR2` RAW image files with `rawtherapee-cli`.
+Redis, drains storage-availability wake messages while idle or storage-blocked,
+and renders `.CR2` RAW image files with `rawtherapee-cli`.
 
 PHP owns storage decisions. Each job includes the image type, input path,
 optional PP3 profile path, and final output path. The worker renders into a
@@ -22,6 +23,7 @@ overridden in `/etc/rc.conf`:
 
 ```sh
 sysrc swallowtail_conversion_poll_interval_seconds=5
+sysrc swallowtail_conversion_redis_storage_wake_queue=swallowtail:conversion:storage_wake
 ```
 
 Database settings are read from the same `secure/app.php` file used by the web
