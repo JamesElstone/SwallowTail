@@ -25,7 +25,8 @@ return array (
     'log_path' => '',
     'raw_upload_timing' => false,
   ),
-  'navigation' => array (
+  'navigation' => 
+  array (
     'default_order' => 
     array (
     ),
@@ -56,7 +57,8 @@ return array (
       'storage_blocked_poll_interval_seconds' => 3600,
       'test_base_location' => '',
     ),
-    'redis' => array (
+    'redis' => 
+    array (
       'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
     ),
   ),
