@@ -11,6 +11,7 @@ final class SwallowtailPreviewProfileService
 {
     private const DEFAULT_SOURCE_WIDTH = 6000;
     private const DEFAULT_SOURCE_HEIGHT = 4000;
+    private const STATUS_IMAGE_TYPES = ['preview', 'final'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -46,8 +47,7 @@ final class SwallowtailPreviewProfileService
             )
             : $this->defaultSettings($dimensions['width'], $dimensions['height']);
 
-        $latestProfileVersion = $this->latestProfileVersion((int)$photo['id'], 'preview');
-        $previewType = $this->previewImageType($photo);
+        $preview = $this->previewWorkflowState($photo, $baselineStatus, $userId);
 
         return [
             'photo' => $photo,
@@ -55,11 +55,12 @@ final class SwallowtailPreviewProfileService
             'source_height' => $dimensions['height'],
             'settings' => $settings,
             'baseline' => $baselineStatus,
-            'preview_ready' => $previewType !== null,
-            'preview_type' => $previewType,
-            'preview_url' => $previewType !== null
-                ? $this->previewUrl($photoId, $latestProfileVersion, null, $previewType)
-                : '',
+            'preview' => $preview,
+            'preview_ready' => !empty($preview['ready']),
+            'preview_type' => (string)($preview['display_type'] ?? ''),
+            'preview_url' => (string)($preview['display_url'] ?? ''),
+            'preview_status' => (string)($preview['status'] ?? ''),
+            'preview_status_url' => (string)($preview['status_url'] ?? ''),
         ];
     }
 
@@ -128,11 +129,7 @@ final class SwallowtailPreviewProfileService
             'profile_version' => $profileVersion,
             'settings' => $settings,
             $imageType . '_url' => $this->previewUrl($photoId, $profileVersion, $jobId, $imageType),
-            'status_url' => '/api/photo-' . $imageType . '-status.php?' . http_build_query([
-                'photo_id' => $photoId,
-                'job_id' => $jobId,
-                'profile_version' => $profileVersion,
-            ]),
+            'status_url' => $this->statusUrl($photoId, $jobId, $profileVersion, $imageType),
         ];
         if ($imageType === 'preview') {
             $result['preview_url'] = $result['preview_url'] ?? $this->previewUrl($photoId, $profileVersion, $jobId, 'preview');
@@ -169,21 +166,29 @@ final class SwallowtailPreviewProfileService
             )
             : $this->defaultSettings($dimensions['width'], $dimensions['height']);
 
+        $preview = $this->previewWorkflowState($photo, $status, $userId);
+
         return [
             'success' => true,
             'baseline' => $status,
             'settings' => $settings,
+            'preview' => $preview,
+            'preview_ready' => !empty($preview['ready']),
+            'preview_status_url' => (string)($preview['status_url'] ?? ''),
         ];
     }
 
-    public function previewStatus(int $photoId, int $jobId, int $profileVersion, int $userId): array
+    public function imageStatus(int $photoId, int $jobId, int $profileVersion, int $userId, string $imageType): array
     {
-        return $this->renderStatus($photoId, $jobId, $profileVersion, $userId, 'preview');
-    }
+        $imageType = strtolower(trim($imageType));
+        if (!in_array($imageType, self::STATUS_IMAGE_TYPES, true)) {
+            return [
+                'success' => false,
+                'errors' => ['Unsupported image status type.'],
+            ];
+        }
 
-    public function finalStatus(int $photoId, int $jobId, int $profileVersion, int $userId): array
-    {
-        return $this->renderStatus($photoId, $jobId, $profileVersion, $userId, 'final');
+        return $this->renderStatus($photoId, $jobId, $profileVersion, $userId, $imageType);
     }
 
     private function renderStatus(int $photoId, int $jobId, int $profileVersion, int $userId, string $imageType): array
@@ -236,6 +241,84 @@ final class SwallowtailPreviewProfileService
         }
 
         return $payload;
+    }
+
+    private function previewWorkflowState(array $photo, array $baselineStatus, int $userId): array
+    {
+        $photoId = max(0, (int)($photo['id'] ?? 0));
+        $latestProfileVersion = $this->latestProfileVersion($photoId, 'preview');
+        if ($this->storageService->imageInfo($photo, 'preview') !== null) {
+            return [
+                'ready' => true,
+                'status' => 'succeeded',
+                'display_type' => 'preview',
+                'display_url' => $this->previewUrl($photoId, $latestProfileVersion, null, 'preview'),
+                'preview_url' => $this->previewUrl($photoId, $latestProfileVersion, null, 'preview'),
+            ];
+        }
+
+        $state = [
+            'ready' => false,
+            'status' => empty($baselineStatus['ready']) ? 'profile_pending' : 'preview_pending',
+            'display_type' => '',
+            'display_url' => '',
+            'preview_url' => '',
+            'status_url' => '',
+        ];
+
+        if ($this->storageService->imageInfo($photo, 'thumbnail') !== null) {
+            $state['display_type'] = 'thumbnail';
+            $state['display_url'] = $this->previewUrl($photoId, $latestProfileVersion, null, 'thumbnail');
+        }
+
+        if (empty($baselineStatus['ready'])) {
+            return $state;
+        }
+
+        $job = $this->activePreviewJob($photoId);
+        if ($job === null) {
+            $profileVersion = $this->nextProfileVersion($photoId, 'preview');
+            $profilePath = $this->writeProfile($photo, 'preview');
+            $jobId = $this->queueService->enqueuePreviewRefresh($photoId, $profilePath, $profileVersion, $userId);
+            if ($jobId !== null) {
+                $job = [
+                    'id' => $jobId,
+                    'profile_version' => $profileVersion,
+                    'status' => 'queued',
+                ];
+            }
+        }
+
+        if (is_array($job)) {
+            $jobId = max(0, (int)($job['id'] ?? 0));
+            $profileVersion = max(1, (int)($job['profile_version'] ?? 1));
+            if ($jobId > 0) {
+                $state['status'] = (string)($job['status'] ?? 'queued');
+                $state['status_url'] = $this->statusUrl($photoId, $jobId, $profileVersion, 'preview');
+            }
+        }
+
+        return $state;
+    }
+
+    private function activePreviewJob(int $photoId): ?array
+    {
+        if ($photoId <= 0) {
+            return null;
+        }
+
+        $job = InterfaceDB::fetchOne(
+            "SELECT id, status, profile_version
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = 'preview'
+               AND status IN ('queued', 'processing')
+             ORDER BY profile_version DESC, id DESC
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
+
+        return is_array($job) ? $job : null;
     }
 
     public function normaliseSettings(array $payload, int $sourceWidth, int $sourceHeight): array
@@ -519,17 +602,6 @@ final class SwallowtailPreviewProfileService
         );
     }
 
-    private function previewImageType(array $photo): ?string
-    {
-        foreach (['preview', 'thumbnail'] as $type) {
-            if ($this->storageService->imageInfo($photo, $type) !== null) {
-                return $type;
-            }
-        }
-
-        return null;
-    }
-
     private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'preview'): string
     {
         return '/api/photo-image.php?' . http_build_query([
@@ -537,6 +609,16 @@ final class SwallowtailPreviewProfileService
             'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original'], true) ? $imageType : 'preview',
             'v' => max(0, $profileVersion),
             'job_id' => $jobId,
+        ]);
+    }
+
+    private function statusUrl(int $photoId, int $jobId, int $profileVersion, string $imageType): string
+    {
+        return '/api/photo-status.php?' . http_build_query([
+            'photo_id' => $photoId,
+            'job_id' => $jobId,
+            'profile_version' => $profileVersion,
+            'image_type' => $imageType,
         ]);
     }
 

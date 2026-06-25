@@ -354,6 +354,13 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(!str_contains($script, 'Original ready; rendering preview'));
         $harness->assertTrue(str_contains($script, "swapPreviewImage(String(response.preview_url), 'preview');"));
         $harness->assertTrue(str_contains($script, 'displayedPreviewStage = stageType;'));
+        $harness->assertTrue(str_contains($script, 'initialPreviewStatusUrl'));
+        $harness->assertTrue(str_contains($script, 'previewDisplayReady'));
+        $harness->assertTrue(str_contains($script, 'return baselineReady && previewDisplayReady;'));
+        $harness->assertTrue(str_contains($script, 'function handleImageLoad()'));
+        $harness->assertTrue(str_contains($script, "setStatus('Ready', 'ready');"));
+        $harness->assertTrue(!str_contains($script, 'photo-preview' . '-status.php'));
+        $harness->assertTrue(!str_contains($script, 'photo-final' . '-status.php'));
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to baseline settings through preview flow', function () use ($harness): void {

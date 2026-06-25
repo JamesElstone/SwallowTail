@@ -2343,7 +2343,7 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
     }
 });
 
-$harness->check(SwallowtailPreviewProfileService::class, 'uses embedded preview when preview image is missing', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailPreviewProfileService::class, 'uses thumbnail as temporary display without marking preview ready', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
     $source = swallowtail_backend_test_temp_file('swallowtail-test-');
@@ -2375,9 +2375,102 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses embedded preview 
     $previewUrl = is_array($state) ? (string)($state['preview_url'] ?? '') : '';
 
     $harness->assertTrue(is_array($state));
-    $harness->assertSame(true, (bool)($state['preview_ready'] ?? false));
+    $harness->assertSame(false, (bool)($state['preview_ready'] ?? true));
+    $harness->assertSame('profile_pending', (string)($state['preview_status'] ?? ''));
     $harness->assertTrue(str_contains($previewUrl, 'type=thumbnail'));
     $harness->assertTrue(!str_contains($previewUrl, 'type=preview'));
+    $harness->assertSame(0, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'preview',
+    ]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview after profile becomes ready', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0011.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    @unlink($storage->imagePath($base, $sha256, 'preview'));
+    $thumbnailPath = $storage->imagePath($base, $sha256, 'thumbnail');
+    $storage->ensureDirectoryForPath($thumbnailPath);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+
+    $event = $library->createEvent('Initial Preview Queue Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+
+    $service = new SwallowtailPreviewProfileService();
+    $pending = $service->editorState($photoId, 303);
+    $harness->assertTrue(is_array($pending));
+    $harness->assertSame('', (string)($pending['preview_status_url'] ?? ''));
+    $harness->assertSame(0, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'preview',
+    ]));
+
+    (new SwallowtailProfileDataService())->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+    $ready = $service->baselineStatus($photoId, 303);
+    $statusUrl = (string)($ready['preview_status_url'] ?? '');
+    $harness->assertSame(true, (bool)($ready['baseline']['ready'] ?? false));
+    $harness->assertSame(false, (bool)($ready['preview_ready'] ?? true));
+    $harness->assertTrue(str_contains($statusUrl, '/api/photo-status.php?'));
+    $harness->assertTrue(str_contains($statusUrl, 'image_type=preview'));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'preview',
+    ]));
+
+    $again = $service->baselineStatus($photoId, 303);
+    $harness->assertSame($statusUrl, (string)($again['preview_status_url'] ?? ''));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'preview',
+    ]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview immediately when profile is already ready', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0012.CR2');
+    $photoId = (int)$result['photo_id'];
+    (new SwallowtailProfileDataService())->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+
+    $event = $library->createEvent('Ready Initial Preview Queue Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+
+    $state = (new SwallowtailPreviewProfileService())->editorState($photoId, 303);
+    $harness->assertTrue(is_array($state));
+    $harness->assertSame(false, (bool)($state['preview_ready'] ?? true));
+    $harness->assertTrue(str_contains((string)($state['preview_status_url'] ?? ''), 'image_type=preview'));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'preview',
+    ]));
 
     @unlink($source);
 });
@@ -2433,6 +2526,9 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     }
     if (!str_contains((string)($queued['status_url'] ?? ''), 'profile_version=1')) {
         throw new RuntimeException('Preview status URL did not include profile version 1: ' . (string)($queued['status_url'] ?? ''));
+    }
+    if (!str_contains((string)($queued['status_url'] ?? ''), '/api/photo-status.php?') || !str_contains((string)($queued['status_url'] ?? ''), 'image_type=preview')) {
+        throw new RuntimeException('Preview status URL did not use the generic image status API: ' . (string)($queued['status_url'] ?? ''));
     }
 
     $job = InterfaceDB::fetchOne(
@@ -2514,10 +2610,12 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
-    $queuedStatus = $service->previewStatus($photoId, (int)$second['job_id'], 2, 303);
+    $queuedStatus = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'preview');
     $harness->assertSame('queued', (string)($queuedStatus['status'] ?? ''));
     $harness->assertTrue(!array_key_exists('original_url', $queuedStatus));
     $harness->assertTrue(!array_key_exists('preview_url', $queuedStatus));
+    $invalidStatus = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'thumbnail');
+    $harness->assertSame(false, (bool)($invalidStatus['success'] ?? true));
 
     InterfaceDB::prepareExecute(
         "UPDATE photo_conversion_jobs
@@ -2525,7 +2623,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
          WHERE id = :id",
         ['id' => (int)$second['job_id']]
     );
-    $status = $service->previewStatus($photoId, (int)$second['job_id'], 2, 303);
+    $status = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'preview');
     if (empty($status['success'])) {
         throw new RuntimeException('Preview status did not succeed: ' . json_encode($status, JSON_UNESCAPED_SLASHES));
     }

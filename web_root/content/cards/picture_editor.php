@@ -39,14 +39,24 @@ final class _picture_editorCard extends CardBaseFramework
         $settings = (array)$state['settings'];
         $sourceWidth = max(1, (int)$state['source_width']);
         $sourceHeight = max(1, (int)$state['source_height']);
+        $preview = (array)($state['preview'] ?? []);
         $previewReady = !empty($state['preview_ready']);
-        $previewUrl = $previewReady ? (string)$state['preview_url'] : '';
+        $previewUrl = (string)($state['preview_url'] ?? '');
         $previewType = (string)($state['preview_type'] ?? '');
         $displayType = in_array($previewType, ['preview', 'thumbnail'], true) ? $previewType : '';
         $displayLabel = $displayType !== '' ? $displayType : 'none';
+        $previewStatus = (string)($state['preview_status'] ?? ($preview['status'] ?? ''));
+        $previewStatusUrl = (string)($state['preview_status_url'] ?? ($preview['status_url'] ?? ''));
         $baseline = (array)($state['baseline'] ?? []);
         $baselineReady = !empty($baseline['ready']);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        $photoStatusLabel = $previewReady
+            ? 'Ready'
+            : match ($previewStatus) {
+                'queued' => 'Queued',
+                'processing' => 'Rendering',
+                default => 'Preview pending',
+            };
 
         $crop = (array)$settings['crop'];
         $exposure = (array)$settings['exposure'];
@@ -62,14 +72,16 @@ final class _picture_editorCard extends CardBaseFramework
                 data-profile-url="/api/photo-preview-profile.php"
                 data-final-url="/api/photo-final-profile.php"
                 data-profile-status-url="/api/photo-profile-status.php?photo_id=' . HelperFramework::escape((string)$photoId) . '"
+                data-preview-status-url="' . HelperFramework::escape($previewStatusUrl) . '"
                 data-source-width="' . HelperFramework::escape((string)$sourceWidth) . '"
                 data-source-height="' . HelperFramework::escape((string)$sourceHeight) . '"
                 data-preview-type="' . HelperFramework::escape($previewType) . '"
+                data-preview-ready="' . ($previewReady ? '1' : '0') . '"
                 data-baseline-ready="' . ($baselineReady ? '1' : '0') . '"
                 data-settings="' . HelperFramework::escape(json_encode($settings, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)) . '">
             <div class="picture-editor-main">
                 <div class="picture-editor-stage" data-picture-editor-stage>
-                    ' . ($previewReady
+                    ' . ($previewUrl !== ''
                         ? '<img src="' . HelperFramework::escape($previewUrl) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo preview')) . '" data-picture-editor-image>'
                         : '<div class="picture-editor-empty" data-picture-editor-empty>Preview pending</div>') . '
                     <div class="picture-editor-crop" data-picture-editor-crop>
@@ -81,7 +93,7 @@ final class _picture_editorCard extends CardBaseFramework
                 </div>
             </div>
             <div class="picture-editor-controls">
-                <div class="picture-editor-status" data-picture-editor-status>Photo: ' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
+                <div class="picture-editor-status" data-picture-editor-status>Photo: ' . HelperFramework::escape($photoStatusLabel) . '</div>
                 <div class="picture-editor-display-state" data-picture-editor-display-state data-picture-editor-display-type="' . HelperFramework::escape($displayType) . '">Displaying: ' . HelperFramework::escape($displayLabel) . '</div>
                 <div class="picture-editor-profile-state" data-picture-editor-profile-state>Profile: ' . ($baselineReady ? 'Ready' : 'Preparing') . '</div>
                 ' . $this->accordionPanel('Exposure',

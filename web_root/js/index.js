@@ -1995,6 +1995,7 @@
             const profileUrl = String(editor.dataset.profileUrl || '').trim();
             const finalUrl = String(editor.dataset.finalUrl || '').trim();
             const profileStatusUrl = String(editor.dataset.profileStatusUrl || '').trim();
+            const initialPreviewStatusUrl = String(editor.dataset.previewStatusUrl || '').trim();
             const sourceWidth = Math.max(1, Number.parseInt(String(editor.dataset.sourceWidth || '1'), 10));
             const sourceHeight = Math.max(1, Number.parseInt(String(editor.dataset.sourceHeight || '1'), 10));
             let imageNode = editor.querySelector('[data-picture-editor-image]');
@@ -2008,6 +2009,7 @@
             let displayedPreviewStage = String(editor.dataset.previewType || '').trim();
             let displayedImageType = displayedPreviewStage;
             let baselineReady = editor.dataset.baselineReady === '1';
+            let previewDisplayReady = false;
 
             if (!(stage instanceof HTMLElement) || !(cropNode instanceof HTMLElement) || profileUrl === '') {
                 return;
@@ -2133,7 +2135,11 @@
             }
 
             function cropIsInteractive() {
-                return baselineReady && settings.crop.enabled;
+                return baselineReady && previewDisplayReady && settings.crop.enabled;
+            }
+
+            function editorCanEdit() {
+                return baselineReady && previewDisplayReady;
             }
 
             function setStatus(message, state = '') {
@@ -2193,7 +2199,9 @@
                 cropNode.hidden = !interactive;
                 cropNode.dataset.pictureEditorDisabled = interactive ? '0' : '1';
                 if (cropState instanceof HTMLElement) {
-                    cropState.textContent = baselineReady ? 'Crop follows preview images.' : 'Crop waiting for baseline profile.';
+                    cropState.textContent = baselineReady
+                        ? (previewDisplayReady ? 'Crop follows preview images.' : 'Crop waiting for preview image.')
+                        : 'Crop waiting for baseline profile.';
                 }
                 const box = displayBox();
                 const left = (settings.crop.x / sourceWidth) * box.width;
@@ -2262,11 +2270,15 @@
                         field.disabled = !enabled;
                     }
                 });
-                if (profileState instanceof HTMLElement) {
-                    profileState.textContent = `Profile: ${enabled ? 'Ready' : 'Preparing'}`;
-                    profileState.dataset.pictureEditorProfileReady = enabled ? '1' : '0';
-                }
                 renderCrop();
+            }
+
+            function setProfileReady(ready, failed = false) {
+                if (!(profileState instanceof HTMLElement)) {
+                    return;
+                }
+                profileState.textContent = `Profile: ${failed ? 'Failed' : (ready ? 'Ready' : 'Preparing')}`;
+                profileState.dataset.pictureEditorProfileReady = ready ? '1' : '0';
             }
 
             function clearPoll() {
@@ -2284,7 +2296,7 @@
             }
 
             function scheduleSubmit() {
-                if (!baselineReady) {
+                if (!editorCanEdit()) {
                     return;
                 }
                 if (submitTimer !== null) {
@@ -2301,7 +2313,9 @@
             async function submitPreview() {
                 const sequence = ++requestSequence;
                 displayedPreviewStage = '';
+                previewDisplayReady = false;
                 clearPoll();
+                setEditorEnabled(false);
                 setStatus('Rendering', 'processing');
 
                 try {
@@ -2349,7 +2363,7 @@
                     const state = String(response?.status || 'queued');
                     if (state === 'succeeded' && response?.preview_url) {
                         swapPreviewImage(String(response.preview_url), 'preview');
-                        setStatus('Ready', 'ready');
+                        setStatus('Loading', 'processing');
                         return;
                     }
 
@@ -2377,7 +2391,7 @@
                     imageNode = document.createElement('img');
                     imageNode.setAttribute('alt', 'Photo preview');
                     imageNode.dataset.pictureEditorImage = 'true';
-                    imageNode.addEventListener('load', renderCrop);
+                    imageNode.addEventListener('load', handleImageLoad);
                     stage.insertBefore(imageNode, cropNode);
                 }
 
@@ -2388,10 +2402,28 @@
                 imageNode.src = url;
                 if (stageType !== '') {
                     displayedPreviewStage = stageType;
+                    previewDisplayReady = false;
                     setDisplayType(stageType);
                     editor.dataset.previewType = stageType;
+                    editor.dataset.previewReady = stageType === 'preview' ? '1' : '0';
                     renderCrop();
                 }
+                if (imageNode.complete && imageNode.naturalWidth > 0) {
+                    handleImageLoad();
+                }
+            }
+
+            function handleImageLoad() {
+                if (displayedPreviewStage === 'preview') {
+                    previewDisplayReady = true;
+                    setStatus('Ready', 'ready');
+                    setEditorEnabled(editorCanEdit());
+                    return;
+                }
+
+                previewDisplayReady = false;
+                setEditorEnabled(false);
+                renderCrop();
             }
 
             async function submitFinal() {
@@ -2630,7 +2662,7 @@
             cropNode.addEventListener('pointercancel', finishDrag);
 
             if (imageNode instanceof HTMLImageElement) {
-                imageNode.addEventListener('load', renderCrop);
+                imageNode.addEventListener('load', handleImageLoad);
             }
             if (revertButton instanceof HTMLButtonElement) {
                 revertButton.addEventListener('click', revertToBaseline);
@@ -2640,9 +2672,16 @@
             }
             window.addEventListener('resize', renderCrop);
             syncControls();
-            setEditorEnabled(baselineReady);
+            setProfileReady(baselineReady);
+            setEditorEnabled(false);
+            if (imageNode instanceof HTMLImageElement && imageNode.complete && imageNode.naturalWidth > 0) {
+                handleImageLoad();
+            }
             if (!baselineReady && profileStatusUrl !== '') {
                 pollProfileStatus(0);
+            } else if (!previewDisplayReady && initialPreviewStatusUrl !== '') {
+                const sequence = ++requestSequence;
+                pollPreviewStatus(initialPreviewStatusUrl, sequence, 0, Date.now());
             }
             renderCrop();
 
@@ -2658,12 +2697,22 @@
                         settings = normaliseSettings(response.settings);
                         baselineSettings = cloneSettings(settings);
                         syncControls();
-                        setEditorEnabled(true);
-                        return;
+                        setProfileReady(true);
+                        setEditorEnabled(editorCanEdit());
+                        const preview = response?.preview || {};
+                        const statusUrl = String(preview?.status_url || response?.preview_status_url || '');
+                        if (preview?.ready && preview?.preview_url) {
+                            swapPreviewImage(String(preview.preview_url), 'preview');
+                            return;
+                        }
+                        if (statusUrl !== '') {
+                            const sequence = ++requestSequence;
+                            pollPreviewStatus(statusUrl, sequence, 0, Date.now());
+                            return;
+                        }
                     }
                     if (profileState instanceof HTMLElement) {
-                        profileState.textContent = `Profile: ${status === 'failed' ? 'Failed' : 'Preparing'}`;
-                        profileState.dataset.pictureEditorProfileReady = '0';
+                        setProfileReady(false, status === 'failed');
                     }
                     const delay = attempt < 5 ? 1000 : 2500;
                     baselinePollTimer = window.setTimeout(() => pollProfileStatus(attempt + 1), delay);

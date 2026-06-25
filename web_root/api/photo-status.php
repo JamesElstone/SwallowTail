@@ -17,7 +17,7 @@ AntiFraudService::instance($request);
 if ($request->method() !== 'GET') {
     ResponseFramework::json([
         'success' => false,
-        'errors' => ['Final status API expects GET.'],
+        'errors' => ['Photo status API expects GET.'],
     ], 405)->send();
     return;
 }
@@ -33,11 +33,12 @@ if ($userId <= 0) {
     return;
 }
 
-$result = (new SwallowtailPreviewProfileService())->finalStatus(
+$result = (new SwallowtailPreviewProfileService())->imageStatus(
     max(0, (int)$request->query('photo_id', 0)),
     max(0, (int)$request->query('job_id', 0)),
     max(0, (int)$request->query('profile_version', 0)),
-    $userId
+    $userId,
+    (string)$request->query('image_type', '')
 );
 
 ResponseFramework::json($result, !empty($result['success']) ? 200 : 404)->send();
