@@ -123,8 +123,11 @@ final class SwallowtailPhotoLibraryService
             ]
         );
 
-        $photoId = $this->lastInsertId();
-        $photo = $this->photoById($photoId);
+        $photo = $this->photoByChecksum($sha256);
+        if ($photo === null) {
+            throw new RuntimeException('Uploaded photo row was not found after insert.');
+        }
+        $photoId = (int)$photo['id'];
 
         $this->recordPhotoAudit(
             $photoId,
@@ -174,8 +177,17 @@ final class SwallowtailPhotoLibraryService
             ]
         );
 
+        $eventId = InterfaceDB::fetchColumn(
+            'SELECT id FROM events WHERE event_slug = :event_slug LIMIT 1',
+            ['event_slug' => $slug]
+        );
+        $eventId = (int)$eventId;
+        if ($eventId <= 0) {
+            throw new RuntimeException('Event row was not found after insert.');
+        }
+
         return [
-            'id' => $this->lastInsertId(),
+            'id' => $eventId,
             'event_name' => $name,
             'event_slug' => $slug,
         ];
@@ -270,7 +282,13 @@ final class SwallowtailPhotoLibraryService
                 ]
             );
 
-            $tokenId = $this->lastInsertId();
+            $tokenId = (int)InterfaceDB::fetchColumn(
+                'SELECT id FROM api_upload_tokens WHERE token_hash = :token_hash LIMIT 1',
+                ['token_hash' => $tokenHash]
+            );
+            if ($tokenId <= 0) {
+                throw new RuntimeException('Upload token row was not found after insert.');
+            }
             $this->replaceUploadTokenCidrs($tokenId, $normalisedCidrs);
 
             return $tokenId;
@@ -971,14 +989,5 @@ final class SwallowtailPhotoLibraryService
         $value = trim((string)$value);
 
         return $value === '' ? null : substr($value, 0, $maxLength);
-    }
-
-    private function lastInsertId(): int
-    {
-        if (InterfaceDB::driverName() === 'sqlite') {
-            return (int)InterfaceDB::fetchColumn('SELECT last_insert_rowid()');
-        }
-
-        return (int)InterfaceDB::fetchColumn('SELECT LAST_INSERT_ID()');
     }
 }
