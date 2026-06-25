@@ -2146,7 +2146,7 @@
 
             function normaliseDisplayType(type) {
                 const value = String(type || '').trim().toLowerCase();
-                return ['preview', 'embedded'].includes(value) ? value : '';
+                return ['preview', 'thumbnail'].includes(value) ? value : '';
             }
 
             function setDisplayType(type) {

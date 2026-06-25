@@ -30,6 +30,8 @@ class ConversionStorageManager:
         "source": ".cr2",
         "source_profile": ".pp3",
         "embedded": ".jpg",
+        "thumbnail": ".jpg",
+        "thumbnail_profile": ".pp3",
         "preview": ".jpg",
         "preview_profile": ".pp3",
         "original": ".jpg",
@@ -129,6 +131,7 @@ class ConversionStorageManager:
         extension = self.IMAGE_EXTENSIONS[image_type]
         suffix = {
             "source_profile": "source",
+            "thumbnail_profile": "thumbnail",
             "preview_profile": "preview",
             "final_profile": "final",
         }.get(image_type, image_type)

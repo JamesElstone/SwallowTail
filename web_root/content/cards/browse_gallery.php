@@ -122,7 +122,7 @@ final class _browse_galleryCard extends CardBaseFramework
             return 'preview';
         }
 
-        return !empty($photo['embedded_ready']) ? 'embedded' : null;
+        return !empty($photo['thumbnail_ready']) ? 'thumbnail' : null;
     }
 
     /**

@@ -9,9 +9,10 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const IMAGE_TYPES = ['embedded', 'original', 'preview', 'final'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final'];
     private const PRIORITY_FINAL = 10;
     private const PRIORITY_ORIGINAL = 20;
+    private const PRIORITY_THUMBNAIL = 45;
     private const PRIORITY_EMBEDDED = 40;
     private const PRIORITY_VIEWED_OTHER = 50;
     private const PRIORITY_VIEWED_ORIGINAL = 51;
@@ -56,16 +57,20 @@ final class SwallowtailConversionQueueService
 
             foreach ([
                 'embedded' => self::PRIORITY_EMBEDDED,
+                'thumbnail' => self::PRIORITY_THUMBNAIL,
                 'original' => self::PRIORITY_ORIGINAL,
             ] as $imageType => $jobPriority) {
                 $jobPriority = $this->normalisePriority($jobPriority);
                 $outputPath = $storage->imagePath($base, $sha256, $imageType);
+                $profilePath = $imageType === 'thumbnail'
+                    ? $this->writeThumbnailProfile($photo, $storage)
+                    : null;
                 $jobId = $this->enqueueImageJob(
                     $photoId,
                     $imageType,
                     $sourcePath,
                     $outputPath,
-                    null,
+                    $profilePath,
                     1,
                     $jobPriority,
                     null
@@ -523,6 +528,25 @@ final class SwallowtailConversionQueueService
                AND image_type = 'preview'" . $notInSql,
             $params
         );
+    }
+
+    private function writeThumbnailProfile(array $photo, SwallowtailStorageService $storage): string
+    {
+        $path = $storage->imagePath(
+            (string)($photo['storage_base_location'] ?? ''),
+            (string)($photo['original_sha256'] ?? ''),
+            'thumbnail_profile'
+        );
+        $storage->ensureDirectoryForPath($path);
+
+        $profile = (new SwallowtailCombinedProfileService())->combinedProfileContent((int)($photo['id'] ?? 0), 'thumbnail');
+        if (file_put_contents($path, $profile, LOCK_EX) === false) {
+            throw new RuntimeException('Unable to write thumbnail PP3 profile.');
+        }
+
+        @chmod($path, 0660);
+
+        return $path;
     }
 
     private function normaliseImageType(string $imageType): string

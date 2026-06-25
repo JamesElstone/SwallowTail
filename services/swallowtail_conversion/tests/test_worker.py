@@ -317,6 +317,19 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIn("Width=1600", resize_profile)
         self.assertIn("Height=1600", resize_profile)
 
+    def test_thumbnail_render_uses_supplied_profile(self) -> None:
+        pp3 = self.root / "thumbnail.pp3"
+        pp3.write_text("[Resize]\nShortEdge=180\n", encoding="utf-8")
+        result = RawTherapeeRunner(
+            RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
+        ).render(job(self.root, image_type="thumbnail", profile_path=str(pp3)), str(self.root / "work"))
+
+        self.assertEqual(0, result.exit_code)
+        self.assertIn("-o", result.command)
+        self.assertNotIn("-O", result.command)
+        profile_args = [result.command[index + 1] for index, value in enumerate(result.command) if value == "-p"]
+        self.assertEqual([str(pp3)], profile_args)
+
     def test_rawtherapee_nonzero_exit_is_reported(self) -> None:
         failing = Path(__file__).parent / "fixtures" / "fake_rawtherapee_fail.py"
         result = RawTherapeeRunner(
@@ -887,9 +900,13 @@ class StorageManagerTest(unittest.TestCase):
         new_base.mkdir(parents=True)
         source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
         source_profile = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.pp3"
+        thumbnail = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
+        thumbnail_profile = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.pp3"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2 relocation test")
         source_profile.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+        thumbnail.write_bytes(b"\xff\xd8\xff\xd9")
+        thumbnail_profile.write_text("[Resize]\nShortEdge=180\n", encoding="utf-8")
 
         class FakeDb:
             def __init__(self) -> None:
@@ -935,11 +952,17 @@ class StorageManagerTest(unittest.TestCase):
             relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
         new_source = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
         new_source_profile = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.pp3"
+        new_thumbnail = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
+        new_thumbnail_profile = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.pp3"
 
         self.assertTrue(new_source.is_file())
         self.assertTrue(new_source_profile.is_file())
+        self.assertTrue(new_thumbnail.is_file())
+        self.assertTrue(new_thumbnail_profile.is_file())
         self.assertFalse(source.exists())
         self.assertFalse(source_profile.exists())
+        self.assertFalse(thumbnail.exists())
+        self.assertFalse(thumbnail_profile.exists())
         self.assertIn(str(new_base), relocated.input_path)
         self.assertIn(str(new_base), relocated.output_path)
         self.assertIsNotNone(db.updated)

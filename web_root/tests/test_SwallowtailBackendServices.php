@@ -325,6 +325,17 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (image_type, profile_name, type, `key`)
     )");
+    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, type, `key`, value, value_type) VALUES
+        ('thumbnail', 'resize', 1, 'Resize', 'Enabled', 'true', 'bool'),
+        ('thumbnail', 'resize', 1, 'Resize', 'Scale', '1', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'AppliesTo', 'Cropped area', 'string'),
+        ('thumbnail', 'resize', 1, 'Resize', 'Method', 'Lanczos', 'string'),
+        ('thumbnail', 'resize', 1, 'Resize', 'DataSpecified', '5', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'Width', '0', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'Height', '0', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'LongEdge', '0', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'ShortEdge', '180', 'int'),
+        ('thumbnail', 'resize', 1, 'Resize', 'AllowUpscaling', 'false', 'bool')");
 
     InterfaceDB::execute("CREATE TABLE photo_audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -576,11 +587,15 @@ $harness->check(SwallowtailStorageService::class, 'builds deterministic image pa
         $sha256 = str_repeat('a', 64);
         $sourcePath = $service->imagePath($baseLocation, $sha256, 'source');
         $profilePath = $service->imagePath($baseLocation, $sha256, 'preview_profile');
+        $thumbnailProfilePath = $service->imagePath($baseLocation, $sha256, 'thumbnail_profile');
+        $thumbnailPath = $service->imagePath($baseLocation, $sha256, 'thumbnail');
         $finalPath = $service->imagePath($baseLocation, $sha256, 'final');
 
         $harness->assertTrue(str_contains($sourcePath, DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR . 'aa' . DIRECTORY_SEPARATOR . 'aa' . DIRECTORY_SEPARATOR));
         $harness->assertTrue(str_ends_with($sourcePath, $sha256 . '_source.cr2'));
         $harness->assertTrue(str_ends_with($profilePath, $sha256 . '_preview.pp3'));
+        $harness->assertTrue(str_ends_with($thumbnailProfilePath, $sha256 . '_thumbnail.pp3'));
+        $harness->assertTrue(str_ends_with($thumbnailPath, $sha256 . '_thumbnail.jpg'));
         $harness->assertTrue(str_ends_with($finalPath, $sha256 . '_final.jpg'));
         $harness->assertTrue(!str_starts_with($sourcePath, APP_ROOT));
     });
@@ -1154,7 +1169,7 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertTrue(is_file($storage->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'source')));
     $harness->assertTrue((string)$result['storage_base_location'] !== '');
     $harness->assertSame(0, InterfaceDB::countWhere('event_photos', 'photo_id', (int)$result['photo_id']));
-    $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'embedded',
@@ -1162,12 +1177,20 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     ]));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
+        'image_type' => 'thumbnail',
+        'priority' => 45,
+    ]));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => (int)$result['photo_id'],
         'image_type' => 'original',
         'priority' => 20,
     ]));
-    $harness->assertCount(2, (array)($result['conversion_jobs'] ?? []));
-    $harness->assertSame(['embedded', 'original'], array_keys((array)($result['conversion_jobs'] ?? [])));
+    $harness->assertCount(3, (array)($result['conversion_jobs'] ?? []));
+    $harness->assertSame(['embedded', 'thumbnail', 'original'], array_keys((array)($result['conversion_jobs'] ?? [])));
     $harness->assertTrue((int)(($result['conversion_jobs']['embedded'] ?? [])['job_id'] ?? 0) > 0);
+    $thumbnailProfile = $storage->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'thumbnail_profile');
+    $harness->assertTrue(is_file($thumbnailProfile));
+    $harness->assertTrue(str_contains(file_get_contents($thumbnailProfile) ?: '', 'ShortEdge=180'));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', 'action_type', 'raw_uploaded'));
 
     @unlink($source);
@@ -2338,13 +2361,13 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses embedded preview 
     $sha256 = (string)($photo['original_sha256'] ?? '');
     $base = (string)($photo['storage_base_location'] ?? '');
     $previewPath = $storage->imagePath($base, $sha256, 'preview');
-    $embeddedPath = $storage->imagePath($base, $sha256, 'embedded');
+    $thumbnailPath = $storage->imagePath($base, $sha256, 'thumbnail');
 
-    $storage->ensureDirectoryForPath($embeddedPath);
+    $storage->ensureDirectoryForPath($thumbnailPath);
     @unlink($previewPath);
-    file_put_contents($embeddedPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
-    $event = $library->createEvent('Embedded Preview Event');
+    $event = $library->createEvent('Thumbnail Preview Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
     $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
 
@@ -2353,7 +2376,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses embedded preview 
 
     $harness->assertTrue(is_array($state));
     $harness->assertSame(true, (bool)($state['preview_ready'] ?? false));
-    $harness->assertTrue(str_contains($previewUrl, 'type=embedded'));
+    $harness->assertTrue(str_contains($previewUrl, 'type=thumbnail'));
     $harness->assertTrue(!str_contains($previewUrl, 'type=preview'));
 
     @unlink($source);
@@ -2580,8 +2603,9 @@ $harness->check(SwallowtailRawUploadApiService::class, 'accepts token authentica
     $harness->assertSame('uploaded', $payload['status'] ?? null);
     $harness->assertSame($sha256, (string)($payload['sha256'] ?? ''));
     $harness->assertTrue(!array_key_exists('quick_hash', $payload));
-    $harness->assertCount(2, (array)($payload['conversion_jobs'] ?? []));
+    $harness->assertCount(3, (array)($payload['conversion_jobs'] ?? []));
     $harness->assertTrue((int)(($payload['conversion_jobs']['embedded'] ?? [])['job_id'] ?? 0) > 0);
+    $harness->assertTrue((int)(($payload['conversion_jobs']['thumbnail'] ?? [])['job_id'] ?? 0) > 0);
     $harness->assertTrue((int)(($payload['conversion_jobs']['original'] ?? [])['job_id'] ?? 0) > 0);
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhereNotNull('api_upload_tokens', 'last_used_at', ['id' => (int)$token['id']]));
@@ -3303,6 +3327,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $profileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_24_001_photo_profile_data.sql';
     $internalProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_25_001_internal_profile_data.sql';
     $profileRevisionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_25_002_photo_profile_data_revisions.sql';
+    $thumbnailImageTypePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_25_004_thumbnail_image_type.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3317,12 +3342,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $profileDataSql = file_get_contents($profileDataPath);
     $internalProfileDataSql = file_get_contents($internalProfileDataPath);
     $profileRevisionSql = file_get_contents($profileRevisionPath);
+    $thumbnailImageTypeSql = file_get_contents($thumbnailImageTypePath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3342,6 +3368,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'output_width',
         'duration_seconds',
         "'embedded'",
+        "'thumbnail'",
         "'preview'",
         "'final'",
         'DROP INDEX IF EXISTS idx_photos_quick_hash ON photos',
@@ -3363,6 +3390,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         "'resize', 2",
         "'RAW Bayer', 'Method', 'fast'",
         "'Resize', 'LongEdge', '820'",
+        "'thumbnail', 'resize', 1",
+        "'Resize', 'ShortEdge', '180'",
         "status enum('queued','processing','succeeded','failed','cancelled','obsolete')",
         'MODIFY priority int(10) unsigned NOT NULL DEFAULT 20',
         'ADD INDEX idx_conversion_jobs_priority (status, priority, available_at, id)',
@@ -3532,7 +3561,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'does not require Redi
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
 
     @unlink($source);
 });
@@ -3555,7 +3584,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only a
         );
         $harness->assertTrue(is_array($job));
         $photoId = (int)($job['photo_id'] ?? 0);
-        $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', $photoId));
+        $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', $photoId));
         $photo = InterfaceDB::fetchOne(
             'SELECT conversion_state FROM photos WHERE id = :id LIMIT 1',
             ['id' => $photoId]
@@ -3571,8 +3600,8 @@ $harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only a
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(2, $notificationCount);
-    $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, $notificationCount);
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
 
     @unlink($source);
 });

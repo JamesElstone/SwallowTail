@@ -21,7 +21,7 @@ Owns filesystem safety for private photo storage.
 - Uses cached storage snapshots for normal requests and can fall back to live mounted-filesystem discovery.
 - Excludes the root partition unless `swallowtail.storage.store_on_root_partition` is enabled.
 - Appends `swallowtail-data` below each eligible base location.
-- Builds deterministic checksum paths for `source`, `source_profile`, `embedded`, `preview`, `preview_profile`, `original`, `final`, and `final_profile`.
+- Builds deterministic checksum paths for `source`, `source_profile`, `embedded`, `thumbnail`, `thumbnail_profile`, `preview`, `preview_profile`, `original`, `final`, and `final_profile`.
 - Chooses a writable location that is not excluded and remains above the configured free-space threshold.
 - Copies or moves RAW source files into managed storage.
 

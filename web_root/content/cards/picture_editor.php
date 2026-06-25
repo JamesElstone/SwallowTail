@@ -42,7 +42,7 @@ final class _picture_editorCard extends CardBaseFramework
         $previewReady = !empty($state['preview_ready']);
         $previewUrl = $previewReady ? (string)$state['preview_url'] : '';
         $previewType = (string)($state['preview_type'] ?? '');
-        $displayType = in_array($previewType, ['preview', 'embedded'], true) ? $previewType : '';
+        $displayType = in_array($previewType, ['preview', 'thumbnail'], true) ? $previewType : '';
         $displayLabel = $displayType !== '' ? $displayType : 'none';
         $baseline = (array)($state['baseline'] ?? []);
         $baselineReady = !empty($baseline['ready']);

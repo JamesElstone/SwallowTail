@@ -313,6 +313,7 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     InterfaceDB::execute("INSERT INTO photo_conversion_jobs (photo_id, image_type, status, duration_seconds) VALUES
         (1, 'embedded', 'succeeded', 0.5),
         (1, 'embedded', 'succeeded', 1.5),
+        (1, 'thumbnail', 'succeeded', 0.25),
         (1, 'preview', 'queued', NULL),
         (2, 'preview', 'processing', NULL),
         (2, 'original', 'succeeded', 62.0),
@@ -323,12 +324,14 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     $durations = (array)($summary['duration_by_image_type'] ?? []);
 
     $harness->assertSame(2, (int)($summary['photos_current'] ?? 0));
-    $harness->assertSame(6, (int)($jobs['total'] ?? 0));
+    $harness->assertSame(7, (int)($jobs['total'] ?? 0));
     $harness->assertSame(2, (int)($jobs['outstanding'] ?? 0));
     $harness->assertSame(3, (int)($jobs['completed'] ?? 0));
     $harness->assertSame('embedded', (string)($durations[0]['image_type'] ?? ''));
     $harness->assertSame(2, (int)($durations[0]['completed_jobs'] ?? 0));
     $harness->assertSame(1.0, (float)($durations[0]['average_seconds'] ?? 0));
+    $harness->assertSame('thumbnail', (string)($durations[1]['image_type'] ?? ''));
+    $harness->assertSame(1, (int)($durations[1]['completed_jobs'] ?? 0));
 });
 
 $harness->check(_statisticsCard::class, 'renders dashboard statistics totals and timings', function () use ($harness): void {
@@ -950,7 +953,7 @@ $harness->check(_gallery::class, 'browse gallery status icons match upload icon 
     }
 });
 
-$harness->check(_gallery::class, 'browse gallery falls back to embedded previews', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery falls back to thumbnail previews', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'photoTile');
     $method->setAccessible(true);
@@ -960,11 +963,11 @@ $harness->check(_gallery::class, 'browse gallery falls back to embedded previews
         'original_filename' => 'IMG_0043.CR2',
         'conversion_state' => 'processing',
         'preview_ready' => false,
-        'embedded_ready' => true,
+        'thumbnail_ready' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=43'));
-    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=embedded'));
+    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=thumbnail'));
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, 'Preview pending'));
@@ -980,7 +983,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'original_filename' => 'IMG_0045.CR2',
         'conversion_state' => 'pending',
         'preview_ready' => false,
-        'embedded_ready' => false,
+        'thumbnail_ready' => false,
     ]]));
 
     $harness->assertSame(true, $method->invoke($card, [[
@@ -988,7 +991,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'original_filename' => 'IMG_0046.CR2',
         'conversion_state' => 'ready',
         'preview_ready' => false,
-        'embedded_ready' => false,
+        'thumbnail_ready' => false,
     ]]));
 
     $harness->assertSame(false, $method->invoke($card, [[
@@ -996,7 +999,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'original_filename' => 'IMG_0047.CR2',
         'conversion_state' => 'failed',
         'preview_ready' => false,
-        'embedded_ready' => false,
+        'thumbnail_ready' => false,
     ]]));
 });
 

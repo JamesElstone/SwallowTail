@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoUiService
 {
-    private const IMAGE_TYPES = ['preview', 'embedded', 'original', 'final'];
+    private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final'];
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
@@ -251,7 +251,7 @@ final class SwallowtailPhotoUiService
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
         $row['preview_ready'] = $this->storageService->imageReady($row, 'preview');
-        $row['embedded_ready'] = !$row['preview_ready'] && $this->storageService->imageReady($row, 'embedded');
+        $row['thumbnail_ready'] = !$row['preview_ready'] && $this->storageService->imageReady($row, 'thumbnail');
 
         return $row;
     }
@@ -264,6 +264,7 @@ final class SwallowtailPhotoUiService
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
         $row['preview_ready'] = $this->storageService->imageInfo($row, 'preview') !== null;
+        $row['thumbnail_ready'] = $this->storageService->imageInfo($row, 'thumbnail') !== null;
         $row['original_ready'] = $this->storageService->imageInfo($row, 'original') !== null;
         $row['embedded_ready'] = $this->storageService->imageInfo($row, 'embedded') !== null;
         $row['final_ready'] = $this->storageService->imageInfo($row, 'final') !== null;

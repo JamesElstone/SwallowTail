@@ -407,6 +407,7 @@ final class SwallowtailPreviewProfileService
         $profileType = match ($imageType) {
             'preview' => 'preview_profile',
             'final' => 'final_profile',
+            'thumbnail' => 'thumbnail_profile',
             default => throw new InvalidArgumentException('Unsupported profile image type.'),
         };
         $path = $this->storageService->imagePath(
@@ -428,7 +429,7 @@ final class SwallowtailPreviewProfileService
 
     private function sourceDimensions(array $photo): array
     {
-        foreach (['original', 'final', 'preview', 'embedded'] as $type) {
+        foreach (['original', 'final', 'preview', 'thumbnail', 'embedded'] as $type) {
             $info = $this->storageService->imageInfo($photo, $type);
             if ($info === null) {
                 continue;
@@ -520,7 +521,7 @@ final class SwallowtailPreviewProfileService
 
     private function previewImageType(array $photo): ?string
     {
-        foreach (['preview', 'embedded'] as $type) {
+        foreach (['preview', 'thumbnail'] as $type) {
             if ($this->storageService->imageInfo($photo, $type) !== null) {
                 return $type;
             }
@@ -533,7 +534,7 @@ final class SwallowtailPreviewProfileService
     {
         return '/api/photo-image.php?' . http_build_query([
             'photo_id' => $photoId,
-            'type' => in_array($imageType, ['preview', 'embedded', 'final', 'original'], true) ? $imageType : 'preview',
+            'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original'], true) ? $imageType : 'preview',
             'v' => max(0, $profileVersion),
             'job_id' => $jobId,
         ]);

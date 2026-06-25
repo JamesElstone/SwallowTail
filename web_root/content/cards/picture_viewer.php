@@ -67,7 +67,7 @@ final class _picture_viewerCard extends CardBaseFramework
     {
         $photoId = (int)($photo['id'] ?? 0);
         $filename = (string)($photo['original_filename'] ?? 'Photo');
-        $type = !empty($photo['preview_ready']) ? 'preview' : (!empty($photo['embedded_ready']) ? 'embedded' : '');
+        $type = !empty($photo['preview_ready']) ? 'preview' : (!empty($photo['thumbnail_ready']) ? 'thumbnail' : '');
 
         if ($type === '') {
             return '<div class="picture-viewer-placeholder">Preview pending</div>';
@@ -82,7 +82,7 @@ final class _picture_viewerCard extends CardBaseFramework
     {
         $conversionState = $this->labelFromState((string)($photo['conversion_state'] ?? 'pending'));
         $uploadState = $this->labelFromState((string)($photo['upload_state'] ?? 'uploaded'));
-        $preview = !empty($photo['preview_ready']) ? 'Preview ready' : (!empty($photo['embedded_ready']) ? 'Embedded ready' : 'Preview pending');
+        $preview = !empty($photo['preview_ready']) ? 'Preview ready' : (!empty($photo['thumbnail_ready']) ? 'Thumbnail ready' : 'Preview pending');
         $final = !empty($photo['final_ready']) ? 'Final ready' : 'Final pending';
 
         return '<div class="picture-status-row">
