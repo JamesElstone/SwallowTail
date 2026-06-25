@@ -4069,13 +4069,14 @@ label {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
   gap: 18px;
-  align-items: stretch;
+  align-items: start;
   height: 100%;
   min-height: 0;
 }
 
 .picture-editor-main {
   display: grid;
+  align-self: stretch;
   gap: 10px;
   height: 100%;
   min-height: 0;
@@ -4210,6 +4211,7 @@ label {
 
 .picture-editor-controls {
   display: grid;
+  align-self: start;
   gap: 8px;
   min-width: 0;
 }

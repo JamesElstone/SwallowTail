@@ -313,13 +313,17 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         }
 
         $harness->assertTrue(preg_match('~\.picture-editor \{[^}]+\}~', $stylesheet, $editorMatches) === 1);
-        $harness->assertTrue(str_contains($editorMatches[0], 'align-items: stretch;'));
+        $harness->assertTrue(str_contains($editorMatches[0], 'align-items: start;'));
         $harness->assertTrue(str_contains($editorMatches[0], 'height: 100%;'));
         $harness->assertTrue(str_contains($editorMatches[0], 'min-height: 0;'));
 
         $harness->assertTrue(preg_match('~\.picture-editor-main \{[^}]+\}~', $stylesheet, $mainMatches) === 1);
+        $harness->assertTrue(str_contains($mainMatches[0], 'align-self: stretch;'));
         $harness->assertTrue(str_contains($mainMatches[0], 'height: 100%;'));
         $harness->assertTrue(str_contains($mainMatches[0], 'min-height: 0;'));
+
+        $harness->assertTrue(preg_match('~\.picture-editor-controls \{[^}]+\}~', $stylesheet, $controlsMatches) === 1);
+        $harness->assertTrue(str_contains($controlsMatches[0], 'align-self: start;'));
 
         $harness->assertTrue(preg_match('~\.picture-editor-stage \{[^}]+\}~', $stylesheet, $stageMatches) === 1);
         $harness->assertTrue(str_contains($stageMatches[0], 'display: flex;'));
