@@ -112,7 +112,7 @@ class StorageWorker:
                 self.last_writable_mount_signature = current_signature
             return
 
-        should_wake = previous_signature == "" and current_signature != ""
+        should_wake = current_signature != "" and current_signature != previous_signature
         if not should_wake:
             self.last_writable_mount_signature = current_signature
             return

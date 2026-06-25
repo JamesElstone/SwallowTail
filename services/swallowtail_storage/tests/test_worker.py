@@ -197,6 +197,55 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertTrue(any('writable_mount_points=["/storage/a"]' in line for line in logs.output))
         self.assertTrue(any("Storage wake message sent queue=storage-wake" in line for line in logs.output))
 
+    def test_timer_logs_storage_wake_when_writable_storage_set_expands(self) -> None:
+        redis = FakeRedis()
+        worker = self.worker(redis)
+        worker.mount_signature = lambda: "mount-raw"
+        snapshots = iter([
+            {
+                "success": True,
+                "snapshot": {
+                    "mount_signature": "abc",
+                    "locations": [
+                        {"storage_base_location": "/storage/1/", "can_write": True},
+                        {"storage_base_location": "/storage/2/", "can_write": False},
+                        {"storage_base_location": "/storage/3/", "can_write": False},
+                    ],
+                },
+            },
+            {
+                "success": True,
+                "snapshot": {
+                    "mount_signature": "abc",
+                    "locations": [
+                        {"storage_base_location": "/storage/1/", "can_write": True},
+                        {"storage_base_location": "/storage/2/", "can_write": True},
+                        {"storage_base_location": "/storage/3/", "can_write": True},
+                    ],
+                },
+            },
+        ])
+
+        def php_json(*args: str) -> dict:
+            if args[0] == "discover":
+                return next(snapshots)
+            if args[0] == "process-migrations":
+                return {"success": True, "processed": 1}
+            return {"success": True}
+
+        worker.php_json = php_json
+
+        with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
+            self.assertTrue(worker.refresh("startup"))
+            self.assertTrue(worker.refresh("timer"))
+
+        self.assertEqual(2, len(redis.messages))
+        self.assertEqual("storage-wake", redis.messages[0][0])
+        self.assertEqual("storage-wake", redis.messages[1][0])
+        self.assertTrue(any('writable_mount_points=["/storage/1/"]' in line for line in logs.output))
+        self.assertTrue(any('writable_mount_points=["/storage/1/","/storage/2/","/storage/3/"]' in line for line in logs.output))
+        self.assertEqual(2, sum(1 for line in logs.output if "Storage wake message sent queue=storage-wake" in line))
+
     def test_mount_change_logs_storage_wake_sent(self) -> None:
         redis = FakeRedis()
         worker = self.worker(redis)

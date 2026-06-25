@@ -8,7 +8,7 @@ It runs `tools/php/storageCache.php discover` at startup and on its normal
 interval, writes the returned snapshot directly to Redis, checks the host mount
 signature every 30 seconds so it can refresh early when mounted storage changes,
 sends a conversion wake message when a refresh finds writable storage for the
-first time or after storage was previously unavailable, and runs
+first time or when the writable storage set changes, and runs
 `tools/php/storageCache.php process-migrations <item-limit>` after each refresh.
 
 ## Install On FreeBSD
