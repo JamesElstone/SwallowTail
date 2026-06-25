@@ -772,6 +772,47 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertEqual(3600, worker.db.delay_seconds)
         self.assertIn("No storage location", worker.db.message)
 
+    def test_completed_job_log_includes_duration(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.duration = None
+
+            def is_stale_preview(self, _job) -> bool:
+                return False
+
+            def complete_job(self, _job, _output_path: str, _command, _stderr, duration: float) -> None:
+                self.duration = duration
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                raise AssertionError("completed job should not fail")
+
+        class FakeRunner:
+            def render(self, job, temp_dir: str, should_cancel=None):
+                output = Path(temp_dir) / "rendered.jpg"
+                output.write_bytes(b"\xff\xd8\xff\xd9")
+                return SimpleNamespace(
+                    temp_output_path=str(output),
+                    temp_profile_path=None,
+                    command=["fake-render"],
+                    exit_code=0,
+                    stderr="",
+                    duration_seconds=12.34567,
+                    cancelled=False,
+                )
+
+        db = FakeDb()
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("swallowtail_conversion.worker")
+        worker.db = db
+        worker.runner = FakeRunner()
+
+        with self.assertLogs("swallowtail_conversion.worker", level="INFO") as logs:
+            worker.process_job(job(self.root))
+
+        self.assertEqual(12.34567, db.duration)
+        self.assertTrue(any("Completed job=1" in line and "duration_seconds=12.346" in line for line in logs.output))
+
     def test_original_job_preserves_rawtherapee_pp3_as_source_profile(self) -> None:
         class FakeDb:
             def __init__(self) -> None:

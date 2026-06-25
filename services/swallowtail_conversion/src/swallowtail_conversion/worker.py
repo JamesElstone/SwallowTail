@@ -146,9 +146,15 @@ class ConversionWorker:
             source_profile_path = self._preserve_original_source_profile(job, result)
             self.db.complete_job(job, str(final), result.command, result.stderr, result.duration_seconds)
             if source_profile_path is not None:
-                self.log.info("Completed job=%s output=%s source_profile=%s", job.id, final, source_profile_path)
+                self.log.info(
+                    "Completed job=%s output=%s duration_seconds=%.3f source_profile=%s",
+                    job.id,
+                    final,
+                    result.duration_seconds,
+                    source_profile_path,
+                )
             else:
-                self.log.info("Completed job=%s output=%s", job.id, final)
+                self.log.info("Completed job=%s output=%s duration_seconds=%.3f", job.id, final, result.duration_seconds)
         except StorageBlocked as exc:
             self._log_storage_blocked()
             if hasattr(self.db, "defer_job_for_storage"):
