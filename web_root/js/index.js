@@ -1985,6 +1985,7 @@
             const stage = editor.querySelector('[data-picture-editor-stage]');
             const cropNode = editor.querySelector('[data-picture-editor-crop]');
             const statusNode = editor.querySelector('[data-picture-editor-status]');
+            const displayState = editor.querySelector('[data-picture-editor-display-state]');
             const cropReadout = editor.querySelector('[data-picture-editor-crop-readout]');
             const cropState = editor.querySelector('[data-picture-editor-crop-state]');
             const revertButton = editor.querySelector('[data-picture-editor-revert]');
@@ -2000,6 +2001,7 @@
             let baselinePollTimer = null;
             let dragState = null;
             let displayedPreviewStage = String(editor.dataset.previewType || '').trim();
+            let displayedImageType = displayedPreviewStage;
             let baselineReady = editor.dataset.baselineReady === '1';
 
             if (!(stage instanceof HTMLElement) || !(cropNode instanceof HTMLElement) || profileUrl === '') {
@@ -2136,6 +2138,21 @@
 
                 statusNode.textContent = `Photo: ${message}`;
                 statusNode.dataset.pictureEditorState = state;
+            }
+
+            function normaliseDisplayType(type) {
+                const value = String(type || '').trim().toLowerCase();
+                return ['embedded', 'thumbnail', 'original', 'filtered'].includes(value) ? value : '';
+            }
+
+            function setDisplayType(type) {
+                displayedImageType = normaliseDisplayType(type);
+                if (!(displayState instanceof HTMLElement)) {
+                    return;
+                }
+
+                displayState.textContent = `Displaying: ${displayedImageType !== '' ? displayedImageType : 'none'}`;
+                displayState.dataset.pictureEditorDisplayType = displayedImageType;
             }
 
             function displayBox() {
@@ -2322,7 +2339,6 @@
                     const state = String(response?.status || 'queued');
                     if (state === 'succeeded' && response?.preview_url) {
                         swapPreviewImage(String(response.preview_url), 'filtered');
-                        displayedPreviewStage = 'filtered';
                         setStatus('Ready', 'ready');
                         return;
                     }
@@ -2362,6 +2378,7 @@
                 imageNode.src = url;
                 if (stageType !== '') {
                     displayedPreviewStage = stageType;
+                    setDisplayType(stageType);
                     editor.dataset.previewType = stageType;
                     renderCrop();
                 }

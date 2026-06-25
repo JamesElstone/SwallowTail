@@ -845,6 +845,8 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     }
 
     $harness->assertTrue(str_contains($source, 'SwallowtailPhotoMetadataSummaryService'));
+    $harness->assertTrue(str_contains($source, 'data-picture-editor-display-state'));
+    $harness->assertTrue(str_contains($source, 'Displaying: '));
 });
 
 $harness->check(_picture_viewer::class, 'picture editor exposes revert control', function () use ($harness): void {

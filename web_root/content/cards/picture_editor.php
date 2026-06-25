@@ -42,6 +42,8 @@ final class _picture_editorCard extends CardBaseFramework
         $previewReady = !empty($state['preview_ready']);
         $previewUrl = $previewReady ? (string)$state['preview_url'] : '';
         $previewType = (string)($state['preview_type'] ?? '');
+        $displayType = in_array($previewType, ['embedded', 'thumbnail', 'original', 'filtered'], true) ? $previewType : '';
+        $displayLabel = $displayType !== '' ? $displayType : 'none';
         $baseline = (array)($state['baseline'] ?? []);
         $baselineReady = !empty($baseline['ready']);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
@@ -79,6 +81,7 @@ final class _picture_editorCard extends CardBaseFramework
             </div>
             <div class="picture-editor-controls">
                 <div class="picture-editor-status" data-picture-editor-status>Photo: ' . ($previewReady ? 'Ready' : 'Preview pending') . '</div>
+                <div class="picture-editor-display-state" data-picture-editor-display-state data-picture-editor-display-type="' . HelperFramework::escape($displayType) . '">Displaying: ' . HelperFramework::escape($displayLabel) . '</div>
                 <div class="picture-editor-profile-state" data-picture-editor-profile-state>Profile: ' . ($baselineReady ? 'Ready' : 'Preparing') . '</div>
                 ' . $this->accordionPanel('Exposure',
                     $this->checkboxField('exposure.enabled', 'Enabled', !empty($exposure['enabled']))
