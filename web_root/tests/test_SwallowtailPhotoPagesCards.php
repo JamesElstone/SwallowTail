@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -106,8 +106,106 @@ $harness->check(_settings::class, 'includes reusable storage card', function () 
     $settings = new _settings();
 
     $harness->assertTrue(in_array('storage_available', $settings->cards(), true));
+    $harness->assertTrue(in_array('jobs', $settings->cards(), true));
     $harness->assertTrue(in_array('timezone_settings', $settings->cards(), true));
 });
+
+$seedJobStatisticsTables = static function (): void {
+    foreach ([
+        'photo_profile_data',
+        'photo_metadata',
+        'storage_migration_job_items',
+        'storage_migration_jobs',
+        'photo_conversion_jobs',
+        'photos',
+    ] as $table) {
+        InterfaceDB::execute('DROP TABLE IF EXISTS ' . $table);
+    }
+
+    InterfaceDB::execute("CREATE TABLE photos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_filename TEXT NOT NULL,
+        original_extension TEXT NOT NULL,
+        upload_state TEXT NOT NULL DEFAULT 'uploaded'
+    )");
+    InterfaceDB::execute("CREATE TABLE photo_conversion_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        locked_at TEXT NULL,
+        locked_by TEXT NULL,
+        started_at TEXT NULL,
+        completed_at TEXT NULL,
+        duration_seconds REAL NULL,
+        last_error TEXT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+    InterfaceDB::execute("CREATE TABLE storage_migration_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        last_error TEXT NULL,
+        completed_at TEXT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+    InterfaceDB::execute("CREATE TABLE storage_migration_job_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        last_error TEXT NULL,
+        completed_at TEXT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+    InterfaceDB::execute("CREATE TABLE photo_metadata (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'deferred'
+    )");
+    InterfaceDB::execute("CREATE TABLE photo_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        value TEXT NULL,
+        value_type TEXT NOT NULL
+    )");
+
+    InterfaceDB::execute("INSERT INTO photos (original_filename, original_extension, upload_state) VALUES
+        ('A.CR2', 'cr2', 'uploaded'),
+        ('B.CR2', 'CR2', 'uploaded'),
+        ('C.JPG', 'jpg', 'uploaded'),
+        ('D.CR2', 'cr2', 'removed')");
+    InterfaceDB::execute("INSERT INTO photo_conversion_jobs (photo_id, status, attempts, locked_at, locked_by, started_at, completed_at, duration_seconds, last_error) VALUES
+        (1, 'succeeded', 1, NULL, NULL, NULL, CURRENT_TIMESTAMP, 1.2, NULL),
+        (1, 'failed', 3, CURRENT_TIMESTAMP, 'worker-a', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 2.4, 'failed conversion'),
+        (1, 'cancelled', 1, NULL, NULL, NULL, NULL, NULL, 'cancelled by user'),
+        (1, 'obsolete', 1, NULL, NULL, NULL, NULL, NULL, 'obsolete preview profile'),
+        (2, 'queued', 0, NULL, NULL, NULL, NULL, NULL, NULL),
+        (2, 'processing', 1, CURRENT_TIMESTAMP, 'worker-b', CURRENT_TIMESTAMP, NULL, NULL, NULL)");
+    InterfaceDB::execute("INSERT INTO storage_migration_jobs (status, last_error, completed_at) VALUES
+        ('failed', 'migration failed', CURRENT_TIMESTAMP),
+        ('succeeded', NULL, CURRENT_TIMESTAMP)");
+    InterfaceDB::execute("INSERT INTO storage_migration_job_items (job_id, status, last_error, completed_at) VALUES
+        (1, 'succeeded', NULL, CURRENT_TIMESTAMP),
+        (1, 'failed', 'copy failed', CURRENT_TIMESTAMP),
+        (1, 'failed', 'verify failed', CURRENT_TIMESTAMP),
+        (1, 'queued', NULL, NULL),
+        (2, 'processing', NULL, NULL)");
+    InterfaceDB::execute("INSERT INTO photo_metadata (photo_id, status) VALUES
+        (1, 'ready'),
+        (2, 'failed'),
+        (3, 'failed'),
+        (4, 'deferred')");
+    InterfaceDB::execute("INSERT INTO photo_profile_data (photo_id, type, `key`, value, value_type) VALUES
+        (1, 'swallowtail', 'status', 'processed', 'string'),
+        (1, 'Exposure', 'Brightness', '20', 'int'),
+        (2, 'swallowtail', 'status', 'failed', 'string'),
+        (2, 'swallowtail', 'last_error', 'profile failed', 'string'),
+        (2, 'Exposure', 'Brightness', '10', 'int'),
+        (3, 'swallowtail', 'status', 'queued', 'string'),
+        (4, 'swallowtail', 'status', 'processing', 'string')");
+};
 
 $harness->check(_storage_summaryCard::class, 'summarises included storage capacity for dashboard', function () use ($harness): void {
     $card = new _storage_summaryCard();
@@ -248,6 +346,106 @@ $harness->check(_statisticsCard::class, 'renders dashboard statistics totals and
     $harness->assertTrue(str_contains($html, '<th>Slowest</th>'));
     $harness->assertTrue(str_contains($html, '<td>Embedded</td>'));
     $harness->assertTrue(str_contains($html, '1.0s'));
+});
+
+$harness->check(SwallowtailJobStatisticsService::class, 'summarises job statistics from database tables', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+
+    $service = new SwallowtailJobStatisticsService();
+    $queueRows = $service->jobQueueRows();
+    $metadataRows = $service->metadataProfileRows();
+
+    $conversion = $queueRows[0] ?? [];
+    $migration = $queueRows[1] ?? [];
+    $metadata = $metadataRows[0] ?? [];
+    $profile = $metadataRows[1] ?? [];
+
+    $harness->assertSame('Conversion', (string)($conversion['job_type'] ?? ''));
+    $harness->assertSame(1, (int)($conversion['succeeded'] ?? 0));
+    $harness->assertSame(1, (int)($conversion['failed'] ?? 0));
+    $harness->assertSame(1, (int)($conversion['cancelled'] ?? 0));
+    $harness->assertSame(1, (int)($conversion['obsolete'] ?? 0));
+    $harness->assertSame(1, (int)($conversion['queued'] ?? 0));
+    $harness->assertSame(1, (int)($conversion['processing'] ?? 0));
+    $harness->assertSame('6', (string)($conversion['total'] ?? ''));
+
+    $harness->assertSame('Migration', (string)($migration['job_type'] ?? ''));
+    $harness->assertSame(1, (int)($migration['succeeded'] ?? 0));
+    $harness->assertSame(2, (int)($migration['failed'] ?? 0));
+    $harness->assertSame(1, (int)($migration['queued'] ?? 0));
+    $harness->assertSame(1, (int)($migration['processing'] ?? 0));
+    $harness->assertSame('5 in 2', (string)($migration['total'] ?? ''));
+
+    $harness->assertSame('Metadata', (string)($metadata['job_type'] ?? ''));
+    $harness->assertSame(1, (int)($metadata['ready'] ?? 0));
+    $harness->assertSame(2, (int)($metadata['failed'] ?? 0));
+    $harness->assertSame(1, (int)($metadata['deferred'] ?? 0));
+    $harness->assertSame('4', (string)($metadata['total'] ?? ''));
+
+    $harness->assertSame('Profile', (string)($profile['job_type'] ?? ''));
+    $harness->assertSame(1, (int)($profile['ready'] ?? 0));
+    $harness->assertSame(1, (int)($profile['failed'] ?? 0));
+    $harness->assertSame(1, (int)($profile['queued'] ?? 0));
+    $harness->assertSame(1, (int)($profile['processing'] ?? 0));
+    $harness->assertSame('4 in 2', (string)($profile['total'] ?? ''));
+});
+
+$harness->check(_jobsCard::class, 'renders job statistics tables and reprocess forms', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+
+    $html = (new _jobsCard())->render([
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['jobs'],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'Job Queue'));
+    $harness->assertTrue(str_contains($html, 'Metadata/Profile Jobs'));
+    $harness->assertTrue(str_contains($html, '<th>Processing</th>'));
+    $harness->assertTrue(str_contains($html, '<th>Obsolete</th>'));
+    $harness->assertTrue(str_contains($html, '<td>Conversion</td>'));
+    $harness->assertTrue(str_contains($html, '<td>Migration</td>'));
+    $harness->assertTrue(str_contains($html, '<td>Metadata</td>'));
+    $harness->assertTrue(str_contains($html, '<td>Profile</td>'));
+    $harness->assertTrue(str_contains($html, 'name="card_action" value="Jobs"'));
+    $harness->assertTrue(str_contains($html, 'name="jobs_action" value="reprocess_exceptions"'));
+    $harness->assertTrue(str_contains($html, 'name="job_type" value="conversion"'));
+    $harness->assertTrue(str_contains($html, 'name="csrf_token" value="test-csrf"'));
+    $harness->assertTrue(str_contains($html, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
+    $harness->assertTrue(!str_contains($html, 'name="cards[]"'));
+});
+
+$harness->check(SwallowtailJobStatisticsService::class, 'reprocesses only failed exception rows', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+
+    $service = new SwallowtailJobStatisticsService();
+
+    $conversion = $service->reprocessExceptions('conversion');
+    $harness->assertSame(1, (int)($conversion['count'] ?? 0));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_conversion_jobs WHERE status = 'failed'"));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_conversion_jobs WHERE status = 'obsolete'"));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_conversion_jobs WHERE status = 'cancelled'"));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT attempts FROM photo_conversion_jobs WHERE id = 2"));
+    $harness->assertSame('', (string)InterfaceDB::fetchColumn("SELECT COALESCE(last_error, '') FROM photo_conversion_jobs WHERE id = 2"));
+
+    $migration = $service->reprocessExceptions('migration');
+    $harness->assertSame(2, (int)($migration['count'] ?? 0));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM storage_migration_job_items WHERE status = 'failed'"));
+    $harness->assertSame(3, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM storage_migration_job_items WHERE job_id = 1 AND status = 'queued'"));
+    $harness->assertSame('queued', (string)InterfaceDB::fetchColumn('SELECT status FROM storage_migration_jobs WHERE id = 1'));
+    $harness->assertSame('', (string)InterfaceDB::fetchColumn("SELECT COALESCE(last_error, '') FROM storage_migration_jobs WHERE id = 1"));
+
+    $metadata = $service->reprocessExceptions('metadata');
+    $harness->assertSame(2, (int)($metadata['count'] ?? 0));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_metadata WHERE status = 'failed'"));
+    $harness->assertSame(2, (int)InterfaceDB::fetchColumn('SELECT COUNT(*) FROM photo_metadata'));
+
+    $profile = $service->reprocessExceptions('profile');
+    $harness->assertSame(1, (int)($profile['count'] ?? 0));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn('SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 2'));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 1 AND type = 'swallowtail' AND `key` = 'status' AND value = 'processed'"));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 3 AND type = 'swallowtail' AND `key` = 'status' AND value = 'queued'"));
 });
 
 $harness->check(_storage_availableCard::class, 'renders zpool dataset select and non-zfs migration controls', function () use ($harness): void {

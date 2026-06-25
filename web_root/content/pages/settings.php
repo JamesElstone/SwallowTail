@@ -30,6 +30,7 @@ final class _settings extends PageContextFramework
             'application_settings',
             'upload_tokens',
             'storage_available',
+            'jobs',
             'timezone_settings',
             'web_environment',
             'invitation_settings',
