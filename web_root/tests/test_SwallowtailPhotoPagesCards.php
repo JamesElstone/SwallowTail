@@ -898,6 +898,18 @@ $harness->check(_gallery::class, 'browse gallery renders auto refresh control', 
     $harness->assertTrue(str_contains($html, '>Auto refresh<'));
 });
 
+$harness->check(_gallery::class, 'browse gallery renders auto scroll control', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'autoScrollControl');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card);
+
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-control'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-toggle'));
+    $harness->assertTrue(str_contains($html, '>Auto scroll<'));
+});
+
 $harness->check(_gallery::class, 'browse gallery renders page size selector', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'galleryControls');
@@ -914,6 +926,7 @@ $harness->check(_gallery::class, 'browse gallery renders page size selector', fu
     $harness->assertTrue(str_contains($html, '<option value="40">40</option>'));
     $harness->assertTrue(str_contains($html, 'name="browse_gallery_page" value="1"'));
     $harness->assertTrue(str_contains($html, 'data-gallery-auto-refresh-toggle'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-toggle'));
 });
 
 $harness->check(_gallery::class, 'browse gallery normalises page size context', function () use ($harness): void {
@@ -967,6 +980,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=43'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-photo-id="43"'));
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=thumbnail'));
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));

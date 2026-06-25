@@ -17,6 +17,7 @@
     const afPersistentCookieName = 'af_client_device_id';
     const tableCondensedStoragePrefix = 'table_condensed_view:';
     const galleryAutoRefreshStorageKey = 'gallery:auto-refresh:browse_gallery';
+    const galleryAutoScrollStorageKey = 'gallery:auto-scroll:browse_gallery';
     const cardMaximizedStorageKey = 'card:maximized';
     const galleryAutoRefreshIntervalMs = 5000;
     let afEphemeralDeviceId = null;
@@ -2904,6 +2905,30 @@
         }
     }
 
+    function galleryAutoScrollEnabled() {
+        if (!afStorageAvailable('localStorage')) {
+            return false;
+        }
+
+        try {
+            return window.localStorage.getItem(galleryAutoScrollStorageKey) === '1';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function setGalleryAutoScrollEnabled(enabled) {
+        if (!afStorageAvailable('localStorage')) {
+            return;
+        }
+
+        try {
+            window.localStorage.setItem(galleryAutoScrollStorageKey, enabled ? '1' : '0');
+        } catch (error) {
+            // Storage may be disabled; the current checkbox state still applies.
+        }
+    }
+
     function galleryAutoRefreshTargets(root) {
         const targets = [];
 
@@ -2931,6 +2956,79 @@
             || target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement;
     }
 
+    function galleryHasPendingPreviewTiles(target) {
+        return target instanceof HTMLElement
+            && target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement;
+    }
+
+    function galleryCardRefreshPayload(card, target) {
+        const pageParams = new URL(window.location.href).searchParams;
+        const cardKey = String(card.dataset.cardKey || '').trim();
+        const pageField = String(target.dataset.galleryPageField || '').trim();
+        const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
+        const perPageField = String(target.dataset.galleryPerPageField || '').trim();
+        const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
+        const payload = {
+            _ajax: '1',
+            _card_refresh: '1',
+            page: pageParams.get('page') || 'gallery',
+            cards: [cardKey],
+        };
+
+        if (pageField !== '') {
+            payload[pageField] = String(pageValue);
+        }
+
+        if (perPageField !== '') {
+            payload[perPageField] = String(perPageValue);
+        }
+
+        return payload;
+    }
+
+    function galleryResponseCard(response, card) {
+        const html = String((response.cards || {})[card.id] || '').trim();
+        if (html === '') {
+            return null;
+        }
+
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const replacement = template.content.firstElementChild;
+
+        return replacement instanceof HTMLElement ? replacement : null;
+    }
+
+    function replaceGalleryPendingTiles(target, replacementCard) {
+        const replacementTarget = replacementCard instanceof HTMLElement
+            ? replacementCard.querySelector('[data-gallery-auto-refresh="true"]')
+            : null;
+
+        if (!(target instanceof HTMLElement) || !(replacementTarget instanceof HTMLElement)) {
+            return;
+        }
+
+        target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-id]').forEach((currentTile) => {
+            if (!(currentTile instanceof HTMLElement)) {
+                return;
+            }
+
+            const photoId = String(currentTile.dataset.galleryPhotoId || '').trim();
+            const replacementTile = photoId !== ''
+                ? Array.from(replacementTarget.querySelectorAll('[data-gallery-photo-id]')).find((node) => (
+                    node instanceof HTMLElement
+                    && String(node.dataset.galleryPhotoId || '').trim() === photoId
+                ))
+                : null;
+
+            if (replacementTile instanceof HTMLElement) {
+                currentTile.replaceWith(replacementTile);
+            }
+        });
+
+        target.dataset.galleryPending = galleryHasPendingPreviewTiles(target) ? '1' : '0';
+    }
+
     function initialiseGalleryAutoRefresh(root = document) {
         galleryAutoRefreshTargets(root).forEach((target) => {
             if (target.dataset.galleryAutoRefreshBound === '1') {
@@ -2939,11 +3037,17 @@
 
             target.dataset.galleryAutoRefreshBound = '1';
             const card = target.closest('.card[data-card-key]');
-            const control = card instanceof HTMLElement
+            const refreshControl = card instanceof HTMLElement
                 ? card.querySelector('[data-gallery-auto-refresh-toggle]')
                 : null;
+            const scrollControl = card instanceof HTMLElement
+                ? card.querySelector('[data-gallery-auto-scroll-toggle]')
+                : null;
 
-            if (!(card instanceof HTMLElement) || !(control instanceof HTMLInputElement)) {
+            if (!(card instanceof HTMLElement)
+                || !(refreshControl instanceof HTMLInputElement)
+                || !(scrollControl instanceof HTMLInputElement)
+            ) {
                 return;
             }
 
@@ -2951,7 +3055,8 @@
                 inFlight: false,
                 timerId: null,
             };
-            control.checked = galleryAutoRefreshEnabled();
+            refreshControl.checked = galleryAutoRefreshEnabled();
+            scrollControl.checked = galleryAutoScrollEnabled();
 
             const clearTimer = () => {
                 if (state.timerId !== null) {
@@ -2962,8 +3067,10 @@
 
             const shouldRefresh = () => (
                 card.isConnected
-                && control.checked
-                && galleryHasPendingPreviews(target)
+                && (
+                    scrollControl.checked
+                    || (refreshControl.checked && galleryHasPendingPreviews(target))
+                )
             );
 
             const schedule = () => {
@@ -2987,26 +3094,8 @@
                 }
 
                 state.inFlight = true;
-                const pageParams = new URL(window.location.href).searchParams;
-                const cardKey = String(card.dataset.cardKey || '').trim();
-                const pageField = String(target.dataset.galleryPageField || '').trim();
-                const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
-                const perPageField = String(target.dataset.galleryPerPageField || '').trim();
-                const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
-                const payload = {
-                    _ajax: '1',
-                    _card_refresh: '1',
-                    page: pageParams.get('page') || 'gallery',
-                    cards: [cardKey],
-                };
-
-                if (pageField !== '') {
-                    payload[pageField] = String(pageValue);
-                }
-
-                if (perPageField !== '') {
-                    payload[perPageField] = String(perPageValue);
-                }
+                const shouldAutoScroll = scrollControl.checked;
+                const payload = galleryCardRefreshPayload(card, target);
 
                 try {
                     const response = await sendAjax(window.location.href, {
@@ -3016,17 +3105,30 @@
                     });
 
                     applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
-                    applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
+                    if (shouldAutoScroll) {
+                        applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
+                    } else {
+                        applyAjaxPayloadFragment('gallery pending tiles', () => {
+                            replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
+                        });
+                    }
                 } catch (error) {
                     console.error('Failed to auto refresh gallery.', error);
                     schedule();
                 } finally {
                     state.inFlight = false;
+                    if (!shouldAutoScroll || card.isConnected) {
+                        schedule();
+                    }
                 }
             };
 
-            control.addEventListener('change', () => {
-                setGalleryAutoRefreshEnabled(control.checked);
+            refreshControl.addEventListener('change', () => {
+                setGalleryAutoRefreshEnabled(refreshControl.checked);
+                schedule();
+            });
+            scrollControl.addEventListener('change', () => {
+                setGalleryAutoScrollEnabled(scrollControl.checked);
                 schedule();
             });
             schedule();

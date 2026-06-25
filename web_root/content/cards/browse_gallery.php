@@ -108,7 +108,7 @@ final class _browse_galleryCard extends CardBaseFramework
             : '<div class="gallery-placeholder">Preview pending</div>';
         $statusIndicator = $this->statusIndicator($status);
 
-        return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '"' . $pendingAttribute . '>
+        return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
             <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
             <span class="gallery-meta">
                 <strong>' . HelperFramework::escape($filename) . '</strong>
@@ -155,11 +155,20 @@ final class _browse_galleryCard extends CardBaseFramework
         </label>';
     }
 
+    private function autoScrollControl(): string
+    {
+        return '<label class="gallery-auto-refresh-control" data-gallery-auto-scroll-control>
+            <input type="checkbox" value="1" data-gallery-auto-scroll-toggle>
+            <span>Auto scroll</span>
+        </label>';
+    }
+
     private function galleryControls(int $perPage): string
     {
         return '<div class="gallery-footer-controls">'
             . $this->perPageControl($perPage)
             . $this->autoRefreshControl()
+            . $this->autoScrollControl()
             . '</div>';
     }
 
