@@ -189,6 +189,8 @@ final class SwallowtailConversionQueueService
         $profileVersion = max(1, $profileVersion);
         $outputWidth = $this->nullablePositiveInt($outputWidth);
         $outputHeight = $this->nullablePositiveInt($outputHeight);
+        $inputPath = $this->normaliseRequiredPath($inputPath, 1000);
+        $outputPath = $this->normaliseRequiredPath($outputPath, 1000);
 
         if (($outputWidth === null) !== ($outputHeight === null)) {
             throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
@@ -247,9 +249,9 @@ final class SwallowtailConversionQueueService
             [
                 'photo_id' => $photoId,
                 'image_type' => $imageType,
-                'input_path' => $this->normaliseRequiredPath($inputPath, 1000),
+                'input_path' => $inputPath,
                 'profile_path' => $profilePath,
-                'output_path' => $this->normaliseRequiredPath($outputPath, 1000),
+                'output_path' => $outputPath,
                 'output_width' => $outputWidth,
                 'output_height' => $outputHeight,
                 'profile_version' => $profileVersion,
@@ -258,9 +260,29 @@ final class SwallowtailConversionQueueService
             ]
         );
 
-        $jobId = $this->lastInsertId();
+        $jobId = InterfaceDB::fetchColumn(
+            "SELECT id
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND profile_version = :profile_version
+               AND input_path = :input_path
+               AND output_path = :output_path
+               AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
+               AND status = 'queued'
+             ORDER BY id DESC
+             LIMIT 1",
+            array_filter([
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+                'profile_version' => $profileVersion,
+                'input_path' => $inputPath,
+                'output_path' => $outputPath,
+                'profile_path' => $profilePath,
+            ], static fn(mixed $value): bool => $value !== null)
+        );
 
-        return $jobId;
+        return $this->nullablePositiveInt($jobId);
     }
 
     public function queuedJobs(int $limit = 50): array
@@ -601,12 +623,4 @@ final class SwallowtailConversionQueueService
         return $value > 0 ? $value : null;
     }
 
-    private function lastInsertId(): int
-    {
-        if (InterfaceDB::driverName() === 'sqlite') {
-            return (int)InterfaceDB::fetchColumn('SELECT last_insert_rowid()');
-        }
-
-        return (int)InterfaceDB::fetchColumn('SELECT LAST_INSERT_ID()');
-    }
 }

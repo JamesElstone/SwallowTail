@@ -3630,6 +3630,16 @@ $harness->check(SwallowtailConversionQueueService::class, 'sends Redis preempt s
     $previewJobId = $queue->enqueuePreviewRefresh((int)$result['photo_id'], $profile, 2, 12);
 
     $harness->assertTrue((int)$previewJobId > 0);
+    $previewJob = InterfaceDB::fetchOne(
+        "SELECT image_type, status
+         FROM photo_conversion_jobs
+         WHERE id = :id
+         LIMIT 1",
+        ['id' => (int)$previewJobId]
+    );
+    $harness->assertTrue(is_array($previewJob));
+    $harness->assertSame('preview', (string)($previewJob['image_type'] ?? ''));
+    $harness->assertSame('queued', (string)($previewJob['status'] ?? ''));
     $preempts = array_values(array_filter(
         $notifications,
         static fn(array $notification): bool => (string)$notification['message_type'] === 'preempt'
