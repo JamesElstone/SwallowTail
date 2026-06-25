@@ -26,14 +26,14 @@ final class _recent_uploadsCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return 'Recent web uploads and conversion readiness.';
+        return 'Recent uploads and conversion readiness.';
     }
 
     public function render(array $context): string
     {
         $rows = (new SwallowtailPhotoUiService())->recentUploads($this->currentUserId(), 8);
         if ($rows === []) {
-            return '<p class="helper">No recent web uploads yet.</p>';
+            return '<p class="helper">No recent uploads yet.</p>';
         }
 
         $html = '<div class="recent-upload-list">';

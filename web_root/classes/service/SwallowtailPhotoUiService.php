@@ -70,7 +70,7 @@ final class SwallowtailPhotoUiService
 
         $limit = max(1, min(50, $limit));
         $params = [];
-        $where = $this->accessWhereSql($userId, $params, 'photo') . " AND photo.uploaded_via = 'web'";
+        $where = $this->accessWhereSql($userId, $params, 'photo');
 
         return array_map(
             [$this, 'normalisePhotoRow'],

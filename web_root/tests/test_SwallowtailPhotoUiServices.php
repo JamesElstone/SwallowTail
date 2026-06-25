@@ -529,6 +529,56 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame(3, (int)$clampedGallery['pagination']['last_item']);
 });
 
+$harness->check(SwallowtailPhotoUiService::class, 'returns recent uploads from all accessible upload sources', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+
+    foreach ([
+        ['web-owned.CR2', '1', 902, 'web', '2026-06-25 10:00:00'],
+        ['api-owned.CR2', '2', 902, 'api', '2026-06-25 11:00:00'],
+        ['api-other.CR2', '3', 904, 'api', '2026-06-25 12:00:00'],
+    ] as $photo) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location,
+                uploaded_by_user_id,
+                uploaded_via,
+                created_at
+            ) VALUES (
+                :filename,
+                'cr2',
+                100,
+                :sha256,
+                :storage_base_location,
+                :user_id,
+                :uploaded_via,
+                :created_at
+            )",
+            [
+                'filename' => $photo[0],
+                'sha256' => str_repeat($photo[1], 64),
+                'storage_base_location' => $baseLocation,
+                'user_id' => $photo[2],
+                'uploaded_via' => $photo[3],
+                'created_at' => $photo[4],
+            ]
+        );
+    }
+
+    $uploaderRows = (new SwallowtailPhotoUiService())->recentUploads(902);
+    $adminRows = (new SwallowtailPhotoUiService())->recentUploads(901);
+
+    $harness->assertSame(2, count($uploaderRows));
+    $harness->assertSame('api-owned.CR2', (string)$uploaderRows[0]['original_filename']);
+    $harness->assertSame('web-owned.CR2', (string)$uploaderRows[1]['original_filename']);
+    $harness->assertSame(3, count($adminRows));
+    $harness->assertSame('api-other.CR2', (string)$adminRows[0]['original_filename']);
+});
+
 $harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery preview readiness', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
     $storage = new SwallowtailStorageService();
