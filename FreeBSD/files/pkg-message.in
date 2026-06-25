@@ -37,6 +37,11 @@ upgrading if it was already running.
 Service defaults are embedded in the rc.d scripts. Override them in
 the system rc configuration using sysrc(8) with swallowtail_conversion_* and
 swallowtail_storage_* and swallowtail_metadata_* variables.
+The worker services are supervised by daemon(8) and restart after crashes.
+Adjust swallowtail_conversion_restart_delay_seconds,
+swallowtail_storage_restart_delay_seconds, and
+swallowtail_metadata_restart_delay_seconds if the default retry delay is not
+appropriate for this host.
 
 An Apache include sample is installed under the package prefix as:
 

@@ -210,6 +210,7 @@ The port installs these services:
 ```text
 swallowtail_conversion
 swallowtail_storage
+swallowtail_metadata
 ```
 
 The port creates the private `secure` directory as `www:swallowtail` with mode
@@ -222,20 +223,26 @@ Enable the services that should run on this host:
 ```sh
 sysrc swallowtail_conversion_enable=YES
 sysrc swallowtail_storage_enable=YES
+sysrc swallowtail_metadata_enable=YES
 ```
 
 Useful service tunables can be set in `/etc/rc.conf`:
 
 ```sh
 sysrc swallowtail_conversion_poll_interval_seconds=5
+sysrc swallowtail_conversion_restart_delay_seconds=5
 sysrc swallowtail_storage_interval_seconds=300
 sysrc swallowtail_storage_mount_poll_seconds=30
+sysrc swallowtail_storage_restart_delay_seconds=5
+sysrc swallowtail_metadata_restart_delay_seconds=5
 ```
 
 The RAW conversion worker reads database settings from
 `/usr/local/swallowtail/secure/app.php`, the same file used by the web app. Use
 `swallowtail_conversion_*` only for service-specific worker settings and
-`swallowtail_storage_*` for storage service settings.
+`swallowtail_storage_*` for storage service settings. The worker rc.d scripts
+run under FreeBSD `daemon(8)` supervision and restart a crashed Python worker
+after the configured `*_restart_delay_seconds` delay.
 
 ## Configure PHP-FPM
 

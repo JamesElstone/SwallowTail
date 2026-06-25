@@ -43,13 +43,15 @@ load_rc_config "$name"
 : ${swallowtail_conversion_retry_delay_seconds:="60"}
 : ${swallowtail_conversion_work_dir:="/var/tmp/swallowtail_conversion"}
 : ${swallowtail_conversion_temp_retention_hours:="24"}
+: ${swallowtail_conversion_restart_delay_seconds:="5"}
 : ${swallowtail_conversion_log_level:="INFO"}
 : ${swallowtail_conversion_migrate_lock:="/var/run/swallowtail/swallowtail_conversion_migrate.lock"}
 
 pidfile="/var/run/swallowtail/swallowtail_conversion.pid"
-procname="${swallowtail_conversion_python}"
+child_pidfile="/var/run/swallowtail/swallowtail_conversion_child.pid"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${swallowtail_conversion_worker_user} -o ${swallowtail_conversion_log} ${swallowtail_conversion_python} -m swallowtail_conversion"
+procname="${command}"
+command_args="-f -r -R ${swallowtail_conversion_restart_delay_seconds} -P ${pidfile} -p ${child_pidfile} -u ${swallowtail_conversion_worker_user} -o ${swallowtail_conversion_log} ${swallowtail_conversion_python} -m swallowtail_conversion"
 required_files="${swallowtail_conversion_python} ${swallowtail_conversion_php} ${swallowtail_conversion_app_config}"
 required_dirs="${swallowtail_conversion_project_root}/services/swallowtail_conversion/src"
 extra_commands="reload onestatus migrate"
@@ -134,6 +136,9 @@ swallowtail_conversion_postcmd()
 	if [ -f "${pidfile}" ]; then
 		chmod 0640 "${pidfile}" 2>/dev/null || true
 	fi
+	if [ -f "${child_pidfile}" ]; then
+		chmod 0640 "${child_pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_conversion_reload()
@@ -147,7 +152,12 @@ swallowtail_conversion_process_status()
 	if [ -f "${pidfile}" ]; then
 		pid=$(cat "${pidfile}" 2>/dev/null || true)
 		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-			echo "${name} is running as pid ${pid}"
+			child_pid=$(cat "${child_pidfile}" 2>/dev/null || true)
+			if [ -n "${child_pid}" ] && kill -0 "${child_pid}" 2>/dev/null; then
+				echo "${name} supervisor is running as pid ${pid}; worker child is pid ${child_pid}"
+			else
+				echo "${name} supervisor is running as pid ${pid}; worker child is restarting"
+			fi
 			return 0
 		fi
 	fi

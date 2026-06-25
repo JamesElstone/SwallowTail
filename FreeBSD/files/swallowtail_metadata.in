@@ -33,12 +33,14 @@ load_rc_config "$name"
 : ${swallowtail_metadata_retry_delay_seconds:="60"}
 : ${swallowtail_metadata_max_attempts:="3"}
 : ${swallowtail_metadata_redis_profile_queue:=""}
+: ${swallowtail_metadata_restart_delay_seconds:="5"}
 : ${swallowtail_metadata_log_level:="INFO"}
 
 pidfile="/var/run/swallowtail/swallowtail_metadata.pid"
-procname="${swallowtail_metadata_python}"
+child_pidfile="/var/run/swallowtail/swallowtail_metadata_child.pid"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${swallowtail_metadata_worker_user} -o ${swallowtail_metadata_log} ${swallowtail_metadata_python} -m swallowtail_metadata"
+procname="${command}"
+command_args="-f -r -R ${swallowtail_metadata_restart_delay_seconds} -P ${pidfile} -p ${child_pidfile} -u ${swallowtail_metadata_worker_user} -o ${swallowtail_metadata_log} ${swallowtail_metadata_python} -m swallowtail_metadata"
 required_files="${swallowtail_metadata_python} ${swallowtail_metadata_php} ${swallowtail_metadata_app_config} ${swallowtail_metadata_exiftool_binary} ${swallowtail_metadata_rawtherapee_binary}"
 required_dirs="${swallowtail_metadata_project_root}/services/swallowtail_metadata/src"
 extra_commands="reload onestatus"
@@ -114,6 +116,9 @@ swallowtail_metadata_postcmd()
 	if [ -f "${pidfile}" ]; then
 		chmod 0640 "${pidfile}" 2>/dev/null || true
 	fi
+	if [ -f "${child_pidfile}" ]; then
+		chmod 0640 "${child_pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_metadata_reload()
@@ -127,7 +132,12 @@ swallowtail_metadata_process_status()
 	if [ -f "${pidfile}" ]; then
 		pid=$(cat "${pidfile}" 2>/dev/null || true)
 		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-			echo "${name} is running as pid ${pid}"
+			child_pid=$(cat "${child_pidfile}" 2>/dev/null || true)
+			if [ -n "${child_pid}" ] && kill -0 "${child_pid}" 2>/dev/null; then
+				echo "${name} supervisor is running as pid ${pid}; worker child is pid ${child_pid}"
+			else
+				echo "${name} supervisor is running as pid ${pid}; worker child is restarting"
+			fi
 			return 0
 		fi
 	fi

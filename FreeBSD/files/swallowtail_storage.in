@@ -33,11 +33,13 @@ load_rc_config "$name"
 : ${swallowtail_storage_redis_snapshot_ttl_seconds:="360"}
 : ${swallowtail_storage_redis_storage_wake_queue:="swallowtail:conversion:storage_wake"}
 : ${swallowtail_storage_log:="%%SWALLOWTAIL_LOG_DIR%%/swallowtail_storage.log"}
+: ${swallowtail_storage_restart_delay_seconds:="5"}
 : ${swallowtail_storage_log_level:="INFO"}
 pidfile="/var/run/swallowtail/storage.pid"
-procname="${swallowtail_storage_python}"
+child_pidfile="/var/run/swallowtail/storage_child.pid"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_python} -m swallowtail_storage"
+procname="${command}"
+command_args="-f -r -R ${swallowtail_storage_restart_delay_seconds} -P ${pidfile} -p ${child_pidfile} -u ${swallowtail_storage_worker_user} -o ${swallowtail_storage_log} ${swallowtail_storage_python} -m swallowtail_storage"
 required_files="${swallowtail_storage_python} ${swallowtail_storage_php}"
 required_dirs="${swallowtail_storage_project_root}/services/swallowtail_storage/src"
 extra_commands="onestatus"
@@ -109,6 +111,9 @@ swallowtail_storage_postcmd()
 	if [ -f "${pidfile}" ]; then
 		chmod 0640 "${pidfile}" 2>/dev/null || true
 	fi
+	if [ -f "${child_pidfile}" ]; then
+		chmod 0640 "${child_pidfile}" 2>/dev/null || true
+	fi
 }
 
 swallowtail_storage_process_status()
@@ -116,7 +121,12 @@ swallowtail_storage_process_status()
 	if [ -f "${pidfile}" ]; then
 		pid=$(cat "${pidfile}" 2>/dev/null || true)
 		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-			echo "${name} is running as pid ${pid}"
+			child_pid=$(cat "${child_pidfile}" 2>/dev/null || true)
+			if [ -n "${child_pid}" ] && kill -0 "${child_pid}" 2>/dev/null; then
+				echo "${name} supervisor is running as pid ${pid}; worker child is pid ${child_pid}"
+			else
+				echo "${name} supervisor is running as pid ${pid}; worker child is restarting"
+			fi
 			return 0
 		fi
 	fi

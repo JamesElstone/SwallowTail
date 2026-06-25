@@ -24,6 +24,7 @@ overridden in `/etc/rc.conf`:
 ```sh
 sysrc swallowtail_conversion_poll_interval_seconds=5
 sysrc swallowtail_conversion_redis_storage_wake_queue=swallowtail:conversion:storage_wake
+sysrc swallowtail_conversion_restart_delay_seconds=5
 ```
 
 Database settings are read from the same `secure/app.php` file used by the web
@@ -38,9 +39,10 @@ service swallowtail_conversion status
 service swallowtail_conversion migrate
 ```
 
-`status` reports the daemon pid and runs the same Python `--health` checks used
-before startup, including database, Redis, RawTherapee, work directory, and log
-file checks.
+`status` reports the supervised daemon pid, the current worker child pid, and
+runs the same Python `--health` checks used before startup, including database,
+Redis, RawTherapee, work directory, and log file checks. The rc.d wrapper
+restarts the worker after a crash using `swallowtail_conversion_restart_delay_seconds`.
 
 `migrate` is the preferred upgrade path on FreeBSD hosts. It takes a migration
 lock, remembers whether the worker was running, stops it so current conversion

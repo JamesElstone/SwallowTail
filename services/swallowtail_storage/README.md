@@ -35,7 +35,11 @@ sysrc swallowtail_storage_redis_port=6379
 sysrc swallowtail_storage_redis_storage_wake_queue=swallowtail:conversion:storage_wake
 sysrc swallowtail_storage_log=/var/log/swallowtail/swallowtail_storage.log
 sysrc swallowtail_storage_log_level=INFO
+sysrc swallowtail_storage_restart_delay_seconds=5
 ```
+
+The rc.d wrapper runs under FreeBSD `daemon(8)` supervision and restarts the
+worker after a crash using `swallowtail_storage_restart_delay_seconds`.
 
 For one-shot checks:
 
