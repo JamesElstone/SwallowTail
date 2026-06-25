@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import threading
 import unittest
 import uuid
 from contextlib import redirect_stdout
@@ -389,6 +390,123 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 100, 0), section_inputs[0][9])
         self.assertEqual((self.FakePyodbc.SQL_VARCHAR, 50, 0), section_inputs[0][10])
         self.assertEqual(3, stats["profile_max_value_chunks"])
+
+    def test_read_fetch_reconnects_once_after_odbc_connection_loss(self) -> None:
+        class FakeOdbcError(Exception):
+            pass
+
+        class FakeCursor:
+            description = [("status",), ("count",)]
+
+            def __init__(self, connection) -> None:
+                self.connection = connection
+                self.closed = False
+
+            def execute(self, _sql, _params) -> None:
+                if self.connection.fail_execute:
+                    raise FakeOdbcError("08S01", "Server has gone away")
+
+            def fetchall(self):
+                return [("ready", self.connection.count)]
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeConnection:
+            def __init__(self, count: int, fail_execute: bool = False) -> None:
+                self.count = count
+                self.fail_execute = fail_execute
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor(self)
+
+            def rollback(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        failed_connection = FakeConnection(0, fail_execute=True)
+        recovered_connection = FakeConnection(3)
+
+        database = object.__new__(MetadataDatabase)
+        database.driver = "odbc"
+        database.pyodbc = self.FakePyodbc
+        database.paramstyle = "?"
+        database.connection = failed_connection
+        database._connect = lambda: recovered_connection
+
+        self.assertEqual(3, database.counts()["ready"])
+        self.assertTrue(failed_connection.closed)
+
+    def test_write_failure_discards_odbc_connection_without_retrying_write(self) -> None:
+        class FakeOdbcError(Exception):
+            pass
+
+        class FakeCursor:
+            def __init__(self, connection) -> None:
+                self.connection = connection
+                self.closed = False
+
+            def execute(self, _sql, _params) -> None:
+                self.connection.execute_count += 1
+                raise FakeOdbcError("08S01", "Got packets out of order")
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.execute_count = 0
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor(self)
+
+            def close(self) -> None:
+                self.closed = True
+
+        connection = FakeConnection()
+        database = object.__new__(MetadataDatabase)
+        database.driver = "odbc"
+        database.pyodbc = self.FakePyodbc
+        database.paramstyle = "?"
+        database.connection = connection
+
+        with self.assertRaises(FakeOdbcError):
+            database._execute("UPDATE photo_metadata SET status = %s", ("failed",))
+
+        self.assertEqual(1, connection.execute_count)
+        self.assertTrue(connection.closed)
+
+    def test_database_uses_thread_local_connections(self) -> None:
+        class FakeConnection:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        database = object.__new__(MetadataDatabase)
+        database.driver = "odbc"
+        database.pyodbc = self.FakePyodbc
+        database.paramstyle = "?"
+        created: list[FakeConnection] = []
+
+        def connect() -> FakeConnection:
+            connection = FakeConnection(str(len(created)))
+            created.append(connection)
+            return connection
+
+        database._connect = connect
+
+        main_connection = database.connection
+        worker_connections: list[FakeConnection] = []
+        thread = threading.Thread(target=lambda: worker_connections.append(database.connection))
+        thread.start()
+        thread.join()
+
+        self.assertIs(main_connection, database.connection)
+        self.assertIsNot(main_connection, worker_connections[0])
+        self.assertEqual(2, len(created))
 
 
 class RawTherapeeBaselineRunnerTest(unittest.TestCase):

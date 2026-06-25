@@ -1210,6 +1210,122 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
         self.assertTrue(connection.cursor_instance.closed)
         self.assertTrue(connection.rollback_called)
 
+    def test_read_fetch_reconnects_once_after_odbc_connection_loss(self) -> None:
+        class FakeOdbcError(Exception):
+            pass
+
+        class FakeCursor:
+            description = [("storage_base_location",), ("is_excluded",), ("is_zfs",), ("dataset_name",)]
+
+            def __init__(self, connection) -> None:
+                self.connection = connection
+                self.closed = False
+
+            def execute(self, _sql, _params) -> None:
+                if self.connection.fail_execute:
+                    raise FakeOdbcError("08S01", "Server has gone away")
+
+            def fetchall(self):
+                return [(self.connection.name, 0, 0, None)]
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeConnection:
+            def __init__(self, name: str, fail_execute: bool = False) -> None:
+                self.name = name
+                self.fail_execute = fail_execute
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor(self)
+
+            def rollback(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        failed_connection = FakeConnection("failed", fail_execute=True)
+        recovered_connection = FakeConnection("recovered")
+
+        db = ConversionDatabase.__new__(ConversionDatabase)
+        db.driver = "odbc"
+        db.paramstyle = "?"
+        db.connection = failed_connection
+        db._connect = lambda: recovered_connection
+
+        rows = db.storage_location_properties()
+
+        self.assertEqual("recovered", rows[0]["storage_base_location"])
+        self.assertTrue(failed_connection.closed)
+
+    def test_write_failure_discards_odbc_connection_without_retrying_write(self) -> None:
+        class FakeOdbcError(Exception):
+            pass
+
+        class FakeCursor:
+            def __init__(self, connection) -> None:
+                self.connection = connection
+                self.closed = False
+
+            def execute(self, _sql, _params) -> None:
+                self.connection.execute_count += 1
+                raise FakeOdbcError("08S01", "Got packets out of order")
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.execute_count = 0
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor(self)
+
+            def close(self) -> None:
+                self.closed = True
+
+        connection = FakeConnection()
+        db = ConversionDatabase.__new__(ConversionDatabase)
+        db.driver = "odbc"
+        db.paramstyle = "?"
+        db.connection = connection
+
+        with self.assertRaises(FakeOdbcError):
+            db._execute("UPDATE photo_conversion_jobs SET status = %s", ("failed",))
+
+        self.assertEqual(1, connection.execute_count)
+        self.assertTrue(connection.closed)
+
+    def test_database_uses_thread_local_connections(self) -> None:
+        class FakeConnection:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        db = ConversionDatabase.__new__(ConversionDatabase)
+        db.driver = "odbc"
+        db.paramstyle = "?"
+        created: list[FakeConnection] = []
+
+        def connect() -> FakeConnection:
+            connection = FakeConnection(str(len(created)))
+            created.append(connection)
+            return connection
+
+        db._connect = connect
+
+        main_connection = db.connection
+        worker_connections: list[FakeConnection] = []
+        thread = threading.Thread(target=lambda: worker_connections.append(db.connection))
+        thread.start()
+        thread.join()
+
+        self.assertIs(main_connection, db.connection)
+        self.assertIsNot(main_connection, worker_connections[0])
+        self.assertEqual(2, len(created))
+
 
 if __name__ == "__main__":
     unittest.main()

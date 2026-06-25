@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from typing import Any
 
 from .config import DatabaseConfig, WorkerConfig
@@ -13,10 +14,35 @@ class ConversionDatabase:
     PREEMPT_PRIORITY = 50
 
     def __init__(self, database: DatabaseConfig, worker: WorkerConfig):
+        self.database = database
         self.worker = worker
         self.driver = database.driver
         self.paramstyle = "%s"
+        self._local = threading.local()
 
+        if self.driver == "odbc":
+            self.paramstyle = "?"
+
+        self.connection = self._connect()
+
+    @property
+    def connection(self):
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = self._connect()
+            self._local.connection = connection
+        return connection
+
+    @connection.setter
+    def connection(self, connection) -> None:
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+        self._local.connection = connection
+
+    def _connect(self):
+        database = self.database
         if self.driver == "odbc":
             try:
                 import pyodbc
@@ -32,9 +58,7 @@ class ConversionDatabase:
                 parts.append(f"UID={database.user}")
             if database.password:
                 parts.append(f"PWD={database.password}")
-            self.connection = pyodbc.connect(";".join(parts), autocommit=False)
-            self.paramstyle = "?"
-            return
+            return pyodbc.connect(";".join(parts), autocommit=False)
 
         try:
             import pymysql
@@ -42,7 +66,7 @@ class ConversionDatabase:
         except ImportError as exc:
             raise RuntimeError("PyMySQL is required. Install py311-pymysql on FreeBSD.") from exc
 
-        self.connection = pymysql.connect(
+        return pymysql.connect(
             host=database.host,
             port=database.port,
             user=database.user,
@@ -439,10 +463,21 @@ class ConversionDatabase:
 
     def _execute(self, sql: str, params: tuple[Any, ...] = ()):
         cursor = self.connection.cursor()
-        cursor.execute(self._sql(sql), params)
+        try:
+            cursor.execute(self._sql(sql), params)
+        except Exception as exc:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
+            if self._is_connection_lost_error(exc):
+                self._discard_connection()
+            raise
         return cursor
 
     def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        return self._read_with_reconnect(lambda: self._fetchone_once(sql, params))
+
+    def _fetchone_once(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         cursor = self._execute(sql, params)
         try:
             row = cursor.fetchone()
@@ -458,6 +493,9 @@ class ConversionDatabase:
                 close()
 
     def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        return self._read_with_reconnect(lambda: self._fetchall_once(sql, params))
+
+    def _fetchall_once(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         cursor = self._execute(sql, params)
         try:
             rows = cursor.fetchall()
@@ -472,13 +510,52 @@ class ConversionDatabase:
             if callable(close):
                 close()
 
+    def _read_with_reconnect(self, operation):
+        try:
+            return operation()
+        except Exception as exc:
+            if not self._is_connection_lost_error(exc):
+                raise
+            self._discard_connection()
+            return operation()
+
+    def _discard_connection(self) -> None:
+        if not hasattr(self, "_local"):
+            return
+        connection = getattr(self._local, "connection", None)
+        self._local.connection = None
+        close = getattr(connection, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
     def _rollback_read(self) -> None:
         try:
             self.connection.rollback()
         except Exception as exc:
             if self.driver == "odbc" and self._is_odbc_function_sequence_error(exc):
                 return
+            if self._is_connection_lost_error(exc):
+                self._discard_connection()
             raise
+
+    def _is_connection_lost_error(self, exc: Exception) -> bool:
+        args = getattr(exc, "args", ())
+        sqlstate = str(args[0]).upper() if args else ""
+        if self.driver == "odbc" and sqlstate.startswith("08"):
+            return True
+
+        message = " ".join(str(arg) for arg in args).lower()
+        return any(
+            fragment in message
+            for fragment in (
+                "server has gone away",
+                "lost connection",
+                "got packets out of order",
+            )
+        )
 
     @staticmethod
     def _is_odbc_function_sequence_error(exc: Exception) -> bool:

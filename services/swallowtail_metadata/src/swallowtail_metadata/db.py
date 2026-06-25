@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -31,9 +32,35 @@ class MetadataDatabase:
     ]
 
     def __init__(self, database: DatabaseConfig):
+        self.database = database
         self.driver = database.driver
         self.pyodbc = None
         self.paramstyle = "%s"
+        self._local = threading.local()
+
+        if self.driver == "odbc":
+            self.paramstyle = "?"
+
+        self.connection = self._connect()
+
+    @property
+    def connection(self):
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+        connection = getattr(self._local, "connection", None)
+        if connection is None:
+            connection = self._connect()
+            self._local.connection = connection
+        return connection
+
+    @connection.setter
+    def connection(self, connection) -> None:
+        if not hasattr(self, "_local"):
+            self._local = threading.local()
+        self._local.connection = connection
+
+    def _connect(self):
+        database = self.database
         if self.driver == "odbc":
             try:
                 import pyodbc
@@ -48,16 +75,14 @@ class MetadataDatabase:
                 parts.append(f"UID={database.user}")
             if database.password:
                 parts.append(f"PWD={database.password}")
-            self.connection = pyodbc.connect(";".join(parts), autocommit=False)
-            self.paramstyle = "?"
-            return
+            return pyodbc.connect(";".join(parts), autocommit=False)
 
         try:
             import pymysql
             import pymysql.cursors
         except ImportError as exc:
             raise RuntimeError("PyMySQL is required. Install py311-pymysql on FreeBSD.") from exc
-        self.connection = pymysql.connect(
+        return pymysql.connect(
             host=database.host,
             port=database.port,
             user=database.user,
@@ -70,7 +95,7 @@ class MetadataDatabase:
 
     def ping(self) -> None:
         self._fetchone("SELECT 1 AS ok")
-        self.connection.rollback()
+        self._rollback_read()
 
     def next_photo(self) -> dict[str, Any] | None:
         row = self._fetchone(
@@ -90,7 +115,7 @@ class MetadataDatabase:
              LIMIT 1
             """
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row
 
     def next_profile_photo(self) -> dict[str, Any] | None:
@@ -126,7 +151,7 @@ class MetadataDatabase:
              LIMIT 1
             """
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row
 
     def next_unprofiled_photo(self) -> dict[str, Any] | None:
@@ -148,7 +173,7 @@ class MetadataDatabase:
              LIMIT 1
             """
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row
 
     def profile_photo_by_id(self, photo_id: int) -> dict[str, Any] | None:
@@ -171,7 +196,7 @@ class MetadataDatabase:
             """,
             (photo_id,),
         )
-        self.connection.rollback()
+        self._rollback_read()
         return row
 
     def upsert_ready(self, photo_id: int, fields: dict[str, Any], properties: list[dict[str, Any]]) -> None:
@@ -351,7 +376,7 @@ class MetadataDatabase:
         counts = {"ready": 0, "deferred": 0, "failed": 0}
         for row in rows:
             counts[str(row.get("status") or "")] = int(row.get("count") or 0)
-        self.connection.rollback()
+        self._rollback_read()
         return counts
 
     def _set_profile_value(self, photo_id: int, type_name: str, key: str, value: Any, value_type: str) -> None:
@@ -396,10 +421,10 @@ class MetadataDatabase:
                     "SELECT 1 AS ok FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s LIMIT 1",
                     (table_name,),
                 )
-            self.connection.rollback()
+            self._rollback_read()
             return row is not None
         except Exception:
-            self.connection.rollback()
+            self._rollback_read()
             return False
 
     def _now(self) -> datetime:
@@ -411,25 +436,101 @@ class MetadataDatabase:
             sql = sql.replace("%s", "?")
         if input_sizes is not None and hasattr(cursor, "setinputsizes"):
             cursor.setinputsizes(input_sizes)
-        cursor.execute(sql, params)
+        try:
+            cursor.execute(sql, params)
+        except Exception as exc:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
+            if self._is_connection_lost_error(exc):
+                self._discard_connection()
+            raise
         return cursor
 
     def _fetchone(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        return self._read_with_reconnect(lambda: self._fetchone_once(sql, params))
+
+    def _fetchone_once(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         cursor = self._execute(sql, params)
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        if isinstance(row, dict):
-            return row
-        columns = [column[0] for column in cursor.description]
-        return dict(zip(columns, row))
+        try:
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            if isinstance(row, dict):
+                return row
+            columns = [column[0] for column in cursor.description]
+            return dict(zip(columns, row))
+        finally:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
 
     def _fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        return self._read_with_reconnect(lambda: self._fetchall_once(sql, params))
+
+    def _fetchall_once(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         cursor = self._execute(sql, params)
-        rows = cursor.fetchall()
-        if not rows:
-            return []
-        if isinstance(rows[0], dict):
-            return list(rows)
-        columns = [column[0] for column in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        try:
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+            if isinstance(rows[0], dict):
+                return list(rows)
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+        finally:
+            close = getattr(cursor, "close", None)
+            if callable(close):
+                close()
+
+    def _read_with_reconnect(self, operation):
+        try:
+            return operation()
+        except Exception as exc:
+            if not self._is_connection_lost_error(exc):
+                raise
+            self._discard_connection()
+            return operation()
+
+    def _discard_connection(self) -> None:
+        if not hasattr(self, "_local"):
+            return
+        connection = getattr(self._local, "connection", None)
+        self._local.connection = None
+        close = getattr(connection, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    def _rollback_read(self) -> None:
+        try:
+            self.connection.rollback()
+        except Exception as exc:
+            if self.driver == "odbc" and self._is_odbc_function_sequence_error(exc):
+                return
+            if self._is_connection_lost_error(exc):
+                self._discard_connection()
+            raise
+
+    def _is_connection_lost_error(self, exc: Exception) -> bool:
+        args = getattr(exc, "args", ())
+        sqlstate = str(args[0]).upper() if args else ""
+        if self.driver == "odbc" and sqlstate.startswith("08"):
+            return True
+
+        message = " ".join(str(arg) for arg in args).lower()
+        return any(
+            fragment in message
+            for fragment in (
+                "server has gone away",
+                "lost connection",
+                "got packets out of order",
+            )
+        )
+
+    @staticmethod
+    def _is_odbc_function_sequence_error(exc: Exception) -> bool:
+        args = getattr(exc, "args", ())
+        return bool(args) and str(args[0]).upper() == "HY010"
