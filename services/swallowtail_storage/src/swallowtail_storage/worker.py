@@ -64,6 +64,7 @@ class StorageWorker:
         discovered = bool(payload.get("success")) and isinstance(payload.get("snapshot"), dict)
         snapshot = payload.get("snapshot") if discovered else {}
         mount_points = self.snapshot_mount_points(payload.get("snapshot"))
+        writable_mount_points = self.snapshot_writable_mount_points(payload.get("snapshot"))
         cache_written = False
         cache_error = ""
         if discovered:
@@ -80,14 +81,22 @@ class StorageWorker:
         self.run_php("process-migrations", str(self.config.migration_item_limit))
         self.touch_status()
         self.log.info(
-            "Storage refresh completed reason=%s ok=%s mount_points=%s",
+            "Storage refresh completed reason=%s ok=%s mount_points=%s writable_mount_points=%s",
             reason,
             ok,
             json.dumps(mount_points, separators=(",", ":")),
+            json.dumps(writable_mount_points, separators=(",", ":")),
         )
         if discovered and not cache_written:
             self.log.warning("Storage cache Redis write failed error=%s", cache_error or "unknown")
-        if reason in {"startup", "mount-change"} and discovered and cache_written:
+        if reason == "startup" and discovered and cache_written:
+            self.log_storage_wake({
+                "attempted": False,
+                "sent": False,
+                "queue": self.config.redis_storage_wake_queue.strip(),
+                "error": "Startup refresh establishes storage availability baseline.",
+            })
+        if reason == "mount-change" and discovered and cache_written:
             self.log_storage_wake(self.notify_storage_wake(snapshot))
         if not discovered:
             self.log_refresh_failure(reason, payload)
@@ -255,6 +264,22 @@ class StorageWorker:
         mount_points: list[str] = []
         for location in locations:
             if not isinstance(location, dict):
+                continue
+            mount_point = str(location.get("storage_base_location") or "").strip()
+            if mount_point != "":
+                mount_points.append(mount_point)
+        return mount_points
+
+    def snapshot_writable_mount_points(self, snapshot) -> list[str]:
+        if not isinstance(snapshot, dict):
+            return []
+        locations = snapshot.get("locations")
+        if not isinstance(locations, list):
+            return []
+
+        mount_points: list[str] = []
+        for location in locations:
+            if not isinstance(location, dict) or not bool(location.get("can_write")):
                 continue
             mount_point = str(location.get("storage_base_location") or "").strip()
             if mount_point != "":

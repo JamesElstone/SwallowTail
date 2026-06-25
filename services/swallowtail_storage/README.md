@@ -7,7 +7,7 @@ migration jobs.
 It runs `tools/php/storageCache.php discover` at startup and on its normal
 interval, writes the returned snapshot directly to Redis, checks the host mount
 signature every 30 seconds so it can refresh early when mounted storage changes,
-sends a conversion wake message after startup and mount-change cache updates, and runs
+sends a conversion wake message after mount-change cache updates, and runs
 `tools/php/storageCache.php process-migrations <item-limit>` after each refresh.
 
 ## Install On FreeBSD
