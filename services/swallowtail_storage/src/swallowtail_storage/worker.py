@@ -20,6 +20,7 @@ class StorageWorker:
         self.log = logging.getLogger("swallowtail_storage.worker")
         self.shutdown_requested = threading.Event()
         self.last_mount_signature = ""
+        self.last_writable_mount_signature: str | None = None
         self.redis = redis_client if redis_client is not None else RedisClient(RedisConfig(
             host=config.redis_host,
             port=config.redis_port,
@@ -89,18 +90,37 @@ class StorageWorker:
         )
         if discovered and not cache_written:
             self.log.warning("Storage cache Redis write failed error=%s", cache_error or "unknown")
-        if reason == "startup" and discovered and cache_written:
-            self.log_storage_wake({
-                "attempted": False,
-                "sent": False,
-                "queue": self.config.redis_storage_wake_queue.strip(),
-                "error": "Startup refresh establishes storage availability baseline.",
-            })
-        if reason == "mount-change" and discovered and cache_written:
-            self.log_storage_wake(self.notify_storage_wake(snapshot))
+        if discovered and cache_written:
+            self.maybe_notify_storage_wake(snapshot, writable_mount_points)
         if not discovered:
             self.log_refresh_failure(reason, payload)
         return ok
+
+    def maybe_notify_storage_wake(self, snapshot: dict, writable_mount_points: list[str]) -> None:
+        previous_signature = self.last_writable_mount_signature
+        current_signature = self.writable_mount_signature(writable_mount_points)
+
+        if previous_signature is None:
+            if current_signature == "":
+                self.last_writable_mount_signature = current_signature
+                self.log_storage_wake(self.notify_storage_wake(snapshot))
+                return
+
+            storage_wake = self.notify_storage_wake(snapshot)
+            self.log_storage_wake(storage_wake)
+            if bool(storage_wake.get("sent")) or not bool(storage_wake.get("attempted")):
+                self.last_writable_mount_signature = current_signature
+            return
+
+        should_wake = previous_signature == "" and current_signature != ""
+        if not should_wake:
+            self.last_writable_mount_signature = current_signature
+            return
+
+        storage_wake = self.notify_storage_wake(snapshot)
+        self.log_storage_wake(storage_wake)
+        if bool(storage_wake.get("sent")) or not bool(storage_wake.get("attempted")):
+            self.last_writable_mount_signature = current_signature
 
     def notify_storage_wake(self, snapshot: dict) -> dict:
         queue = self.config.redis_storage_wake_queue.strip()
@@ -285,6 +305,12 @@ class StorageWorker:
             if mount_point != "":
                 mount_points.append(mount_point)
         return mount_points
+
+    def writable_mount_signature(self, mount_points: list[str]) -> str:
+        mount_points = sorted(mount_point for mount_point in mount_points if mount_point != "")
+        if mount_points == []:
+            return ""
+        return hashlib.sha256("\n".join(mount_points).encode("utf-8")).hexdigest()
 
     def snapshot_has_writable_location(self, snapshot: dict) -> bool:
         locations = snapshot.get("locations")
