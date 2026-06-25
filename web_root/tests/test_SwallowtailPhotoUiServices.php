@@ -677,6 +677,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
 
     $harness->assertTrue(is_array($asset));
     $harness->assertSame($absolute, (string)$asset['path']);
+    $harness->assertSame('preview', (string)$asset['image_type']);
     $harness->assertSame(null, $denied);
 });
 

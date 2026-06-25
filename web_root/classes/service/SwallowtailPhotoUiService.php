@@ -164,6 +164,7 @@ final class SwallowtailPhotoUiService
         return [
             'path' => (string)$info['absolute_path'],
             'content_type' => 'image/jpeg',
+            'image_type' => (string)$info['image_type'],
             'filename' => $this->assetFilename((string)($photo['original_filename'] ?? 'photo'), $type),
             'bytes' => (int)$info['bytes'],
             'sha256' => (string)$info['sha256'],

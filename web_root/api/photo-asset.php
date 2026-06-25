@@ -41,6 +41,7 @@ $path = (string)$asset['path'];
 $filename = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string)($asset['filename'] ?? 'photo.jpg')) ?? 'photo.jpg';
 $filename = trim($filename, '.-') !== '' ? trim($filename, '.-') : 'photo.jpg';
 $bytes = (int)($asset['bytes'] ?? filesize($path));
+$imageType = preg_replace('/[^A-Za-z0-9._-]+/', '', (string)($asset['image_type'] ?? $type)) ?? '';
 
 if (!headers_sent()) {
     header_remove('X-Powered-By');
@@ -51,6 +52,7 @@ http_response_code(200);
 header('Content-Type: image/jpeg');
 header('Content-Length: ' . (string)$bytes);
 header('Content-Disposition: inline; filename="' . $filename . '"');
+header('X-Swallowtail-Image-Type: ' . $imageType);
 header('Cache-Control: private, max-age=60');
 header('X-Frame-Options: SAMEORIGIN');
 header('X-Content-Type-Options: nosniff');
