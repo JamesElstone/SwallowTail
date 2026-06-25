@@ -312,11 +312,24 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
             throw new RuntimeException('Unable to read frontend stylesheet.');
         }
 
-        $harness->assertTrue(str_contains($stylesheet, 'height: clamp(360px, 68vh, 720px);'));
-        $harness->assertTrue(str_contains($stylesheet, 'height: clamp(260px, 60vh, 560px);'));
-        $harness->assertTrue(str_contains($stylesheet, 'width: auto;'));
-        $harness->assertTrue(str_contains($stylesheet, 'max-height: 100%;'));
-        $harness->assertTrue(str_contains($stylesheet, 'object-fit: contain;'));
+        $harness->assertTrue(preg_match('~\.picture-editor \{[^}]+\}~', $stylesheet, $editorMatches) === 1);
+        $harness->assertTrue(str_contains($editorMatches[0], 'align-items: stretch;'));
+        $harness->assertTrue(str_contains($editorMatches[0], 'height: 100%;'));
+        $harness->assertTrue(str_contains($editorMatches[0], 'min-height: 0;'));
+
+        $harness->assertTrue(preg_match('~\.picture-editor-main \{[^}]+\}~', $stylesheet, $mainMatches) === 1);
+        $harness->assertTrue(str_contains($mainMatches[0], 'height: 100%;'));
+        $harness->assertTrue(str_contains($mainMatches[0], 'min-height: 0;'));
+
+        $harness->assertTrue(preg_match('~\.picture-editor-stage \{[^}]+\}~', $stylesheet, $stageMatches) === 1);
+        $harness->assertTrue(str_contains($stageMatches[0], 'height: 100%;'));
+        $harness->assertTrue(str_contains($stageMatches[0], 'max-height: 100%;'));
+
+        $harness->assertTrue(preg_match('~\.picture-editor-stage img \{[^}]+\}~', $stylesheet, $imageMatches) === 1);
+        $harness->assertTrue(str_contains($imageMatches[0], 'width: auto;'));
+        $harness->assertTrue(str_contains($imageMatches[0], 'max-height: 100%;'));
+        $harness->assertTrue(str_contains($imageMatches[0], 'object-fit: contain;'));
+        $harness->assertTrue(!str_contains($stylesheet, 'height: clamp(360px, 68vh, 720px);'));
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor waits for filtered preview after edits', function () use ($harness): void {
@@ -331,7 +344,8 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(!str_contains($script, 'response?.original_url'));
         $harness->assertTrue(!str_contains($script, 'Thumbnail ready; rendering filtered'));
         $harness->assertTrue(!str_contains($script, 'Original ready; rendering filtered'));
-        $harness->assertTrue(str_contains($script, "displayedPreviewStage = 'filtered';"));
+        $harness->assertTrue(str_contains($script, "swapPreviewImage(String(response.preview_url), 'filtered');"));
+        $harness->assertTrue(str_contains($script, 'displayedPreviewStage = stageType;'));
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to baseline settings through preview flow', function () use ($harness): void {
