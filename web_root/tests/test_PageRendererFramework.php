@@ -322,8 +322,13 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(str_contains($mainMatches[0], 'min-height: 0;'));
 
         $harness->assertTrue(preg_match('~\.picture-editor-stage \{[^}]+\}~', $stylesheet, $stageMatches) === 1);
+        $harness->assertTrue(str_contains($stageMatches[0], 'display: flex;'));
+        $harness->assertTrue(str_contains($stageMatches[0], 'align-items: center;'));
+        $harness->assertTrue(str_contains($stageMatches[0], 'justify-content: center;'));
         $harness->assertTrue(str_contains($stageMatches[0], 'height: 100%;'));
         $harness->assertTrue(str_contains($stageMatches[0], 'max-height: 100%;'));
+        $harness->assertTrue(!str_contains($stageMatches[0], 'display: grid;'));
+        $harness->assertTrue(!str_contains($stageMatches[0], 'place-items: center;'));
 
         $harness->assertTrue(preg_match('~\.picture-editor-stage img \{[^}]+\}~', $stylesheet, $imageMatches) === 1);
         $harness->assertTrue(str_contains($imageMatches[0], 'width: auto;'));

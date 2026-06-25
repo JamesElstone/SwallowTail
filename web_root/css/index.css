@@ -4084,8 +4084,9 @@ label {
 
 .picture-editor-stage {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 360px;
   height: 100%;
   max-height: 100%;
