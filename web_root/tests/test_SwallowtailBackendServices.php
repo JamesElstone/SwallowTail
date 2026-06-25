@@ -2375,9 +2375,9 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $photoId = (int)$result['photo_id'];
     (new SwallowtailProfileDataService())->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
     InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, type, `key`, value, value_type) VALUES
-        ('preview', 'preview-performance', 1, 'RAW Bayer', 'Method', 'fast', 'string'),
-        ('preview', 'preview-resize', 2, 'Resize', 'LongEdge', '820', 'int'),
-        ('preview', 'preview-resize', 2, 'Resize', 'DataSpecified', '4', 'int')");
+        ('preview', 'performance', 1, 'RAW Bayer', 'Method', 'fast', 'string'),
+        ('preview', 'resize', 2, 'Resize', 'LongEdge', '820', 'int'),
+        ('preview', 'resize', 2, 'Resize', 'DataSpecified', '4', 'int')");
     $event = $library->createEvent('Preview Edit Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
     $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
@@ -3359,8 +3359,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'image_type varchar(32) NOT NULL',
         'profile_name varchar(64) NOT NULL',
         '`order` int NOT NULL',
-        "'preview-performance', 1",
-        "'preview-resize', 2",
+        "'performance', 1",
+        "'resize', 2",
         "'RAW Bayer', 'Method', 'fast'",
         "'Resize', 'LongEdge', '820'",
         "status enum('queued','processing','succeeded','failed','cancelled','obsolete')",
