@@ -341,7 +341,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(!str_contains($stylesheet, 'height: clamp(360px, 68vh, 720px);'));
     });
 
-    $harness->check(PageRendererFramework::class, 'frontend picture editor waits for filtered preview after edits', function () use ($harness): void {
+    $harness->check(PageRendererFramework::class, 'frontend picture editor waits for preview after edits', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 
         if (!is_string($script)) {
@@ -349,11 +349,10 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         }
 
         $harness->assertTrue(str_contains($script, 'displayedPreviewStage'));
-        $harness->assertTrue(!str_contains($script, 'response?.thumbnail_url'));
         $harness->assertTrue(!str_contains($script, 'response?.original_url'));
-        $harness->assertTrue(!str_contains($script, 'Thumbnail ready; rendering filtered'));
-        $harness->assertTrue(!str_contains($script, 'Original ready; rendering filtered'));
-        $harness->assertTrue(str_contains($script, "swapPreviewImage(String(response.preview_url), 'filtered');"));
+        $harness->assertTrue(!str_contains($script, 'Thumbnail ready; rendering preview'));
+        $harness->assertTrue(!str_contains($script, 'Original ready; rendering preview'));
+        $harness->assertTrue(str_contains($script, "swapPreviewImage(String(response.preview_url), 'preview');"));
         $harness->assertTrue(str_contains($script, 'displayedPreviewStage = stageType;'));
     });
 

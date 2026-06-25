@@ -38,7 +38,7 @@ def job(root: Path, **overrides) -> ConversionJob:
     values = {
         "id": 1,
         "photo_id": 2,
-        "image_type": "filtered",
+        "image_type": "preview",
         "input_path": str(input_path),
         "profile_path": None,
         "output_path": str(root / "final.jpg"),
@@ -265,6 +265,12 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIn("-o", result.command)
         self.assertNotIn("-O", result.command)
         self.assertIn("-c", result.command)
+        self.assertIn("-q", result.command)
+        self.assertIn("-Y", result.command)
+        self.assertIn("-f", result.command)
+        self.assertIn("-j100", result.command)
+        self.assertIn("-js2", result.command)
+        self.assertNotIn("-j85", result.command)
 
     def test_original_render_uses_copy_profile_output_option(self) -> None:
         result = RawTherapeeRunner(
@@ -277,13 +283,13 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIsNotNone(result.temp_profile_path)
         self.assertTrue(Path(str(result.temp_profile_path)).is_file())
 
-    def test_thumbnail_dimensions_add_resize_profile_after_user_profile(self) -> None:
+    def test_preview_dimensions_add_resize_profile_after_user_profile(self) -> None:
         pp3 = self.root / "user.pp3"
         pp3.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
         result = RawTherapeeRunner(
             RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
         ).render(
-            job(self.root, image_type="thumbnail", profile_path=str(pp3), output_width=512, output_height=512),
+            job(self.root, image_type="preview", profile_path=str(pp3), output_width=512, output_height=512),
             str(self.root / "work"),
         )
 
@@ -293,13 +299,13 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         self.assertIn("Width=512", Path(profile_args[1]).read_text(encoding="utf-8"))
         self.assertIn("Height=512", Path(profile_args[1]).read_text(encoding="utf-8"))
 
-    def test_filtered_dimensions_add_resize_profile_after_user_profile(self) -> None:
-        pp3 = self.root / "filtered-v2.pp3"
+    def test_final_dimensions_add_resize_profile_after_user_profile(self) -> None:
+        pp3 = self.root / "final-v2.pp3"
         pp3.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
         result = RawTherapeeRunner(
             RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
         ).render(
-            job(self.root, profile_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
+            job(self.root, image_type="final", profile_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
             str(self.root / "work"),
         )
 
@@ -349,7 +355,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.failed = False
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return False
 
             def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
@@ -443,7 +449,7 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertTrue(redis.popped)
         self.assertTrue(db.selected)
 
-    def test_redis_thumbnail_message_still_uses_database_priority_selection(self) -> None:
+    def test_redis_preview_message_still_uses_database_priority_selection(self) -> None:
         class FakeRedis:
             def pop(self):
                 return SimpleNamespace(job_id=51)
@@ -675,7 +681,7 @@ class WorkerBehaviourTest(unittest.TestCase):
                 self.deferred = False
                 self.failed = False
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return False
 
             def defer_job_for_storage(self, _job, message: str, delay_seconds: int) -> None:
@@ -704,12 +710,12 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertEqual(3600, worker.db.delay_seconds)
         self.assertIn("No storage location", worker.db.message)
 
-    def test_original_job_preserves_rawtherapee_pp3_as_baseline_profile(self) -> None:
+    def test_original_job_preserves_rawtherapee_pp3_as_source_profile(self) -> None:
         class FakeDb:
             def __init__(self) -> None:
                 self.completed = False
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return False
 
             def complete_job(self, _job, output_path: str, _command, _stderr, _duration) -> None:
@@ -731,11 +737,11 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         worker.process_job(job(self.root, image_type="original", output_path=str(final)))
 
-        baseline = final.with_name(f"{checksum}_baseline.pp3")
+        source_profile = final.with_name(f"{checksum}_source.pp3")
         self.assertTrue(worker.db.completed)
         self.assertEqual(str(final), worker.db.output_path)
         self.assertTrue(final.is_file())
-        self.assertEqual("[Version]\nAppVersion=5.12\n", baseline.read_text(encoding="utf-8"))
+        self.assertEqual("[Version]\nAppVersion=5.12\n", source_profile.read_text(encoding="utf-8"))
 
     def test_running_lower_priority_rawtherapee_job_is_requeued_when_preempted(self) -> None:
         class FakeRedis:
@@ -756,7 +762,7 @@ class WorkerBehaviourTest(unittest.TestCase):
             def is_obsolete_job(self, _job) -> bool:
                 return False
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return False
 
             def preempt_target(self, job_id: int):
@@ -809,12 +815,12 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertTrue(fresh.exists())
         self.assertTrue(other.exists())
 
-    def test_stale_filtered_is_cancelled_before_render(self) -> None:
+    def test_stale_preview_is_cancelled_before_render(self) -> None:
         class FakeDb:
             def __init__(self) -> None:
                 self.cancelled = False
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return True
 
             def cancel_job(self, _job, _message) -> None:
@@ -839,7 +845,7 @@ class WorkerBehaviourTest(unittest.TestCase):
             def is_obsolete_job(self, _job) -> bool:
                 return True
 
-            def is_stale_filtered(self, _job) -> bool:
+            def is_stale_preview(self, _job) -> bool:
                 return False
 
             def obsolete_job(self, _job, _message) -> None:
@@ -880,10 +886,10 @@ class StorageManagerTest(unittest.TestCase):
         new_base = self.root / "storage-new"
         new_base.mkdir(parents=True)
         source = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
-        baseline = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_baseline.pp3"
+        source_profile = old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.pp3"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2 relocation test")
-        baseline.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+        source_profile.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
 
         class FakeDb:
             def __init__(self) -> None:
@@ -924,16 +930,16 @@ class StorageManagerTest(unittest.TestCase):
         )
 
         old_input = str(source)
-        old_output = str(old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg")
+        old_output = str(old_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_preview.jpg")
         with self.assertLogs("swallowtail_conversion.storage", level="INFO") as logs:
             relocated = manager.relocate_job_if_needed(job(self.root, input_path=old_input, output_path=old_output))
         new_source = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
-        new_baseline = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_baseline.pp3"
+        new_source_profile = new_base / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.pp3"
 
         self.assertTrue(new_source.is_file())
-        self.assertTrue(new_baseline.is_file())
+        self.assertTrue(new_source_profile.is_file())
         self.assertFalse(source.exists())
-        self.assertFalse(baseline.exists())
+        self.assertFalse(source_profile.exists())
         self.assertIn(str(new_base), relocated.input_path)
         self.assertIn(str(new_base), relocated.output_path)
         self.assertIsNotNone(db.updated)
@@ -944,7 +950,7 @@ class StorageManagerTest(unittest.TestCase):
         self.assertTrue(any("old_free_bytes=50" in line for line in logs.output))
         self.assertTrue(any("old_threshold_bytes=100" in line for line in logs.output))
         self.assertTrue(any(f"new_base={str(new_base.resolve()) + os.sep}" in line for line in logs.output))
-        self.assertTrue(any(f"{checksum}_source.cr2" in line and f"{checksum}_baseline.pp3" in line for line in logs.output))
+        self.assertTrue(any(f"{checksum}_source.cr2" in line and f"{checksum}_source.pp3" in line for line in logs.output))
 
     def test_relocation_skips_unwritable_storage_destination(self) -> None:
         checksum = "b" * 64

@@ -115,31 +115,21 @@ class MetadataWorker:
             source_path = self.source_path(photo)
             if not source_path.is_file():
                 raise RuntimeError(f"Source CR2 file was not found: {source_path}")
-            thumbnail_path = self.image_path(photo, "thumbnail")
-            if not thumbnail_path.is_file():
-                self.db.defer_profile(
-                    photo_id,
-                    "Thumbnail is not ready for baseline profile generation.",
-                    self.config.worker.max_attempts,
-                    self.config.worker.poll_min_seconds,
-                )
-                return
-
-            baseline_path = self.image_path(photo, "baseline")
+            source_profile_path = self.image_path(photo, "source_profile")
             self.db.mark_profile_processing(photo_id)
             profile_source = "existing"
             version = self.profile_runner.version()
-            if not baseline_path.is_file() or baseline_path.stat().st_size <= 0:
+            if not source_profile_path.is_file() or source_profile_path.stat().st_size <= 0:
                 profile_source = "generated"
-                result = self.profile_runner.generate(source_path, baseline_path)
+                result = self.profile_runner.generate(source_path, source_profile_path)
                 version = result.version
-            properties = parse_pp3_properties(baseline_path.read_text(encoding="utf-8"))
-            store_stats = self.db.replace_profile_data(photo_id, properties, str(baseline_path), version)
+            properties = parse_pp3_properties(source_profile_path.read_text(encoding="utf-8"))
+            store_stats = self.db.replace_profile_data(photo_id, properties, str(source_profile_path), version)
             duration_seconds = time.perf_counter() - started_at
             self.log.info(
-                "Stored RawTherapee baseline profile for photo=%s path=%s source=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",
+                "Stored RawTherapee source profile for photo=%s path=%s source=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",
                 photo_id,
-                baseline_path,
+                source_profile_path,
                 profile_source,
                 duration_seconds,
                 int(store_stats.get("profile_rows_written", len(properties)) if store_stats else len(properties)),
@@ -155,7 +145,7 @@ class MetadataWorker:
                 self.config.worker.max_attempts,
                 self.config.worker.retry_delay_seconds,
             )
-            self.log.warning("Baseline profile generation %s for photo=%s: %s", status, photo_id, exc)
+            self.log.warning("Source profile generation %s for photo=%s: %s", status, photo_id, exc)
 
     def source_path(self, photo: dict[str, Any]) -> Path:
         return self.image_path(photo, "source")
@@ -165,8 +155,9 @@ class MetadataWorker:
         checksum = str(photo.get("original_sha256") or "").strip().lower()
         if base == "" or len(checksum) < 4:
             raise RuntimeError("Photo storage location or checksum is missing.")
-        extension = {"source": ".cr2", "baseline": ".pp3"}.get(image_type, ".jpg")
-        return Path(base) / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_{image_type}{extension}"
+        extension = {"source": ".cr2", "source_profile": ".pp3"}.get(image_type, ".jpg")
+        suffix = {"source_profile": "source"}.get(image_type, image_type)
+        return Path(base) / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_{suffix}{extension}"
 
     def status(self) -> dict[str, Any]:
         return {

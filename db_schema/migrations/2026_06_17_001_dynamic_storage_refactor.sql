@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS photo_conversion_jobs (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   photo_id bigint(20) NOT NULL,
   job_type enum('image') NOT NULL DEFAULT 'image',
-  image_type enum('embedded','original','thumbnail','filtered') NOT NULL,
+  image_type enum('embedded','original','preview','final') NOT NULL,
   input_path varchar(1000) NOT NULL,
   profile_path varchar(1000) DEFAULT NULL,
   output_path varchar(1000) NOT NULL,

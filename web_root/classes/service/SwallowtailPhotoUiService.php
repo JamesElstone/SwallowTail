@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoUiService
 {
-    private const IMAGE_TYPES = ['thumbnail', 'original', 'embedded', 'filtered'];
+    private const IMAGE_TYPES = ['preview', 'embedded', 'original', 'final'];
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
@@ -249,8 +249,8 @@ final class SwallowtailPhotoUiService
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
-        $row['thumbnail_ready'] = $this->storageService->imageReady($row, 'thumbnail');
-        $row['embedded_ready'] = !$row['thumbnail_ready'] && $this->storageService->imageReady($row, 'embedded');
+        $row['preview_ready'] = $this->storageService->imageReady($row, 'preview');
+        $row['embedded_ready'] = !$row['preview_ready'] && $this->storageService->imageReady($row, 'embedded');
 
         return $row;
     }
@@ -262,12 +262,11 @@ final class SwallowtailPhotoUiService
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
-        $row['thumbnail_ready'] = $this->storageService->imageInfo($row, 'thumbnail') !== null;
+        $row['preview_ready'] = $this->storageService->imageInfo($row, 'preview') !== null;
         $row['original_ready'] = $this->storageService->imageInfo($row, 'original') !== null;
         $row['embedded_ready'] = $this->storageService->imageInfo($row, 'embedded') !== null;
-        $row['filtered_ready'] = $this->storageService->imageInfo($row, 'filtered') !== null;
-        $row['preview_ready'] = $row['filtered_ready'] || $row['original_ready'];
-        $row['jpeg_ready'] = $row['filtered_ready'];
+        $row['final_ready'] = $this->storageService->imageInfo($row, 'final') !== null;
+        $row['jpeg_ready'] = $row['final_ready'];
 
         return $row;
     }

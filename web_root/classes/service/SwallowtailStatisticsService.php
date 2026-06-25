@@ -88,9 +88,9 @@ final class SwallowtailStatisticsService
              GROUP BY image_type
              ORDER BY CASE image_type
                 WHEN 'embedded' THEN 1
-                WHEN 'thumbnail' THEN 2
-                WHEN 'original' THEN 3
-                WHEN 'filtered' THEN 4
+                WHEN 'original' THEN 2
+                WHEN 'preview' THEN 3
+                WHEN 'final' THEN 4
                 ELSE 5
              END, image_type"
         );

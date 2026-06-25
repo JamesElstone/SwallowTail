@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailConversionStatusApiService
 {
-    private const IMAGE_TYPES = ['original', 'embedded', 'thumbnail', 'filtered', 'profile'];
+    private const IMAGE_TYPES = ['embedded', 'original', 'preview', 'final', 'source_profile', 'preview_profile', 'final_profile'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),

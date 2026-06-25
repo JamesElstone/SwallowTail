@@ -26,7 +26,7 @@ if ($userId <= 0) {
 }
 
 $photoId = max(0, (int)$request->query('photo_id', 0));
-$type = strtolower(trim((string)$request->query('type', 'thumbnail')));
+$type = strtolower(trim((string)$request->query('type', 'preview')));
 
 $asset = (new SwallowtailPhotoUiService())->photoAsset($photoId, $userId, $type);
 

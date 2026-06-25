@@ -1,0 +1,70 @@
+[RAW]
+CA=false
+DarkFrameAuto=false
+FlatFieldAutoSelect=false
+FlatFieldFromMetaData=false
+HotPixelFilter=false
+DeadPixelFilter=false
+
+[RAW Bayer]
+Method=fast
+Border=0
+CcSteps=0
+LineDenoise=0
+GreenEqThreshold=0
+PDAFLinesFilter=false
+
+[RAW X-Trans]
+Method=fast
+CcSteps=0
+
+[LensProfile]
+UseDistortion=false
+UseVignette=false
+UseCA=false
+
+[CACorrection]
+Auto=false
+
+[Impulse Denoising]
+Enabled=false
+
+[Directional Pyramid Denoising]
+Enabled=false
+
+[Sharpening]
+Enabled=false
+
+[PostDemosaicSharpening]
+Enabled=false
+
+[PostResizeSharpening]
+Enabled=false
+
+[Defringing]
+Enabled=false
+
+[Locallab]
+Enabled=false
+
+[Wavelet]
+Enabled=false
+
+[Retinex]
+Enabled=false
+
+[FattalToneMapping]
+Enabled=false
+
+[Film Simulation]
+Enabled=false
+
+[Dehaze]
+Enabled=false
+
+[EPD]
+Enabled=false
+
+[Color Management]
+ApplyLookTable=false
+ApplyHueSatMap=false

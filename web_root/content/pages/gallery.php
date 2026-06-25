@@ -21,7 +21,7 @@ final class _gallery extends PageContextFramework
 
     public function subtitle(): string
     {
-        return 'Browse accessible SwallowTail thumbnails.';
+        return 'Browse accessible SwallowTail previews.';
     }
 
     public function cards(): array

@@ -112,6 +112,7 @@ $harness->check(_settings::class, 'includes reusable storage card', function () 
 
 $seedJobStatisticsTables = static function (): void {
     foreach ([
+        'internal_profile_data',
         'photo_profile_data',
         'photo_metadata',
         'storage_migration_job_items',
@@ -165,6 +166,7 @@ $seedJobStatisticsTables = static function (): void {
     InterfaceDB::execute("CREATE TABLE photo_profile_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0,
         type TEXT NOT NULL,
         `key` TEXT NOT NULL,
         value TEXT NULL,
@@ -311,10 +313,10 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     InterfaceDB::execute("INSERT INTO photo_conversion_jobs (photo_id, image_type, status, duration_seconds) VALUES
         (1, 'embedded', 'succeeded', 0.5),
         (1, 'embedded', 'succeeded', 1.5),
-        (1, 'thumbnail', 'queued', NULL),
-        (2, 'thumbnail', 'processing', NULL),
+        (1, 'preview', 'queued', NULL),
+        (2, 'preview', 'processing', NULL),
         (2, 'original', 'succeeded', 62.0),
-        (2, 'filtered', 'failed', 3.0)");
+        (2, 'final', 'failed', 3.0)");
 
     $summary = (new SwallowtailStatisticsService())->summary();
     $jobs = (array)($summary['jobs'] ?? []);
@@ -807,7 +809,7 @@ $harness->check(StorageSettingsAction::class, 'clamps storage-blocked poll inter
     $harness->assertSame(86400, (int)$method->invoke($action, 90000));
 });
 
-$harness->check(_gallery::class, 'browse gallery thumbnails link to picture viewer', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery previews link to picture viewer', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'photoTile');
     $method->setAccessible(true);
@@ -816,11 +818,11 @@ $harness->check(_gallery::class, 'browse gallery thumbnails link to picture view
         'id' => 42,
         'original_filename' => 'IMG_0042.CR2',
         'conversion_state' => 'ready',
-        'thumbnail_ready' => true,
+        'preview_ready' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=42'));
-    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=thumbnail'));
+    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=preview'));
     $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
@@ -957,7 +959,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to embedded previews
         'id' => 43,
         'original_filename' => 'IMG_0043.CR2',
         'conversion_state' => 'processing',
-        'thumbnail_ready' => false,
+        'preview_ready' => false,
         'embedded_ready' => true,
     ]);
 
@@ -977,7 +979,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'id' => 45,
         'original_filename' => 'IMG_0045.CR2',
         'conversion_state' => 'pending',
-        'thumbnail_ready' => false,
+        'preview_ready' => false,
         'embedded_ready' => false,
     ]]));
 
@@ -985,7 +987,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'id' => 46,
         'original_filename' => 'IMG_0046.CR2',
         'conversion_state' => 'ready',
-        'thumbnail_ready' => false,
+        'preview_ready' => false,
         'embedded_ready' => false,
     ]]));
 
@@ -993,7 +995,7 @@ $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', f
         'id' => 47,
         'original_filename' => 'IMG_0047.CR2',
         'conversion_state' => 'failed',
-        'thumbnail_ready' => false,
+        'preview_ready' => false,
         'embedded_ready' => false,
     ]]));
 });
@@ -1007,7 +1009,7 @@ $harness->check(_gallery::class, 'browse gallery shows failed status overlay', f
         'id' => 44,
         'original_filename' => 'IMG_0044.CR2',
         'conversion_state' => 'failed',
-        'thumbnail_ready' => true,
+        'preview_ready' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, 'gallery-status-failed'));

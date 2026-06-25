@@ -103,13 +103,13 @@ final class _browse_galleryCard extends CardBaseFramework
         $previewType = $this->galleryPreviewType($photo);
         $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
         $pendingAttribute = $this->photoNeedsRefresh($photo) ? ' data-gallery-photo-pending="1"' : '';
-        $thumbnail = $previewType !== null
+        $preview = $previewType !== null
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
         $statusIndicator = $this->statusIndicator($status);
 
         return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '"' . $pendingAttribute . '>
-            <span class="gallery-thumb">' . $thumbnail . $statusIndicator . '</span>
+            <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
             <span class="gallery-meta">
                 <strong>' . HelperFramework::escape($filename) . '</strong>
             </span>
@@ -118,8 +118,8 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function galleryPreviewType(array $photo): ?string
     {
-        if (!empty($photo['thumbnail_ready'])) {
-            return 'thumbnail';
+        if (!empty($photo['preview_ready'])) {
+            return 'preview';
         }
 
         return !empty($photo['embedded_ready']) ? 'embedded' : null;

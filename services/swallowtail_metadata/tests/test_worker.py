@@ -328,10 +328,11 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
             "[Exposure]\nBlack=63\nCurve=4;0;0;0.050000000000000003;0.035148935901110998;\n"
         )
 
-        stats = database.replace_profile_data(42, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+        stats = database.replace_profile_data(42, properties, "/photos/abc_source.pp3", "RawTherapee 5.12")
 
         section_inserts = self.section_insert_statements(connection)
         self.assertEqual(2, len(section_inserts))
+        self.assertIn("revision", section_inserts[0][0])
         self.assertEqual(10, len(section_inserts[0][1]))
         self.assertEqual([42, "Version", "AppVersion", "5.9", "float"], list(section_inserts[0][1][0:5]))
         self.assertEqual([42, "Version", "Version", "349", "int"], list(section_inserts[0][1][5:10]))
@@ -343,6 +344,7 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertGreater(stats["profile_largest_value_length"], 40)
         self.assertEqual(1, connection.commits)
         self.assertTrue(connection.executed[0][0].strip().startswith("DELETE FROM photo_profile_data"))
+        self.assertIn("revision = 0", connection.executed[0][0])
 
     def test_replace_profile_data_splits_large_sections_by_batch_limit(self) -> None:
         database, connection = self.database()
@@ -351,7 +353,7 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
             "[Exposure]\nBlack=63\nBrightness=0\nContrast=26\n"
         )
 
-        stats = database.replace_profile_data(7, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+        stats = database.replace_profile_data(7, properties, "/photos/abc_source.pp3", "RawTherapee 5.12")
 
         section_inserts = self.section_insert_statements(connection)
         self.assertEqual(2, len(section_inserts))
@@ -368,7 +370,7 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
             f"[Exposure]\nBlack=63\nCurve={curve}\n"
         )
 
-        stats = database.replace_profile_data(42, properties, "/photos/abc_baseline.pp3", "RawTherapee 5.12")
+        stats = database.replace_profile_data(42, properties, "/photos/abc_source.pp3", "RawTherapee 5.12")
 
         section_inserts = self.section_insert_statements(connection)
         self.assertEqual(1, len(section_inserts))
@@ -403,10 +405,10 @@ class RawTherapeeBaselineRunnerTest(unittest.TestCase):
             runner.health_check()
             self.assertEqual("RawTherapee, version 5.12, command line.", runner.version())
 
-    def test_generate_uses_contained_runtime_environment_next_to_baseline(self) -> None:
+    def test_generate_uses_contained_runtime_environment_next_to_source_profile(self) -> None:
         root = Path(__file__).resolve().parent / ".tmp" / f"rt_{uuid.uuid4().hex[0:8]}"
         source = root / "swallowtail-data" / "ab" / "cd" / ("abcdef" + ("0" * 58) + "_source.cr2")
-        baseline = source.with_name("abcdef" + ("0" * 58) + "_baseline.pp3")
+        baseline = source.with_name("abcdef" + ("0" * 58) + "_source.pp3")
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"II*\0CR2")
         captured_env = {}
@@ -521,10 +523,8 @@ class MetadataWorkerTest(unittest.TestCase):
         queued_checksum = "123456" + ("0" * 58)
         for checksum in [urgent_checksum, queued_checksum]:
             source = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
-            thumbnail = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(b"II*\0CR2")
-            thumbnail.write_bytes(b"jpg")
         db = FakeDatabase([{"id": 14, "storage_base_location": str(self.root), "original_sha256": queued_checksum}])
         db.profile_photos.append({"id": 15, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
         db.unprofiled_photos.append({"id": 16, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
@@ -535,7 +535,7 @@ class MetadataWorkerTest(unittest.TestCase):
 
         self.assertTrue(worker.run_once())
 
-        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{urgent_checksum}_baseline.pp3"
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{urgent_checksum}_source.pp3"
         self.assertEqual([17], db.profile_processing)
         self.assertEqual([(self.root / "swallowtail-data" / "ab" / "cd" / f"{urgent_checksum}_source.cr2", baseline)], worker.profile_runner.generated)
         self.assertEqual(1, len(db.photos))
@@ -543,40 +543,36 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(1, len(db.unprofiled_photos))
         self.assertIn("Urgent profile notification received; photo=17 reason=picture_viewer", worker.log.infos)
 
-    def test_run_once_generates_profile_baseline_when_metadata_is_idle(self) -> None:
+    def test_run_once_generates_source_profile_when_metadata_is_idle(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
-        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2")
-        thumbnail.write_bytes(b"jpg")
         db = FakeDatabase()
         db.profile_photos.append({"id": 9, "storage_base_location": str(self.root), "original_sha256": checksum})
         worker = self.worker(db)
 
         self.assertTrue(worker.run_once())
 
-        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.pp3"
         self.assertEqual([9], db.profile_processing)
         self.assertEqual([(source, baseline)], worker.profile_runner.generated)
         self.assertEqual(9, db.profile_ready[0][0])
         self.assertEqual(str(baseline), db.profile_ready[0][2])
         self.assertEqual("RawTherapee 5.12", db.profile_ready[0][3])
         self.assertTrue(any(
-            message.startswith("Stored RawTherapee baseline profile for photo=9 ")
+            message.startswith("Stored RawTherapee source profile for photo=9 ")
             and "source=generated" in message
             and "duration_seconds=" in message
             for message in worker.log.infos
         ))
 
-    def test_run_once_uses_existing_baseline_profile_without_regenerating(self) -> None:
+    def test_run_once_uses_existing_source_profile_without_regenerating(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
-        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
-        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.pp3"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2")
-        thumbnail.write_bytes(b"jpg")
         baseline.write_text("[Version]\nAppVersion=5.12\n\n[Exposure]\nBlack=63\n", encoding="utf-8")
         db = FakeDatabase()
         db.profile_photos.append({"id": 19, "storage_base_location": str(self.root), "original_sha256": checksum})
@@ -593,25 +589,23 @@ class MetadataWorkerTest(unittest.TestCase):
             db.profile_ready[0][1][1],
         )
         self.assertTrue(any(
-            message.startswith("Stored RawTherapee baseline profile for photo=19 ")
+            message.startswith("Stored RawTherapee source profile for photo=19 ")
             and "source=existing" in message
             for message in worker.log.infos
         ))
 
-    def test_run_once_generates_unprofiled_baseline_when_profile_queue_is_idle(self) -> None:
+    def test_run_once_generates_unprofiled_source_profile_when_profile_queue_is_idle(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
-        thumbnail = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_thumbnail.jpg"
         source.parent.mkdir(parents=True)
         source.write_bytes(b"II*\0CR2")
-        thumbnail.write_bytes(b"jpg")
         db = FakeDatabase()
         db.unprofiled_photos.append({"id": 11, "storage_base_location": str(self.root), "original_sha256": checksum})
         worker = self.worker(db)
 
         self.assertTrue(worker.run_once())
 
-        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_baseline.pp3"
+        baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.pp3"
         self.assertEqual([11], db.profile_processing)
         self.assertEqual([(source, baseline)], worker.profile_runner.generated)
         self.assertIn("Found uploaded photo without profile data; photo=11", worker.log.infos)
@@ -621,10 +615,8 @@ class MetadataWorkerTest(unittest.TestCase):
         unprofiled_checksum = "123456" + ("0" * 58)
         for checksum in [queued_checksum, unprofiled_checksum]:
             source = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_source.cr2"
-            thumbnail = self.root / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_thumbnail.jpg"
             source.parent.mkdir(parents=True, exist_ok=True)
             source.write_bytes(b"II*\0CR2")
-            thumbnail.write_bytes(b"jpg")
         db = FakeDatabase()
         db.profile_photos.append({"id": 12, "storage_base_location": str(self.root), "original_sha256": queued_checksum})
         db.unprofiled_photos.append({"id": 13, "storage_base_location": str(self.root), "original_sha256": unprofiled_checksum})
@@ -632,7 +624,7 @@ class MetadataWorkerTest(unittest.TestCase):
 
         self.assertTrue(worker.run_once())
 
-        queued_baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{queued_checksum}_baseline.pp3"
+        queued_baseline = self.root / "swallowtail-data" / "ab" / "cd" / f"{queued_checksum}_source.pp3"
         self.assertEqual([12], db.profile_processing)
         self.assertEqual([(self.root / "swallowtail-data" / "ab" / "cd" / f"{queued_checksum}_source.cr2", queued_baseline)], worker.profile_runner.generated)
         self.assertEqual(1, len(db.unprofiled_photos))
@@ -644,7 +636,7 @@ class MetadataWorkerTest(unittest.TestCase):
 
         self.assertIn("No metadata or profile records returned; worker idle", worker.log.infos)
 
-    def test_profile_baseline_waits_for_thumbnail(self) -> None:
+    def test_source_profile_generation_does_not_wait_for_preview(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
         source.parent.mkdir(parents=True)
@@ -655,9 +647,9 @@ class MetadataWorkerTest(unittest.TestCase):
 
         self.assertTrue(worker.run_once())
 
-        self.assertEqual([], worker.profile_runner.generated)
-        self.assertEqual(10, db.profile_deferred[0][0])
-        self.assertIn("Thumbnail is not ready", db.profile_deferred[0][1])
+        source_profile = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.pp3"
+        self.assertEqual([(source, source_profile)], worker.profile_runner.generated)
+        self.assertEqual([], db.profile_deferred)
 
     def test_missing_source_file_is_deferred(self) -> None:
         checksum = "abcdef" + ("0" * 58)

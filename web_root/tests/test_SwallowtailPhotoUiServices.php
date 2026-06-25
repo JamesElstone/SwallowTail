@@ -406,7 +406,7 @@ $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 we
     $photo = InterfaceDB::fetchOne('SELECT uploaded_via, uploaded_by_user_id FROM photos LIMIT 1');
     $harness->assertSame('web', (string)($photo['uploaded_via'] ?? ''));
     $harness->assertSame(902, (int)($photo['uploaded_by_user_id'] ?? 0));
-    $harness->assertSame(3, InterfaceDB::tableRowCount('photo_conversion_jobs'));
+    $harness->assertSame(2, InterfaceDB::tableRowCount('photo_conversion_jobs'));
 
     @unlink($source);
 });
@@ -584,7 +584,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery prev
     $storage = new SwallowtailStorageService();
     $baseLocation = swallowtail_ui_storage_tmp_root();
     $photos = [
-        ['thumb.CR2', str_repeat('e', 64), ['thumbnail', 'embedded']],
+        ['preview.CR2', str_repeat('e', 64), ['preview', 'embedded']],
         ['embedded.CR2', str_repeat('f', 64), ['embedded']],
         ['pending.CR2', str_repeat('9', 64), []],
     ];
@@ -627,13 +627,13 @@ $harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery prev
         $rowsByName[(string)($row['original_filename'] ?? '')] = $row;
     }
 
-    $harness->assertSame(true, (bool)$rowsByName['thumb.CR2']['thumbnail_ready']);
-    $harness->assertSame(false, (bool)$rowsByName['thumb.CR2']['embedded_ready']);
-    $harness->assertSame(false, array_key_exists('original_ready', $rowsByName['thumb.CR2']));
-    $harness->assertSame(false, array_key_exists('filtered_ready', $rowsByName['thumb.CR2']));
-    $harness->assertSame(false, (bool)$rowsByName['embedded.CR2']['thumbnail_ready']);
+    $harness->assertSame(true, (bool)$rowsByName['preview.CR2']['preview_ready']);
+    $harness->assertSame(false, (bool)$rowsByName['preview.CR2']['embedded_ready']);
+    $harness->assertSame(false, array_key_exists('original_ready', $rowsByName['preview.CR2']));
+    $harness->assertSame(false, array_key_exists('final_ready', $rowsByName['preview.CR2']));
+    $harness->assertSame(false, (bool)$rowsByName['embedded.CR2']['preview_ready']);
     $harness->assertSame(true, (bool)$rowsByName['embedded.CR2']['embedded_ready']);
-    $harness->assertSame(false, (bool)$rowsByName['pending.CR2']['thumbnail_ready']);
+    $harness->assertSame(false, (bool)$rowsByName['pending.CR2']['preview_ready']);
     $harness->assertSame(false, (bool)$rowsByName['pending.CR2']['embedded_ready']);
 });
 
@@ -642,7 +642,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
     $storage = new SwallowtailStorageService();
     $baseLocation = swallowtail_ui_storage_tmp_root();
     $sha256 = str_repeat('d', 64);
-    $absolute = $storage->imagePath($baseLocation, $sha256, 'thumbnail');
+    $absolute = $storage->imagePath($baseLocation, $sha256, 'preview');
     $storage->ensureDirectoryForPath($absolute);
     file_put_contents($absolute, "\xff\xd8\xff\xd9", LOCK_EX);
 
@@ -672,8 +672,8 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
     $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'asset.CR2'");
 
     $service = new SwallowtailPhotoUiService();
-    $asset = $service->photoAsset($photoId, 902, 'thumbnail');
-    $denied = $service->photoAsset($photoId, 904, 'thumbnail');
+    $asset = $service->photoAsset($photoId, 902, 'preview');
+    $denied = $service->photoAsset($photoId, 904, 'preview');
 
     $harness->assertTrue(is_array($asset));
     $harness->assertSame($absolute, (string)$asset['path']);

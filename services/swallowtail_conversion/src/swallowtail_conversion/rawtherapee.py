@@ -38,7 +38,7 @@ class RawTherapeeRunner:
             command = [sys.executable, binary]
 
         output_option = "-O" if job.image_type == "original" else "-o"
-        command.extend(["-Y", output_option, temp_output, "-j85"])
+        command.extend(["-q", "-Y", output_option, temp_output, "-f", "-j100", "-js2"])
 
         if job.profile_path:
             command.extend(["-p", job.profile_path])

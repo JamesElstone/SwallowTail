@@ -9,15 +9,13 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const IMAGE_TYPES = ['embedded', 'filtered', 'thumbnail', 'original'];
-    private const PRIORITY_FILTERED = 10;
+    private const IMAGE_TYPES = ['embedded', 'original', 'preview', 'final'];
+    private const PRIORITY_FINAL = 10;
     private const PRIORITY_ORIGINAL = 20;
-    private const PRIORITY_THUMBNAIL = 30;
     private const PRIORITY_EMBEDDED = 40;
     private const PRIORITY_VIEWED_OTHER = 50;
     private const PRIORITY_VIEWED_ORIGINAL = 51;
-    private const PRIORITY_PREVIEW_THUMBNAIL = 52;
-    private const PRIORITY_PREVIEW_FILTERED = 50;
+    private const PRIORITY_PREVIEW = 50;
     private const PRIORITY_PREEMPT_THRESHOLD = 50;
     private const ENQUEUE_ATTEMPTS = 3;
 
@@ -25,7 +23,7 @@ final class SwallowtailConversionQueueService
     {
     }
 
-    public function enqueueRawConversion(int $photoId, string|int $priority = self::PRIORITY_THUMBNAIL): ?int
+    public function enqueueRawConversion(int $photoId, string|int $priority = self::PRIORITY_EMBEDDED): ?int
     {
         foreach ($this->enqueueRawConversionJobs($photoId, $priority) as $job) {
             $jobId = $this->nullablePositiveInt($job['job_id'] ?? null);
@@ -37,7 +35,7 @@ final class SwallowtailConversionQueueService
         return null;
     }
 
-    public function enqueueRawConversionJobs(int $photoId, string|int $priority = self::PRIORITY_THUMBNAIL): array
+    public function enqueueRawConversionJobs(int $photoId, string|int $priority = self::PRIORITY_EMBEDDED): array
     {
         if ($photoId <= 0) {
             return [];
@@ -58,12 +56,10 @@ final class SwallowtailConversionQueueService
 
             foreach ([
                 'embedded' => self::PRIORITY_EMBEDDED,
-                'thumbnail' => $priority,
                 'original' => self::PRIORITY_ORIGINAL,
             ] as $imageType => $jobPriority) {
                 $jobPriority = $this->normalisePriority($jobPriority);
                 $outputPath = $storage->imagePath($base, $sha256, $imageType);
-                $dimensions = $this->dimensionsForImageType($imageType);
                 $jobId = $this->enqueueImageJob(
                     $photoId,
                     $imageType,
@@ -72,9 +68,7 @@ final class SwallowtailConversionQueueService
                     null,
                     1,
                     $jobPriority,
-                    null,
-                    $dimensions['width'],
-                    $dimensions['height']
+                    null
                 );
 
                 $jobs[$imageType] = [
@@ -97,16 +91,34 @@ final class SwallowtailConversionQueueService
         return $jobs;
     }
 
-    public function enqueueFilteredRefresh(
+    public function enqueuePreviewRefresh(
         int $photoId,
         string $profilePath,
         int $profileVersion,
-        ?int $requestedByUserId = null,
-        ?int $outputWidth = null,
-        ?int $outputHeight = null
+        ?int $requestedByUserId = null
+    ): ?int {
+        return $this->enqueueProfiledRefresh($photoId, 'preview', $profilePath, $profileVersion, self::PRIORITY_PREVIEW, $requestedByUserId);
+    }
+
+    public function enqueueFinalRefresh(
+        int $photoId,
+        string $profilePath,
+        int $profileVersion,
+        ?int $requestedByUserId = null
+    ): ?int {
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_FINAL, $requestedByUserId);
+    }
+
+    private function enqueueProfiledRefresh(
+        int $photoId,
+        string $imageType,
+        string $profilePath,
+        int $profileVersion,
+        int $priority,
+        ?int $requestedByUserId
     ): ?int {
         $notifyAfterCommit = !InterfaceDB::inTransaction();
-        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $profilePath, $profileVersion, $requestedByUserId, $outputWidth, $outputHeight): array {
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageType, $profilePath, $profileVersion, $priority, $requestedByUserId): array {
             $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
             if ($photo === null) {
                 return [];
@@ -115,52 +127,30 @@ final class SwallowtailConversionQueueService
             $storage = new SwallowtailStorageService();
             $sha256 = (string)($photo['original_sha256'] ?? '');
             $base = (string)($photo['storage_base_location'] ?? '');
-            $filteredPath = $storage->imagePath($base, $sha256, 'filtered');
+            $outputPath = $storage->imagePath($base, $sha256, $imageType);
             $sourcePath = $storage->imagePath($base, $sha256, 'source');
 
-            $filteredJobId = $this->enqueueImageJob(
+            $jobId = $this->enqueueImageJob(
                 $photoId,
-                'filtered',
+                $imageType,
                 $sourcePath,
-                $filteredPath,
+                $outputPath,
                 $profilePath,
                 $profileVersion,
-                self::PRIORITY_PREVIEW_FILTERED,
-                $requestedByUserId,
-                $outputWidth,
-                $outputHeight
+                $priority,
+                $requestedByUserId
             );
 
-            $thumb = $this->dimensionsForImageType('thumbnail');
-            $thumbnailJobId = $this->enqueueImageJob(
-                $photoId,
-                'thumbnail',
-                $sourcePath,
-                $storage->imagePath($base, $sha256, 'thumbnail'),
-                $profilePath,
-                $profileVersion,
-                self::PRIORITY_PREVIEW_THUMBNAIL,
-                $requestedByUserId,
-                $thumb['width'],
-                $thumb['height']
-            );
-
-            $this->markObsoletePreviewJobs($photoId, [
-                $filteredJobId,
-                $thumbnailJobId,
-            ]);
+            if ($imageType === 'preview') {
+                $this->markObsoletePreviewJobs($photoId, [$jobId]);
+            }
             $this->setPhotoConversionState($photoId, 'processing');
 
             return [
-                'filtered' => [
-                    'job_id' => $filteredJobId,
-                    'image_type' => 'filtered',
-                    'priority' => self::PRIORITY_PREVIEW_FILTERED,
-                ],
-                'thumbnail' => [
-                    'job_id' => $thumbnailJobId,
-                    'image_type' => 'thumbnail',
-                    'priority' => self::PRIORITY_PREVIEW_THUMBNAIL,
+                $imageType => [
+                    'job_id' => $jobId,
+                    'image_type' => $imageType,
+                    'priority' => $priority,
                 ],
             ];
         });
@@ -169,7 +159,7 @@ final class SwallowtailConversionQueueService
             $this->notifyRedisForJobs($jobs);
         }
 
-        return $this->nullablePositiveInt($jobs['filtered']['job_id'] ?? null);
+        return $this->nullablePositiveInt($jobs[$imageType]['job_id'] ?? null);
     }
 
     public function enqueueImageJob(
@@ -407,8 +397,8 @@ final class SwallowtailConversionQueueService
     private function viewedPhotoPriorityForType(string $imageType): int
     {
         return match (strtolower(trim($imageType))) {
-            'thumbnail' => self::PRIORITY_PREVIEW_THUMBNAIL,
             'original' => self::PRIORITY_VIEWED_ORIGINAL,
+            'preview' => self::PRIORITY_PREVIEW,
             default => self::PRIORITY_VIEWED_OTHER,
         };
     }
@@ -530,10 +520,7 @@ final class SwallowtailConversionQueueService
                  last_error = 'Obsolete preview profile'
              WHERE photo_id = :photo_id
                AND status IN ('queued', 'processing')
-               AND (
-                 image_type = 'filtered'
-                 OR (image_type = 'thumbnail' AND profile_path IS NOT NULL)
-               )" . $notInSql,
+               AND image_type = 'preview'" . $notInSql,
             $params
         );
     }
@@ -560,7 +547,7 @@ final class SwallowtailConversionQueueService
 
         return match (strtolower(trim((string)$priority))) {
             'high' => self::PRIORITY_EMBEDDED,
-            'low' => self::PRIORITY_FILTERED,
+            'low' => self::PRIORITY_FINAL,
             'normal' => self::PRIORITY_ORIGINAL,
             default => self::PRIORITY_ORIGINAL,
         };
@@ -588,18 +575,6 @@ final class SwallowtailConversionQueueService
         $value = (int)$value;
 
         return $value > 0 ? $value : null;
-    }
-
-    private function dimensionsForImageType(string $imageType): array
-    {
-        if ($imageType !== 'thumbnail') {
-            return ['width' => null, 'height' => null];
-        }
-
-        $size = (int)AppConfigurationStore::get('swallowtail.raw_conversion.thumbnail_max_pixels', 512);
-        $size = max(1, min(4096, $size));
-
-        return ['width' => $size, 'height' => $size];
     }
 
     private function lastInsertId(): int

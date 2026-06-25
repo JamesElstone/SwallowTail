@@ -21,7 +21,7 @@ Owns filesystem safety for private photo storage.
 - Uses cached storage snapshots for normal requests and can fall back to live mounted-filesystem discovery.
 - Excludes the root partition unless `swallowtail.storage.store_on_root_partition` is enabled.
 - Appends `swallowtail-data` below each eligible base location.
-- Builds deterministic checksum paths for `source`, `original`, `embedded`, `thumbnail`, `filtered`, and `profile`.
+- Builds deterministic checksum paths for `source`, `source_profile`, `embedded`, `preview`, `preview_profile`, `original`, `final`, and `final_profile`.
 - Chooses a writable location that is not excluded and remains above the configured free-space threshold.
 - Copies or moves RAW source files into managed storage.
 
@@ -119,7 +119,7 @@ The default posture is least privilege: no event permission means no access.
 
 Provides a small database-backed queue facade for image generation.
 
-- Enqueues RAW image jobs for embedded, original, thumbnail, and filtered outputs.
+- Enqueues RAW image jobs for embedded, original, preview, and final outputs.
 - Avoids creating duplicate queued or processing jobs for the same photo.
 - Lists queued jobs ordered by priority and age.
 

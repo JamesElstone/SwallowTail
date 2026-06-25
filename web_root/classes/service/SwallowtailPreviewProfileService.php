@@ -18,6 +18,7 @@ final class SwallowtailPreviewProfileService
         private readonly SwallowtailConversionQueueService $queueService = new SwallowtailConversionQueueService(),
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
         private readonly SwallowtailProfileDataService $profileDataService = new SwallowtailProfileDataService(),
+        private readonly SwallowtailCombinedProfileService $combinedProfileService = new SwallowtailCombinedProfileService(),
     ) {
     }
 
@@ -36,19 +37,16 @@ final class SwallowtailPreviewProfileService
         $baselineStatus = $this->profileDataService->requestUrgentProfile($photo, 'picture_editor');
 
         $dimensions = $this->sourceDimensions($photo);
-        $settings = $this->latestProfileSettings($photo);
-        if ($settings === []) {
-            $settings = $baselineStatus['ready']
-                ? $this->profileDataService->settingsFromRows(
-                    (int)$photo['id'],
-                    $dimensions['width'],
-                    $dimensions['height'],
-                    $this->defaultSettings($dimensions['width'], $dimensions['height'])
-                )
-                : $this->defaultSettings($dimensions['width'], $dimensions['height']);
-        }
+        $settings = $baselineStatus['ready']
+            ? $this->profileDataService->settingsFromRows(
+                (int)$photo['id'],
+                $dimensions['width'],
+                $dimensions['height'],
+                $this->defaultSettings($dimensions['width'], $dimensions['height'])
+            )
+            : $this->defaultSettings($dimensions['width'], $dimensions['height']);
 
-        $latestProfileVersion = $this->latestProfileVersion((int)$photo['id']);
+        $latestProfileVersion = $this->latestProfileVersion((int)$photo['id'], 'preview');
         $previewType = $this->previewImageType($photo);
 
         return [
@@ -66,6 +64,16 @@ final class SwallowtailPreviewProfileService
     }
 
     public function enqueuePreview(int $photoId, int $userId, array $payload): array
+    {
+        return $this->enqueueProfiledRender($photoId, $userId, $payload, 'preview');
+    }
+
+    public function enqueueFinal(int $photoId, int $userId, array $payload): array
+    {
+        return $this->enqueueProfiledRender($photoId, $userId, $payload, 'final');
+    }
+
+    private function enqueueProfiledRender(int $photoId, int $userId, array $payload, string $imageType): array
     {
         if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
             return [
@@ -94,35 +102,43 @@ final class SwallowtailPreviewProfileService
 
         $dimensions = $this->sourceDimensions($photo);
         $settings = $this->normaliseSettings($payload, $dimensions['width'], $dimensions['height']);
-        $profileVersion = $this->nextProfileVersion($photoId);
-        $profilePath = $this->writeProfile($photo, $settings);
+        $this->profileDataService->recordChangedRows($photoId, $this->profileRowsForSettings($settings));
+        $profileVersion = $this->nextProfileVersion($photoId, $imageType);
+        $profilePath = $this->writeProfile($photo, $imageType);
 
-        $jobId = $this->queueService->enqueueFilteredRefresh(
-            $photoId,
-            $profilePath,
-            $profileVersion,
-            $userId
-        );
+        $jobId = $imageType === 'final'
+            ? $this->queueService->enqueueFinalRefresh($photoId, $profilePath, $profileVersion, $userId)
+            : $this->queueService->enqueuePreviewRefresh(
+                $photoId,
+                $profilePath,
+                $profileVersion,
+                $userId
+            );
 
         if ($jobId === null) {
             return [
                 'success' => false,
-                'errors' => ['Filtered image job could not be queued.'],
+                'errors' => [ucfirst($imageType) . ' image job could not be queued.'],
             ];
         }
 
-        return [
+        $result = [
             'success' => true,
             'job_id' => $jobId,
             'profile_version' => $profileVersion,
             'settings' => $settings,
-            'preview_url' => $this->previewUrl($photoId, $profileVersion, $jobId),
-            'status_url' => '/api/photo-preview-status.php?' . http_build_query([
+            $imageType . '_url' => $this->previewUrl($photoId, $profileVersion, $jobId, $imageType),
+            'status_url' => '/api/photo-' . $imageType . '-status.php?' . http_build_query([
                 'photo_id' => $photoId,
                 'job_id' => $jobId,
                 'profile_version' => $profileVersion,
             ]),
         ];
+        if ($imageType === 'preview') {
+            $result['preview_url'] = $result['preview_url'] ?? $this->previewUrl($photoId, $profileVersion, $jobId, 'preview');
+        }
+
+        return $result;
     }
 
     public function baselineStatus(int $photoId, int $userId): array
@@ -162,10 +178,20 @@ final class SwallowtailPreviewProfileService
 
     public function previewStatus(int $photoId, int $jobId, int $profileVersion, int $userId): array
     {
+        return $this->renderStatus($photoId, $jobId, $profileVersion, $userId, 'preview');
+    }
+
+    public function finalStatus(int $photoId, int $jobId, int $profileVersion, int $userId): array
+    {
+        return $this->renderStatus($photoId, $jobId, $profileVersion, $userId, 'final');
+    }
+
+    private function renderStatus(int $photoId, int $jobId, int $profileVersion, int $userId, string $imageType): array
+    {
         if ($photoId <= 0 || $jobId <= 0 || $profileVersion <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
             return [
                 'success' => false,
-                'errors' => ['Filtered image job was not found.'],
+                'errors' => [ucfirst($imageType) . ' image job was not found.'],
             ];
         }
 
@@ -174,12 +200,13 @@ final class SwallowtailPreviewProfileService
              FROM photo_conversion_jobs
              WHERE id = :job_id
                AND photo_id = :photo_id
-               AND image_type = 'filtered'
+               AND image_type = :image_type
                AND profile_version = :profile_version
              LIMIT 1",
             [
                 'job_id' => $jobId,
                 'photo_id' => $photoId,
+                'image_type' => $imageType,
                 'profile_version' => $profileVersion,
             ]
         );
@@ -187,7 +214,7 @@ final class SwallowtailPreviewProfileService
         if (!is_array($job)) {
             return [
                 'success' => false,
-                'errors' => ['Filtered image job was not found.'],
+                'errors' => [ucfirst($imageType) . ' image job was not found.'],
             ];
         }
 
@@ -200,9 +227,12 @@ final class SwallowtailPreviewProfileService
         ];
 
         if ($status === 'succeeded') {
-            $payload['preview_url'] = $this->previewUrl($photoId, $profileVersion, $jobId);
+            $payload[$imageType . '_url'] = $this->previewUrl($photoId, $profileVersion, $jobId, $imageType);
+            if ($imageType === 'preview') {
+                $payload['preview_url'] = $payload['preview_url'] ?? $this->previewUrl($photoId, $profileVersion, $jobId, 'preview');
+            }
         } elseif ($status === 'failed') {
-            $payload['error'] = (string)($job['last_error'] ?? 'Filtered render failed.');
+            $payload['error'] = (string)($job['last_error'] ?? ucfirst($imageType) . ' render failed.');
         }
 
         return $payload;
@@ -324,17 +354,70 @@ final class SwallowtailPreviewProfileService
         return $this->renderPp3Document($profile);
     }
 
-    private function writeProfile(array $photo, array $settings): string
+    public function profileRowsForSettings(array $settings): array
     {
+        $crop = (array)$settings['crop'];
+        $exposure = (array)$settings['exposure'];
+        $whiteBalance = (array)($settings['white_balance'] ?? []);
+        $shadowsHighlights = (array)($settings['shadows_highlights'] ?? []);
+        $rotation = (array)($settings['rotation'] ?? []);
+        $perspective = (array)($settings['perspective'] ?? []);
+        $localContrast = (float)($shadowsHighlights['local_contrast'] ?? 0);
+
+        return [
+            $this->profileRow('Exposure', 'Auto', 'false', 'bool'),
+            $this->profileRow('Exposure', 'Black', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['black'] ?? 0) : 0), 'float'),
+            $this->profileRow('Exposure', 'Brightness', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['lightness'] ?? 0) : 0), 'float'),
+            $this->profileRow('Exposure', 'Contrast', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['contrast'] ?? 0) : 0), 'float'),
+            $this->profileRow('Exposure', 'Saturation', $this->formatNumber(!empty($exposure['enabled']) ? ($exposure['saturation'] ?? 0) : 0), 'float'),
+            $this->profileRow('Crop', 'Enabled', !empty($crop['enabled']) ? 'true' : 'false', 'bool'),
+            $this->profileRow('Crop', 'X', (string)(int)($crop['x'] ?? 0), 'int'),
+            $this->profileRow('Crop', 'Y', (string)(int)($crop['y'] ?? 0), 'int'),
+            $this->profileRow('Crop', 'W', (string)(int)($crop['width'] ?? 1), 'int'),
+            $this->profileRow('Crop', 'H', (string)(int)($crop['height'] ?? 1), 'int'),
+            $this->profileRow('Crop', 'FixedRatio', 'false', 'bool'),
+            $this->profileRow('Crop', 'Ratio', 'As Image', 'string'),
+            $this->profileRow('Crop', 'Orientation', 'As Image', 'string'),
+            $this->profileRow('Crop', 'Guide', 'Frame', 'string'),
+            $this->profileRow('White Balance', 'Enabled', !empty($whiteBalance['enabled']) ? 'true' : 'false', 'bool'),
+            $this->profileRow('White Balance', 'Setting', (string)($whiteBalance['setting'] ?? 'Custom'), 'string'),
+            $this->profileRow('White Balance', 'Temperature', $this->formatNumber($whiteBalance['temperature'] ?? 5324), 'float'),
+            $this->profileRow('White Balance', 'Green', $this->formatNumber($whiteBalance['green'] ?? 0.846), 'float'),
+            $this->profileRow('Shadows & Highlights', 'Enabled', !empty($shadowsHighlights['enabled']) ? 'true' : 'false', 'bool'),
+            $this->profileRow('Shadows & Highlights', 'Highlights', $this->formatNumber($shadowsHighlights['highlights'] ?? 30), 'float'),
+            $this->profileRow('Shadows & Highlights', 'HighlightTonalWidth', $this->formatNumber($shadowsHighlights['highlight_tonal_width'] ?? 80), 'float'),
+            $this->profileRow('Shadows & Highlights', 'Shadows', $this->formatNumber($shadowsHighlights['shadows'] ?? 30), 'float'),
+            $this->profileRow('Shadows & Highlights', 'ShadowTonalWidth', $this->formatNumber($shadowsHighlights['shadow_tonal_width'] ?? 80), 'float'),
+            $this->profileRow('Shadows & Highlights', 'Radius', $this->formatNumber($shadowsHighlights['radius'] ?? 40), 'float'),
+            $this->profileRow('Shadows & Highlights', 'Lab', !empty($shadowsHighlights['lab']) ? 'true' : 'false', 'bool'),
+            $this->profileRow('Local Contrast', 'Enabled', $localContrast > 0 ? 'true' : 'false', 'bool'),
+            $this->profileRow('Local Contrast', 'Amount', $this->formatNumber($localContrast / 30.0), 'float'),
+            $this->profileRow('Local Contrast', 'Radius', '80', 'int'),
+            $this->profileRow('Local Contrast', 'Darkness', '1', 'int'),
+            $this->profileRow('Local Contrast', 'Lightness', '1', 'int'),
+            $this->profileRow('Rotation', 'Degree', $this->formatNumber(!empty($rotation['enabled']) ? ($rotation['degree'] ?? 0) : 0), 'float'),
+            $this->profileRow('Perspective', 'Method', 'simple', 'string'),
+            $this->profileRow('Perspective', 'Horizontal', $this->formatNumber(!empty($perspective['enabled']) ? ($perspective['horizontal'] ?? 0) : 0), 'float'),
+            $this->profileRow('Perspective', 'Vertical', $this->formatNumber(!empty($perspective['enabled']) ? ($perspective['vertical'] ?? 0) : 0), 'float'),
+        ];
+    }
+
+    private function writeProfile(array $photo, string $imageType): string
+    {
+        $profileType = match ($imageType) {
+            'preview' => 'preview_profile',
+            'final' => 'final_profile',
+            default => throw new InvalidArgumentException('Unsupported profile image type.'),
+        };
         $path = $this->storageService->imagePath(
             (string)($photo['storage_base_location'] ?? ''),
             (string)($photo['original_sha256'] ?? ''),
-            'profile'
+            $profileType
         );
         $this->storageService->ensureDirectoryForPath($path);
 
-        $baseline = $this->baselineProfileContent($photo);
-        if (file_put_contents($path, $this->pp3Content($settings, $baseline), LOCK_EX) === false) {
+        $profile = $this->combinedProfileService->combinedProfileContent((int)($photo['id'] ?? 0), $imageType);
+        if (file_put_contents($path, $profile, LOCK_EX) === false) {
             throw new RuntimeException('Unable to write PP3 profile.');
         }
 
@@ -345,7 +428,7 @@ final class SwallowtailPreviewProfileService
 
     private function sourceDimensions(array $photo): array
     {
-        foreach (['filtered', 'original', 'embedded'] as $type) {
+        foreach (['original', 'final', 'preview', 'embedded'] as $type) {
             $info = $this->storageService->imageInfo($photo, $type);
             if ($info === null) {
                 continue;
@@ -363,93 +446,6 @@ final class SwallowtailPreviewProfileService
         return [
             'width' => self::DEFAULT_SOURCE_WIDTH,
             'height' => self::DEFAULT_SOURCE_HEIGHT,
-        ];
-    }
-
-    private function latestProfileSettings(array $photo): array
-    {
-        $info = $this->storageService->imageInfo($photo, 'profile');
-        if ($info === null) {
-            return [];
-        }
-
-        $contents = file_get_contents((string)$info['absolute_path']);
-        if (!is_string($contents)) {
-            return [];
-        }
-
-        return $this->parseProfileSettings($contents);
-    }
-
-    private function parseProfileSettings(string $contents): array
-    {
-        $section = '';
-        $values = [];
-        foreach (preg_split('/\R/', $contents) ?: [] as $line) {
-            $line = trim($line);
-            if ($line === '') {
-                continue;
-            }
-
-            if (preg_match('/^\[([^\]]+)\]$/', $line, $match) === 1) {
-                $section = (string)$match[1];
-                continue;
-            }
-
-            if (!str_contains($line, '=')) {
-                continue;
-            }
-
-            [$key, $value] = explode('=', $line, 2);
-            $values[$section . '.' . trim($key)] = trim($value);
-        }
-
-        if (!isset($values['Crop.W'], $values['Crop.H'])) {
-            return [];
-        }
-
-        return [
-            'crop' => [
-                'enabled' => $this->boolFromString($values['Crop.Enabled'] ?? 'true'),
-                'x' => max(0, (int)($values['Crop.X'] ?? 0)),
-                'y' => max(0, (int)($values['Crop.Y'] ?? 0)),
-                'width' => max(1, (int)$values['Crop.W']),
-                'height' => max(1, (int)$values['Crop.H']),
-            ],
-            'exposure' => [
-                'enabled' => true,
-                'black' => (float)($values['Exposure.Black'] ?? 0),
-                'lightness' => (float)($values['Exposure.Brightness'] ?? 0),
-                'contrast' => (float)($values['Exposure.Contrast'] ?? 0),
-                'saturation' => (float)($values['Exposure.Saturation'] ?? 0),
-            ],
-            'white_balance' => [
-                'enabled' => $this->boolFromString($values['White Balance.Enabled'] ?? 'true'),
-                'setting' => (string)($values['White Balance.Setting'] ?? 'Custom'),
-                'temperature' => (float)($values['White Balance.Temperature'] ?? 5324),
-                'green' => (float)($values['White Balance.Green'] ?? 0.846),
-            ],
-            'shadows_highlights' => [
-                'enabled' => $this->boolFromString($values['Shadows & Highlights.Enabled'] ?? 'true'),
-                'highlights' => (float)($values['Shadows & Highlights.Highlights'] ?? 30),
-                'highlight_tonal_width' => (float)($values['Shadows & Highlights.HighlightTonalWidth'] ?? 80),
-                'shadows' => (float)($values['Shadows & Highlights.Shadows'] ?? 30),
-                'shadow_tonal_width' => (float)($values['Shadows & Highlights.ShadowTonalWidth'] ?? 80),
-                'radius' => (float)($values['Shadows & Highlights.Radius'] ?? 40),
-                'lab' => $this->boolFromString($values['Shadows & Highlights.Lab'] ?? 'true'),
-                'local_contrast' => ((float)($values['Local Contrast.Amount'] ?? 0)) * 30.0,
-            ],
-            'rotation' => [
-                'enabled' => abs((float)($values['Rotation.Degree'] ?? 0)) > 0.000001,
-                'degree' => (float)($values['Rotation.Degree'] ?? 0),
-            ],
-            'perspective' => [
-                'enabled' => abs((float)($values['Perspective.Horizontal'] ?? 0)) > 0.000001
-                    || abs((float)($values['Perspective.Vertical'] ?? 0)) > 0.000001,
-                'method' => (string)($values['Perspective.Method'] ?? 'simple'),
-                'horizontal' => (float)($values['Perspective.Horizontal'] ?? 0),
-                'vertical' => (float)($values['Perspective.Vertical'] ?? 0),
-            ],
         ];
     }
 
@@ -499,12 +495,12 @@ final class SwallowtailPreviewProfileService
         ];
     }
 
-    private function nextProfileVersion(int $photoId): int
+    private function nextProfileVersion(int $photoId, string $imageType): int
     {
-        return $this->latestProfileVersion($photoId) + 1;
+        return $this->latestProfileVersion($photoId, $imageType) + 1;
     }
 
-    private function latestProfileVersion(int $photoId): int
+    private function latestProfileVersion(int $photoId, string $imageType): int
     {
         if ($photoId <= 0) {
             return 0;
@@ -514,14 +510,17 @@ final class SwallowtailPreviewProfileService
             "SELECT COALESCE(MAX(profile_version), 0)
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
-               AND image_type = 'filtered'",
-            ['photo_id' => $photoId]
+               AND image_type = :image_type",
+            [
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+            ]
         );
     }
 
     private function previewImageType(array $photo): ?string
     {
-        foreach (['filtered', 'original'] as $type) {
+        foreach (['preview', 'embedded'] as $type) {
             if ($this->storageService->imageInfo($photo, $type) !== null) {
                 return $type;
             }
@@ -530,11 +529,11 @@ final class SwallowtailPreviewProfileService
         return null;
     }
 
-    private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'filtered'): string
+    private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'preview'): string
     {
         return '/api/photo-image.php?' . http_build_query([
             'photo_id' => $photoId,
-            'type' => in_array($imageType, ['filtered', 'original', 'thumbnail'], true) ? $imageType : 'filtered',
+            'type' => in_array($imageType, ['preview', 'embedded', 'final', 'original'], true) ? $imageType : 'preview',
             'v' => max(0, $profileVersion),
             'job_id' => $jobId,
         ]);
@@ -561,11 +560,6 @@ final class SwallowtailPreviewProfileService
         return in_array(strtolower((string)$value), ['1', 'true', 'yes', 'on'], true);
     }
 
-    private function boolFromString(mixed $value): bool
-    {
-        return !in_array(strtolower((string)$value), ['0', 'false', 'no', 'off'], true);
-    }
-
     private function optionString(mixed $value, array $allowed, string $fallback): string
     {
         $value = trim((string)$value);
@@ -573,16 +567,14 @@ final class SwallowtailPreviewProfileService
         return in_array($value, $allowed, true) ? $value : $fallback;
     }
 
-    private function baselineProfileContent(array $photo): string
+    private function profileRow(string $type, string $key, mixed $value, string $valueType): array
     {
-        $info = $this->storageService->imageInfo($photo, 'baseline');
-        if ($info === null) {
-            return '';
-        }
-
-        $contents = file_get_contents((string)$info['absolute_path']);
-
-        return is_string($contents) ? $contents : '';
+        return [
+            'type' => $type,
+            'key' => $key,
+            'value' => $value,
+            'value_type' => $valueType,
+        ];
     }
 
     private function parsePp3Document(string $contents): array

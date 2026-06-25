@@ -107,7 +107,7 @@ class ConversionWorker:
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            if self._job_is_obsolete(job) or self.db.is_stale_filtered(job):
+            if self._job_is_obsolete(job) or self.db.is_stale_preview(job):
                 self._obsolete_job(job, "Obsolete preview profile")
                 return
 
@@ -136,17 +136,17 @@ class ConversionWorker:
             if not output.is_file() or output.stat().st_size <= 0:
                 raise RuntimeError("Conversion did not create a non-empty output file.")
 
-            if self._job_is_obsolete(job) or self.db.is_stale_filtered(job):
+            if self._job_is_obsolete(job) or self.db.is_stale_preview(job):
                 self._obsolete_job(job, "Obsolete preview profile")
                 return
 
             final = Path(job.output_path)
             final.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(output), str(final))
-            baseline_path = self._preserve_original_baseline_profile(job, result)
+            source_profile_path = self._preserve_original_source_profile(job, result)
             self.db.complete_job(job, str(final), result.command, result.stderr, result.duration_seconds)
-            if baseline_path is not None:
-                self.log.info("Completed job=%s output=%s baseline_profile=%s", job.id, final, baseline_path)
+            if source_profile_path is not None:
+                self.log.info("Completed job=%s output=%s source_profile=%s", job.id, final, source_profile_path)
             else:
                 self.log.info("Completed job=%s output=%s", job.id, final)
         except StorageBlocked as exc:
@@ -267,7 +267,7 @@ class ConversionWorker:
         if not self.redis.touch_service("swallowtail_conversion"):
             self.log.debug("Unable to refresh Redis heartbeat for conversion worker")
 
-    def _preserve_original_baseline_profile(self, job, result) -> Path | None:
+    def _preserve_original_source_profile(self, job, result) -> Path | None:
         if job.image_type != "original" or not getattr(result, "temp_profile_path", None):
             return None
 
@@ -284,7 +284,7 @@ class ConversionWorker:
         if checksum == "":
             return None
 
-        destination = output.with_name(f"{checksum}_baseline.pp3")
+        destination = output.with_name(f"{checksum}_source.pp3")
         if destination.is_file() and destination.stat().st_size > 0:
             return destination
 

@@ -1989,8 +1989,10 @@
             const cropReadout = editor.querySelector('[data-picture-editor-crop-readout]');
             const cropState = editor.querySelector('[data-picture-editor-crop-state]');
             const revertButton = editor.querySelector('[data-picture-editor-revert]');
+            const saveButton = editor.querySelector('[data-picture-editor-save]');
             const profileState = editor.querySelector('[data-picture-editor-profile-state]');
             const profileUrl = String(editor.dataset.profileUrl || '').trim();
+            const finalUrl = String(editor.dataset.finalUrl || '').trim();
             const profileStatusUrl = String(editor.dataset.profileStatusUrl || '').trim();
             const sourceWidth = Math.max(1, Number.parseInt(String(editor.dataset.sourceWidth || '1'), 10));
             const sourceHeight = Math.max(1, Number.parseInt(String(editor.dataset.sourceHeight || '1'), 10));
@@ -1998,6 +2000,8 @@
             let requestSequence = 0;
             let submitTimer = null;
             let pollTimer = null;
+            let finalPollTimer = null;
+            let finalSaveSequence = 0;
             let baselinePollTimer = null;
             let dragState = null;
             let displayedPreviewStage = String(editor.dataset.previewType || '').trim();
@@ -2128,7 +2132,7 @@
             }
 
             function cropIsInteractive() {
-                return baselineReady && displayedPreviewStage !== 'thumbnail' && settings.crop.enabled;
+                return baselineReady && settings.crop.enabled;
             }
 
             function setStatus(message, state = '') {
@@ -2142,7 +2146,7 @@
 
             function normaliseDisplayType(type) {
                 const value = String(type || '').trim().toLowerCase();
-                return ['embedded', 'thumbnail', 'original', 'filtered'].includes(value) ? value : '';
+                return ['preview', 'embedded'].includes(value) ? value : '';
             }
 
             function setDisplayType(type) {
@@ -2188,9 +2192,7 @@
                 cropNode.hidden = !interactive;
                 cropNode.dataset.pictureEditorDisabled = interactive ? '0' : '1';
                 if (cropState instanceof HTMLElement) {
-                    cropState.textContent = displayedPreviewStage === 'thumbnail'
-                        ? 'Crop disabled while thumbnail preview is displayed.'
-                        : (baselineReady ? 'Crop follows original/filtered previews.' : 'Crop waiting for baseline profile.');
+                    cropState.textContent = baselineReady ? 'Crop follows preview images.' : 'Crop waiting for baseline profile.';
                 }
                 const box = displayBox();
                 const left = (settings.crop.x / sourceWidth) * box.width;
@@ -2254,7 +2256,7 @@
             }
 
             function setEditorEnabled(enabled) {
-                editor.querySelectorAll('[data-picture-editor-field], [data-picture-editor-number], [data-picture-editor-check], [data-picture-editor-revert]').forEach((field) => {
+                editor.querySelectorAll('[data-picture-editor-field], [data-picture-editor-number], [data-picture-editor-check], [data-picture-editor-revert], [data-picture-editor-save]').forEach((field) => {
                     if (field instanceof HTMLInputElement || field instanceof HTMLButtonElement) {
                         field.disabled = !enabled;
                     }
@@ -2270,6 +2272,13 @@
                 if (pollTimer !== null) {
                     window.clearTimeout(pollTimer);
                     pollTimer = null;
+                }
+            }
+
+            function clearFinalPoll() {
+                if (finalPollTimer !== null) {
+                    window.clearTimeout(finalPollTimer);
+                    finalPollTimer = null;
                 }
             }
 
@@ -2338,7 +2347,7 @@
 
                     const state = String(response?.status || 'queued');
                     if (state === 'succeeded' && response?.preview_url) {
-                        swapPreviewImage(String(response.preview_url), 'filtered');
+                        swapPreviewImage(String(response.preview_url), 'preview');
                         setStatus('Ready', 'ready');
                         return;
                     }
@@ -2381,6 +2390,81 @@
                     setDisplayType(stageType);
                     editor.dataset.previewType = stageType;
                     renderCrop();
+                }
+            }
+
+            async function submitFinal() {
+                if (!baselineReady || finalUrl === '') {
+                    return;
+                }
+
+                const sequence = ++finalSaveSequence;
+                clearFinalPoll();
+                setStatus('Saving', 'processing');
+
+                try {
+                    const response = await sendAjax(finalUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload()),
+                    });
+
+                    if (sequence !== finalSaveSequence) {
+                        return;
+                    }
+
+                    if (!response || response.success === false || !response.status_url) {
+                        setStatus('Final failed', 'failed');
+                        return;
+                    }
+
+                    pollFinalStatus(String(response.status_url), sequence, 0, Date.now());
+                } catch (error) {
+                    if (sequence === finalSaveSequence) {
+                        setStatus('Final failed', 'failed');
+                    }
+                    console.error(error);
+                }
+            }
+
+            async function pollFinalStatus(statusUrl, sequence, attempt, startedAt) {
+                if (sequence !== finalSaveSequence || !editor.isConnected) {
+                    return;
+                }
+
+                if ((Date.now() - startedAt) > 120000) {
+                    setStatus('Final timed out', 'failed');
+                    return;
+                }
+
+                try {
+                    const response = await sendAjax(statusUrl);
+
+                    if (sequence !== finalSaveSequence) {
+                        return;
+                    }
+
+                    const state = String(response?.status || 'queued');
+                    if (state === 'succeeded') {
+                        setStatus('Final ready', 'ready');
+                        return;
+                    }
+
+                    if (state === 'failed' || state === 'cancelled') {
+                        setStatus(state === 'cancelled' ? 'Final cancelled' : 'Final failed', 'failed');
+                        return;
+                    }
+
+                    setStatus(state === 'processing' ? 'Saving' : 'Final queued', state);
+                    const delay = attempt < 5 ? 1000 : 2500;
+                    finalPollTimer = window.setTimeout(() => {
+                        pollFinalStatus(statusUrl, sequence, attempt + 1, startedAt);
+                    }, delay);
+                } catch (error) {
+                    if (sequence === finalSaveSequence) {
+                        setStatus('Final failed', 'failed');
+                    }
+                    console.error(error);
                 }
             }
 
@@ -2549,6 +2633,9 @@
             }
             if (revertButton instanceof HTMLButtonElement) {
                 revertButton.addEventListener('click', revertToBaseline);
+            }
+            if (saveButton instanceof HTMLButtonElement) {
+                saveButton.addEventListener('click', submitFinal);
             }
             window.addEventListener('resize', renderCrop);
             syncControls();

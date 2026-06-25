@@ -85,7 +85,8 @@ final class SwallowtailProfileDataService
             "SELECT `key`, value, value_type
              FROM photo_profile_data
              WHERE photo_id = :photo_id
-               AND type = :type",
+               AND type = :type
+               AND revision = 0",
             ['photo_id' => $photoId, 'type' => self::STATUS_TYPE]
         );
 
@@ -101,7 +102,7 @@ final class SwallowtailProfileDataService
             'status' => $status,
             'ready' => $status === 'processed',
             'error' => (string)($values['last_error'] ?? ''),
-            'baseline_profile_path' => (string)($values['baseline_profile_path'] ?? ''),
+            'source_profile_path' => (string)($values['source_profile_path'] ?? ''),
             'rawtherapee_version' => (string)($values['rawtherapee_version'] ?? ''),
             'viewed_at' => (int)($values['viewed_at'] ?? 0),
         ];
@@ -114,13 +115,109 @@ final class SwallowtailProfileDataService
         }
 
         return InterfaceDB::fetchAll(
-            "SELECT type, `key`, value, value_type
-             FROM photo_profile_data
-             WHERE photo_id = :photo_id
-               AND type <> :status_type
-             ORDER BY type, `key`",
+            "SELECT profile.type, profile.`key`, profile.value, profile.value_type, profile.revision
+             FROM photo_profile_data profile
+             INNER JOIN (
+                 SELECT type, `key`, MAX(revision) AS revision
+                 FROM photo_profile_data
+                 WHERE photo_id = :photo_id
+                   AND type <> :status_type
+                 GROUP BY type, `key`
+             ) latest
+               ON latest.type = profile.type
+              AND latest.`key` = profile.`key`
+              AND latest.revision = profile.revision
+             WHERE profile.photo_id = :photo_id
+               AND profile.type <> :status_type
+             ORDER BY profile.type, profile.`key`",
             ['photo_id' => $photoId, 'status_type' => self::STATUS_TYPE]
         );
+    }
+
+    public function rowsByIdentity(int $photoId): array
+    {
+        $rows = [];
+        foreach ($this->rows($photoId) as $row) {
+            $section = (string)($row['type'] ?? '');
+            $key = (string)($row['key'] ?? '');
+            if ($section === '' || $key === '') {
+                continue;
+            }
+            $rows[$this->identityKey($section, $key)] = $row;
+        }
+
+        return $rows;
+    }
+
+    public function recordChangedRows(int $photoId, array $rows): int
+    {
+        if ($photoId <= 0 || !$this->tableAvailable() || $rows === []) {
+            return 0;
+        }
+
+        $current = $this->rowsByIdentity($photoId);
+        $changed = [];
+        foreach ($rows as $row) {
+            $section = trim((string)($row['type'] ?? ''));
+            $key = trim((string)($row['key'] ?? ''));
+            if ($section === '' || $key === '') {
+                continue;
+            }
+
+            $valueType = $this->normaliseValueType((string)($row['value_type'] ?? 'string'));
+            $value = $row['value'] ?? null;
+            $identity = $this->identityKey($section, $key);
+            if (!$this->rowValueDiffers($current[$identity] ?? null, $value, $valueType)) {
+                continue;
+            }
+
+            $changed[] = [
+                'type' => substr($section, 0, 32),
+                'key' => substr($key, 0, 191),
+                'value' => $value === null ? null : (string)$value,
+                'value_type' => $valueType,
+            ];
+        }
+
+        if ($changed === []) {
+            return 0;
+        }
+
+        return (int)InterfaceDB::transaction(function () use ($photoId, $changed): int {
+            $inserted = 0;
+            foreach ($changed as $row) {
+                $revision = (int)InterfaceDB::fetchColumn(
+                    "SELECT COALESCE(MAX(revision), 0) + 1
+                     FROM photo_profile_data
+                     WHERE photo_id = :photo_id
+                       AND type = :type
+                       AND `key` = :key",
+                    [
+                        'photo_id' => $photoId,
+                        'type' => $row['type'],
+                        'key' => $row['key'],
+                    ]
+                );
+                InterfaceDB::prepareExecute(
+                    "INSERT INTO photo_profile_data (
+                        photo_id, revision, type, `key`, value, value_type
+                    ) VALUES (
+                        :photo_id, :revision, :type, :key, :value, :value_type
+                    )",
+                    [
+                        'photo_id' => $photoId,
+                        'revision' => $revision,
+                        'type' => $row['type'],
+                        'key' => $row['key'],
+                        'value' => $row['value'],
+                        'value_type' => $row['value_type'],
+                    ]
+                );
+                $inserted++;
+            }
+
+            return $inserted;
+        });
     }
 
     public function settingsFromRows(int $photoId, int $width, int $height, array $fallback): array
@@ -209,10 +306,10 @@ final class SwallowtailProfileDataService
 
     public function setValue(int $photoId, string $type, string $key, mixed $value, string $valueType): void
     {
-        $valueType = in_array($valueType, ['null', 'bool', 'int', 'float', 'string'], true) ? $valueType : 'string';
+        $valueType = $this->normaliseValueType($valueType);
         $storedValue = $value === null ? null : (string)$value;
         $existing = InterfaceDB::fetchColumn(
-            "SELECT id FROM photo_profile_data WHERE photo_id = :photo_id AND type = :type AND `key` = :key LIMIT 1",
+            "SELECT id FROM photo_profile_data WHERE photo_id = :photo_id AND type = :type AND `key` = :key AND revision = 0 LIMIT 1",
             ['photo_id' => $photoId, 'type' => $type, 'key' => $key]
         );
 
@@ -230,9 +327,9 @@ final class SwallowtailProfileDataService
 
         InterfaceDB::prepareExecute(
             "INSERT INTO photo_profile_data (
-                photo_id, type, `key`, value, value_type
+                photo_id, revision, type, `key`, value, value_type
             ) VALUES (
-                :photo_id, :type, :key, :value, :value_type
+                :photo_id, 0, :type, :key, :value, :value_type
             )",
             [
                 'photo_id' => $photoId,
@@ -242,6 +339,43 @@ final class SwallowtailProfileDataService
                 'value_type' => $valueType,
             ]
         );
+    }
+
+    private function identityKey(string $section, string $key): string
+    {
+        return $section . "\0" . $key;
+    }
+
+    private function rowValueDiffers(?array $current, mixed $value, string $valueType): bool
+    {
+        if ($current === null) {
+            return true;
+        }
+
+        $currentType = $this->normaliseValueType((string)($current['value_type'] ?? 'string'));
+        $currentValue = $current['value'] ?? null;
+        if ($valueType === 'null') {
+            return $currentValue !== null && (string)$currentValue !== '';
+        }
+        if ($currentType === 'null') {
+            return $value !== null && (string)$value !== '';
+        }
+        if ($valueType === 'bool' || $currentType === 'bool') {
+            return (bool)$this->typedValue($currentValue, 'bool') !== (bool)$this->typedValue($value, 'bool');
+        }
+        if ($valueType === 'float' || $currentType === 'float') {
+            return abs((float)$currentValue - (float)$value) > 0.000001;
+        }
+        if ($valueType === 'int' || $currentType === 'int') {
+            return (int)$currentValue !== (int)$value;
+        }
+
+        return (string)$currentValue !== (string)$value;
+    }
+
+    private function normaliseValueType(string $valueType): string
+    {
+        return in_array($valueType, ['null', 'bool', 'int', 'float', 'string'], true) ? $valueType : 'string';
     }
 
     private function typedValue(mixed $value, string $type): mixed
@@ -262,7 +396,7 @@ final class SwallowtailProfileDataService
             'status' => 'processed',
             'ready' => true,
             'error' => '',
-            'baseline_profile_path' => '',
+            'source_profile_path' => '',
             'rawtherapee_version' => '',
             'viewed_at' => 0,
         ];

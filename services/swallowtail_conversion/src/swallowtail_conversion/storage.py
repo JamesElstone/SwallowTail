@@ -28,12 +28,13 @@ class ConversionStorageManager:
     DATA_DIRECTORY = "swallowtail-data"
     IMAGE_EXTENSIONS = {
         "source": ".cr2",
+        "source_profile": ".pp3",
         "embedded": ".jpg",
-        "thumbnail": ".jpg",
+        "preview": ".jpg",
+        "preview_profile": ".pp3",
         "original": ".jpg",
-        "filtered": ".jpg",
-        "profile": ".pp3",
-        "baseline": ".pp3",
+        "final": ".jpg",
+        "final_profile": ".pp3",
     }
 
     def __init__(
@@ -126,11 +127,16 @@ class ConversionStorageManager:
     def image_path(self, base: str, checksum: str, image_type: str) -> Path:
         checksum = checksum.lower()
         extension = self.IMAGE_EXTENSIONS[image_type]
+        suffix = {
+            "source_profile": "source",
+            "preview_profile": "preview",
+            "final_profile": "final",
+        }.get(image_type, image_type)
         return (
             Path(self.data_root(base))
             / checksum[0:2]
             / checksum[2:4]
-            / f"{checksum}_{image_type}{extension}"
+            / f"{checksum}_{suffix}{extension}"
         )
 
     def candidate_locations(self) -> list[StorageLocation]:

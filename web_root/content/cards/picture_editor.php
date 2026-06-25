@@ -42,7 +42,7 @@ final class _picture_editorCard extends CardBaseFramework
         $previewReady = !empty($state['preview_ready']);
         $previewUrl = $previewReady ? (string)$state['preview_url'] : '';
         $previewType = (string)($state['preview_type'] ?? '');
-        $displayType = in_array($previewType, ['embedded', 'thumbnail', 'original', 'filtered'], true) ? $previewType : '';
+        $displayType = in_array($previewType, ['preview', 'embedded'], true) ? $previewType : '';
         $displayLabel = $displayType !== '' ? $displayType : 'none';
         $baseline = (array)($state['baseline'] ?? []);
         $baselineReady = !empty($baseline['ready']);
@@ -60,6 +60,7 @@ final class _picture_editorCard extends CardBaseFramework
                 data-photo-id="' . HelperFramework::escape((string)$photoId) . '"
                 data-csrf-token="' . HelperFramework::escape($csrfToken) . '"
                 data-profile-url="/api/photo-preview-profile.php"
+                data-final-url="/api/photo-final-profile.php"
                 data-profile-status-url="/api/photo-profile-status.php?photo_id=' . HelperFramework::escape((string)$photoId) . '"
                 data-source-width="' . HelperFramework::escape((string)$sourceWidth) . '"
                 data-source-height="' . HelperFramework::escape((string)$sourceHeight) . '"
@@ -104,7 +105,7 @@ final class _picture_editorCard extends CardBaseFramework
                             . HelperFramework::escape((string)(int)($crop['height'] ?? $sourceHeight))
                         . '</output>
                     </div>
-                    <div class="picture-editor-readout" data-picture-editor-crop-state>Crop follows original/filtered previews.</div>'
+                    <div class="picture-editor-readout" data-picture-editor-crop-state>Crop follows preview images.</div>'
                 ) . '
                 ' . $this->accordionPanel('White Balance',
                     $this->checkboxField('white_balance.enabled', 'Enabled', !empty($whiteBalance['enabled']))
@@ -130,7 +131,10 @@ final class _picture_editorCard extends CardBaseFramework
                     . $this->rangeField('perspective.horizontal', 'Horizontal', (float)($perspective['horizontal'] ?? 0), -100, 100, 1)
                     . $this->rangeField('perspective.vertical', 'Vertical', (float)($perspective['vertical'] ?? 0), -100, 100, 1)
                 ) . '
-                <button class="button button-inline primary picture-editor-revert" type="button" data-picture-editor-revert>Revert to Baseline</button>
+                <div class="picture-editor-actions">
+                    <button class="button button-inline primary" type="button" data-picture-editor-save>Save</button>
+                    <button class="button button-inline picture-editor-revert" type="button" data-picture-editor-revert>Revert to Baseline</button>
+                </div>
             </div>
         </div>';
     }

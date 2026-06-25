@@ -118,9 +118,9 @@ final class _statisticsCard extends CardBaseFramework
 
         return match ($imageType) {
             'embedded' => 'Embedded',
-            'thumbnail' => 'Thumbnail',
             'original' => 'Original',
-            'filtered' => 'Filtered',
+            'preview' => 'Preview',
+            'final' => 'Final',
             default => $imageType === '' ? 'Unknown' : ucwords(str_replace('_', ' ', $imageType)),
         };
     }

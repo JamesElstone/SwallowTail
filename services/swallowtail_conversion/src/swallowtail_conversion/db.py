@@ -144,15 +144,15 @@ class ConversionDatabase:
         self.connection.commit()
         return ConversionJob.from_row(row) if row else None
 
-    def is_stale_filtered(self, job: ConversionJob) -> bool:
-        if job.image_type != "filtered":
+    def is_stale_preview(self, job: ConversionJob) -> bool:
+        if job.image_type != "preview":
             return False
         row = self._fetchone(
             """
             SELECT 1 AS stale
               FROM photo_conversion_jobs
              WHERE photo_id = %s
-               AND image_type = 'filtered'
+               AND image_type = 'preview'
                AND profile_version > %s
                AND status IN ('queued', 'processing', 'succeeded')
              LIMIT 1
@@ -292,7 +292,7 @@ class ConversionDatabase:
         self._refresh_photo_conversion_state(job.photo_id)
         self._insert_audit(
             job.photo_id,
-            "photo_filtered_refreshed" if job.image_type == "filtered" else "photo_image_generated",
+            "photo_preview_refreshed" if job.image_type == "preview" else "photo_image_generated",
             details,
         )
         self.connection.commit()

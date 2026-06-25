@@ -361,9 +361,6 @@ final class AppConfigurationStore
                     'full_threshold_percent' => 5,
                     'storage_blocked_poll_interval_seconds' => 3600,
                 ],
-                'raw_conversion' => [
-                    'thumbnail_max_pixels' => 512,
-                ],
                 'redis' => [
                     'host' => '127.0.0.1',
                     'port' => 6379,

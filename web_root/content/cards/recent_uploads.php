@@ -59,7 +59,7 @@ final class _recent_uploadsCard extends CardBaseFramework
             </div>
             <div class="recent-upload-badges">
                 <span class="badge">' . HelperFramework::escape($this->labelFromState((string)($photo['conversion_state'] ?? 'pending'))) . '</span>
-                ' . (!empty($photo['thumbnail_ready']) ? '<span class="badge success">Thumbnail</span>' : '<span class="badge warning">Thumbnail pending</span>') . '
+                ' . (!empty($photo['preview_ready']) ? '<span class="badge success">Preview</span>' : '<span class="badge warning">Preview pending</span>') . '
                 ' . $duplicateBadge . '
             </div>
         </article>';

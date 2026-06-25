@@ -1,0 +1,11 @@
+[Resize]
+Enabled=true
+Scale=1
+AppliesTo=Cropped area
+Method=Lanczos
+DataSpecified=4
+Width=820
+Height=820
+LongEdge=820
+ShortEdge=820
+AllowUpscaling=false

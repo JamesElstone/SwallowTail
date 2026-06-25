@@ -104,14 +104,17 @@ class MetadataDatabase:
                 ON status.photo_id = p.id
                AND status.type = 'swallowtail'
                AND status.`key` = 'status'
+               AND status.revision = 0
               LEFT JOIN photo_profile_data viewed
                 ON viewed.photo_id = p.id
                AND viewed.type = 'swallowtail'
                AND viewed.`key` = 'viewed_at'
+               AND viewed.revision = 0
               LEFT JOIN photo_profile_data next_attempt
                 ON next_attempt.photo_id = p.id
                AND next_attempt.type = 'swallowtail'
                AND next_attempt.`key` = 'next_attempt_at'
+               AND next_attempt.revision = 0
              WHERE p.upload_state = 'uploaded'
                AND status.value = 'queued'
                AND (
@@ -137,6 +140,7 @@ class MetadataDatabase:
                 ON status.photo_id = p.id
                AND status.type = 'swallowtail'
                AND status.`key` = 'status'
+               AND status.revision = 0
              WHERE p.upload_state = 'uploaded'
                AND LOWER(COALESCE(p.original_extension, 'cr2')) = 'cr2'
                AND status.id IS NULL
@@ -158,6 +162,7 @@ class MetadataDatabase:
                 ON status.photo_id = p.id
                AND status.type = 'swallowtail'
                AND status.`key` = 'status'
+               AND status.revision = 0
              WHERE p.id = %s
                AND p.upload_state = 'uploaded'
                AND LOWER(COALESCE(p.original_extension, 'cr2')) = 'cr2'
@@ -216,10 +221,10 @@ class MetadataDatabase:
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self.connection.commit()
 
-    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], baseline_path: str, rawtherapee_version: str) -> dict[str, int]:
-        self._execute("DELETE FROM photo_profile_data WHERE photo_id = %s AND type <> 'swallowtail'", (photo_id,))
+    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], source_profile_path: str, rawtherapee_version: str) -> dict[str, int]:
+        self._execute("DELETE FROM photo_profile_data WHERE photo_id = %s AND revision = 0 AND type <> 'swallowtail'", (photo_id,))
         stats = self._insert_profile_properties_by_section(photo_id, properties)
-        self._set_profile_value(photo_id, "swallowtail", "baseline_profile_path", baseline_path, "string")
+        self._set_profile_value(photo_id, "swallowtail", "source_profile_path", source_profile_path, "string")
         self._set_profile_value(photo_id, "swallowtail", "rawtherapee_version", rawtherapee_version, "string")
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self._set_profile_value(photo_id, "swallowtail", "status", "processed", "string")
@@ -257,12 +262,12 @@ class MetadataDatabase:
                 for row in batch:
                     value_expression, value_params = self._profile_value_sql(row["value"])
                     max_value_chunks = max(max_value_chunks, len(value_params))
-                    row_placeholders.append(f"(%s, %s, %s, {value_expression}, %s)")
+                    row_placeholders.append(f"(%s, 0, %s, %s, {value_expression}, %s)")
                     params.extend([photo_id, row["type"], row["key"], *value_params, row["value_type"]])
                 self._execute(
                     f"""
                     INSERT INTO photo_profile_data (
-                        photo_id, type, `key`, value, value_type
+                        photo_id, revision, type, `key`, value, value_type
                     ) VALUES {", ".join(row_placeholders)}
                     """,
                     tuple(params),
@@ -306,7 +311,7 @@ class MetadataDatabase:
 
     def defer_profile(self, photo_id: int, message: str, max_attempts: int, retry_delay_seconds: int) -> str:
         attempts_row = self._fetchone(
-            "SELECT value FROM photo_profile_data WHERE photo_id = %s AND type = 'swallowtail' AND `key` = 'attempts' LIMIT 1",
+            "SELECT value FROM photo_profile_data WHERE photo_id = %s AND type = 'swallowtail' AND `key` = 'attempts' AND revision = 0 LIMIT 1",
             (photo_id,),
         )
         attempts = int(attempts_row.get("value") or 0) + 1 if attempts_row else 1
@@ -352,7 +357,7 @@ class MetadataDatabase:
     def _set_profile_value(self, photo_id: int, type_name: str, key: str, value: Any, value_type: str) -> None:
         value_type = value_type if value_type in {"null", "bool", "int", "float", "string"} else "string"
         existing = self._fetchone(
-            "SELECT id FROM photo_profile_data WHERE photo_id = %s AND type = %s AND `key` = %s LIMIT 1",
+            "SELECT id FROM photo_profile_data WHERE photo_id = %s AND type = %s AND `key` = %s AND revision = 0 LIMIT 1",
             (photo_id, type_name, key),
         )
         stored_value = None if value is None else str(value)
@@ -371,9 +376,9 @@ class MetadataDatabase:
         self._execute(
             """
             INSERT INTO photo_profile_data (
-                photo_id, type, `key`, value, value_type
+                photo_id, revision, type, `key`, value, value_type
             ) VALUES (
-                %s, %s, %s, %s, %s
+                %s, 0, %s, %s, %s, %s
             )
             """,
             (photo_id, type_name[:32], key[:191], stored_value, value_type),
