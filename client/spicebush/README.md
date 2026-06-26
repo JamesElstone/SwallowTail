@@ -175,6 +175,14 @@ Show textual statistics for the current run:
 - The queue journal is append-oriented so large queues do not rewrite the whole
   queue file after every processed CR2. Windows compacts the journal
   periodically.
+- Raw upload failures stay in the queue and are retried from the back of the
+  queue after a short delay. SpiceBush only completes a queue item after a
+  confirmed local duplicate, server duplicate, successful upload, or explicit
+  oversize rejection.
+- The Windows tray app warns on exit when uploads are still pending or a scan is
+  still running, so the operator has a final chance to keep the card mounted.
+- The Windows tray app also warns if a removable drive is removed while files
+  from that drive are still queued or uploading.
 - If a SwallowTail account uses MFA or required password change, registration
   should be treated as an interactive policy question. The current registration
   API accepts primary credentials and enforces `upload_tokens` card access.

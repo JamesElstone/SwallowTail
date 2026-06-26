@@ -46,8 +46,8 @@
 #define RAW_UPLOAD_RETRY 0
 #define RAW_UPLOAD_OK 1
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
-#define RAW_UPLOAD_FAILED_PERMANENT 3
 #define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
+#define RAW_UPLOAD_RETRY_DELAY_MS 30000
 #define UPLOAD_TIME_WINDOW_SIZE 30
 
 typedef unsigned __int64 U64;
@@ -91,6 +91,7 @@ typedef struct AppState {
     QueueItem *queue;
     DWORD queueCount;
     DWORD queueCapacity;
+    char processingPath[MAX_PATH];
     LONG totalFound;
     LONG totalUploaded;
     LONG totalKnown;
@@ -145,6 +146,7 @@ static DWORD WINAPI PingThread(LPVOID param);
 static void LogMessage(const char *format, ...);
 static void BuildTrayTooltip(char *tip, DWORD tipSize);
 static void UpdateTrayTooltip(HWND hwnd);
+static void ShowTrayBalloon(HWND hwnd, const char *title, const char *message, UINT timeoutMillis);
 static void MigrateUploadedCache(void);
 static void EnsureSha256HashState(void);
 static void CompactQueueIfNeeded(void);
@@ -1934,10 +1936,6 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText));
         if (status == 413 || strstr(errorText, "exceeded the configured size limit") != NULL || strstr(errorText, "exceeded the configured upload limit") != NULL) {
             result = RAW_UPLOAD_REJECT_OVERSIZE;
-        } else if ((status >= 400 && status < 500)
-            || strcmp(errorText, "RAW upload failed while storing the file.") == 0
-            || strcmp(errorText, "No upload storage locations are currently available.") == 0) {
-            result = RAW_UPLOAD_FAILED_PERMANENT;
         }
         LogResponseSummary("Raw upload", status, response);
     }
@@ -2026,16 +2024,19 @@ static void ProcessPath(DWORD queueId, const char *path)
         LogMessage("Process rejected after upload limit response: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "rejected_oversize");
         CompactQueueIfNeeded();
-    } else if (uploadResult == RAW_UPLOAD_FAILED_PERMANENT) {
-        InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process upload failed permanently; not requeueing: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
-        AppendQueueDone(queueId, "failed_permanent");
-        CompactQueueIfNeeded();
     } else {
         InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process upload failed; requeueing: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Process upload failed; requeueing after delay: path=%s sha256=%s size=%I64u delay_ms=%lu",
+            path,
+            hash,
+            sizeBytes,
+            (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
         QueueRequeue(queueId, path);
-        Sleep(5000);
+        if (g_app.stopEvent) {
+            WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
+        } else {
+            Sleep(RAW_UPLOAD_RETRY_DELAY_MS);
+        }
     }
 }
 
@@ -2071,8 +2072,14 @@ static DWORD WINAPI ProcessorThread(LPVOID param)
         DWORD wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         if (wait == WAIT_OBJECT_0) break;
         while (!ShutdownRequested() && !UploadsPaused() && QueuePop(&queueId, path, sizeof(path))) {
+            EnterCriticalSection(&g_app.lock);
+            SafeCopy(g_app.processingPath, sizeof(g_app.processingPath), path);
+            LeaveCriticalSection(&g_app.lock);
             InterlockedExchange(&g_app.processing, 1);
             ProcessPath(queueId, path);
+            EnterCriticalSection(&g_app.lock);
+            g_app.processingPath[0] = '\0';
+            LeaveCriticalSection(&g_app.lock);
             InterlockedExchange(&g_app.processing, 0);
             PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
             if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
@@ -2122,6 +2129,18 @@ typedef struct ScanRequest {
     char root[8];
     int maxDepth;
 } ScanRequest;
+
+static int PathOnDrive(const char *path, char letter)
+{
+    char pathLetter;
+    if (!path || !path[0]) return 0;
+    pathLetter = path[0];
+    if (pathLetter >= 'a' && pathLetter <= 'z') pathLetter = (char)(pathLetter - 'a' + 'A');
+    if (letter >= 'a' && letter <= 'z') letter = (char)(letter - 'a' + 'A');
+    return pathLetter == letter
+        && path[1] == ':'
+        && (path[2] == '\\' || path[2] == '/');
+}
 
 static DWORD WINAPI ScanDriveThread(LPVOID param)
 {
@@ -2204,6 +2223,76 @@ static void HandleDeviceArrival(LPARAM lp)
     LogMessage("Device arrival volume mask=0x%08lx", (unsigned long)mask);
     for (i = 0; i < 26; i++) {
         if (mask & (1UL << i)) StartScanDrive((char)('A' + i), 3);
+    }
+}
+
+static DWORD PendingQueueCountForDrive(char letter, int *processing)
+{
+    DWORD pending = 0;
+    DWORD i;
+    if (processing) *processing = 0;
+
+    EnterCriticalSection(&g_app.lock);
+    for (i = 0; i < g_app.queueCount; i++) {
+        if (PathOnDrive(g_app.queue[i].path, letter)) pending++;
+    }
+    if (processing && PathOnDrive(g_app.processingPath, letter)) {
+        *processing = 1;
+    }
+    LeaveCriticalSection(&g_app.lock);
+
+    return pending;
+}
+
+static void WarnIfRemovedDriveHasPendingWork(char letter)
+{
+    DWORD pending;
+    DWORD unuploaded;
+    int processing = 0;
+    char root[] = "A:\\";
+    char message[512];
+
+    root[0] = letter;
+    pending = PendingQueueCountForDrive(letter, &processing);
+    unuploaded = pending + (processing ? 1 : 0);
+    if (unuploaded == 0) {
+        LogMessage("Device removal: root=%s pending=0 processing=no", root);
+        return;
+    }
+
+    SbSnprintf(message, sizeof(message),
+        "%s was removed while %lu file%s from it %s still waiting to upload.\r\n\r\n"
+        "Reinsert the card and let SpiceBush finish before formatting it.",
+        root,
+        (unsigned long)unuploaded,
+        unuploaded == 1 ? "" : "s",
+        unuploaded == 1 ? "was" : "were");
+
+    LogMessage("Device removal warning: root=%s pending=%lu processing=%s",
+        root,
+        (unsigned long)pending,
+        processing ? "yes" : "no");
+    MessageBoxA(g_app.mainWindow ? g_app.mainWindow : NULL, message, APP_NAME, MB_ICONWARNING | MB_OK);
+    ShowTrayBalloon(g_app.mainWindow, APP_NAME, message, 10000);
+}
+
+static void HandleDeviceRemoval(LPARAM lp)
+{
+    DEV_BROADCAST_HDR *hdr = (DEV_BROADCAST_HDR *)lp;
+    DWORD mask;
+    int i;
+    if (!hdr) {
+        LogMessage("Device removal ignored: missing header.");
+        return;
+    }
+    if (hdr->dbch_devicetype != DBT_DEVTYP_VOLUME) {
+        LogMessage("Device removal ignored: devicetype=%lu", (unsigned long)hdr->dbch_devicetype);
+        return;
+    }
+    mask = ((DEV_BROADCAST_VOLUME *)hdr)->dbcv_unitmask;
+    LogMessage("Device removal volume mask=0x%08lx", (unsigned long)mask);
+    for (i = 0; i < 26; i++) {
+        if (mask & (1UL << i)) WarnIfRemovedDriveHasPendingWork((char)('A' + i));
     }
 }
 
@@ -2500,8 +2589,62 @@ static int CompleteGracefulShutdownIfReady(HWND hwnd)
     return 1;
 }
 
+static DWORD PendingQueueCount(void)
+{
+    DWORD pending;
+    EnterCriticalSection(&g_app.lock);
+    pending = g_app.queueCount;
+    LeaveCriticalSection(&g_app.lock);
+    return pending;
+}
+
+static int ConfirmGracefulShutdown(HWND hwnd)
+{
+    DWORD pending = PendingQueueCount();
+    LONG processing = InterlockedCompareExchange(&g_app.processing, 0, 0);
+    LONG activeScans = InterlockedCompareExchange(&g_app.activeScans, 0, 0);
+    DWORD unuploaded = pending + (processing ? 1 : 0);
+    char message[512];
+    int answer;
+
+    if (unuploaded == 0 && activeScans == 0) return 1;
+
+    if (unuploaded > 0 && activeScans > 0) {
+        SbSnprintf(message, sizeof(message),
+            "%lu file%s still waiting to upload, and %ld scan%s still running.\r\n\r\n"
+            "If you remove or format the card now, those files may not be safely in SwallowTail yet.\r\n\r\n"
+            "Exit SpiceBush anyway?",
+            (unsigned long)unuploaded,
+            unuploaded == 1 ? " is" : "s are",
+            activeScans,
+            activeScans == 1 ? " is" : "s are");
+    } else if (unuploaded > 0) {
+        SbSnprintf(message, sizeof(message),
+            "%lu file%s still waiting to upload.\r\n\r\n"
+            "If you remove or format the card now, those files may not be safely in SwallowTail yet.\r\n\r\n"
+            "Exit SpiceBush anyway?",
+            (unsigned long)unuploaded,
+            unuploaded == 1 ? " is" : "s are");
+    } else {
+        SbSnprintf(message, sizeof(message),
+            "%ld scan%s still running.\r\n\r\n"
+            "SpiceBush may not have found every CR2 on the card yet.\r\n\r\n"
+            "Exit SpiceBush anyway?",
+            activeScans,
+            activeScans == 1 ? " is" : "s are");
+    }
+
+    answer = MessageBoxA(hwnd, message, APP_NAME, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+    LogMessage("Shutdown warning: unuploaded=%lu active_scans=%ld answer=%s",
+        (unsigned long)unuploaded,
+        activeScans,
+        answer == IDYES ? "exit" : "cancel");
+    return answer == IDYES;
+}
+
 static void BeginGracefulShutdown(HWND hwnd)
 {
+    if (!ShutdownRequested() && !ConfirmGracefulShutdown(hwnd)) return;
     if (InterlockedExchange(&g_app.shutdownRequested, 1) != 0) return;
     UpdateStatsPauseButton();
     if (g_app.stopEvent) SetEvent(g_app.stopEvent);
@@ -2893,7 +3036,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case WM_COMMAND:
         if (LOWORD(wp) == ID_REGISTER_SAVE && IsWindowEnabled(GetDlgItem(hwnd, ID_REGISTER_SAVE))) BeginRegister(hwnd);
         else if (LOWORD(wp) == ID_REGISTER_QUIT) {
-            if (g_app.registerQuitMode) DestroyWindow(g_app.mainWindow);
+            if (g_app.registerQuitMode) BeginGracefulShutdown(g_app.mainWindow);
             else ShowWindow(hwnd, SW_HIDE);
         }
         return 0;
@@ -2913,7 +3056,7 @@ static LRESULT CALLBACK RegisterWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         return 0;
     case WM_CLOSE:
         if (g_app.registerQuitMode && (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0')) {
-            DestroyWindow(g_app.mainWindow);
+            BeginGracefulShutdown(g_app.mainWindow);
             return 0;
         }
         ShowWindow(hwnd, SW_HIDE);
@@ -3062,6 +3205,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DEVICECHANGE:
         if (wp == DBT_DEVICEARRIVAL) HandleDeviceArrival(lp);
+        else if (wp == DBT_DEVICEREMOVECOMPLETE) HandleDeviceRemoval(lp);
         return 0;
     case WM_TRAYICON:
         if (lp == WM_RBUTTONUP) ShowTrayMenu(hwnd);
@@ -3073,6 +3217,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case ID_TRAY_STATS: ShowStatsWindow(); break;
         case ID_TRAY_EXIT: BeginGracefulShutdown(hwnd); break;
         }
+        return 0;
+    case WM_CLOSE:
+        BeginGracefulShutdown(hwnd);
         return 0;
     case WM_TIMER:
         if (wp == ID_MAIN_SHUTDOWN_TIMER) {

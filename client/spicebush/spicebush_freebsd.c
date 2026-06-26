@@ -16,7 +16,6 @@
 #define RAW_UPLOAD_RETRY 0
 #define RAW_UPLOAD_OK 1
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
-#define RAW_UPLOAD_FAILED_PERMANENT 3
 
 typedef struct SpiceBushCli {
     SpiceBushConfig config;
@@ -365,11 +364,6 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
         || strstr(response, "exceeded the configured upload limit") != NULL) {
         return RAW_UPLOAD_REJECT_OVERSIZE;
     }
-    if ((status >= 400 && status < 500)
-        || strstr(response, "RAW upload failed while storing the file.") != NULL
-        || strstr(response, "No upload storage locations are currently available.") != NULL) {
-        return RAW_UPLOAD_FAILED_PERMANENT;
-    }
     return RAW_UPLOAD_RETRY;
 }
 
@@ -427,9 +421,6 @@ static int process_cr2(const char *path, void *context)
     } else if (upload_result == RAW_UPLOAD_REJECT_OVERSIZE) {
         cli->stats.rejected_oversize++;
         printf("  rejected: upload exceeded the SwallowTail upload limit\n");
-    } else if (upload_result == RAW_UPLOAD_FAILED_PERMANENT) {
-        cli->stats.failed++;
-        printf("  failed permanently; not queued for retry\n");
     } else {
         cli->stats.failed++;
         queue_retry(&cli->config, path);
