@@ -99,7 +99,8 @@ final class _browse_galleryCard extends CardBaseFramework
     {
         $photoId = (int)($photo['id'] ?? 0);
         $filename = (string)($photo['original_filename'] ?? 'Photo');
-        $viewerUrl = '?page=picture_viewer&photo_id=' . rawurlencode((string)$photoId);
+        $viewerUrl = '?page=view&photo_id=' . rawurlencode((string)$photoId);
+        $editorUrl = '?page=edit&photo_id=' . rawurlencode((string)$photoId);
         $previewType = $this->galleryPreviewType($photo);
         $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
         $pendingAttribute = $this->photoNeedsRefresh($photo) ? ' data-gallery-photo-pending="1"' : '';
@@ -108,12 +109,17 @@ final class _browse_galleryCard extends CardBaseFramework
             : '<div class="gallery-placeholder">Preview pending</div>';
         $statusIndicator = $this->statusIndicator($status);
 
-        return '<a class="gallery-tile" href="' . HelperFramework::escape($viewerUrl) . '" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
-            <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
-            <span class="gallery-meta">
-                <strong>' . HelperFramework::escape($filename) . '</strong>
-            </span>
-        </a>';
+        return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
+            <a class="gallery-view-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
+                <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
+                <span class="gallery-meta">
+                    <strong>' . HelperFramework::escape($filename) . '</strong>
+                </span>
+            </a>
+            <a class="gallery-edit-link" href="' . HelperFramework::escape($editorUrl) . '" aria-label="Edit ' . HelperFramework::escape($filename) . '">
+                ' . $this->editIconSvg() . '
+            </a>
+        </article>';
     }
 
     private function galleryPreviewType(array $photo): ?string
@@ -258,6 +264,13 @@ final class _browse_galleryCard extends CardBaseFramework
             'failed' => '<svg ' . $attributes . '><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/><path d="m15.5 8.5-7 7"/></svg>',
             default => '<svg ' . $attributes . '><path d="M18.5 8.5A8 8 0 0 0 5.8 7"/><path d="M18.5 8.5h-4"/><path d="M18.5 8.5v-4"/><path d="M5.5 15.5A8 8 0 0 0 18.2 17"/><path d="M5.5 15.5h4"/><path d="M5.5 15.5v4"/></svg>',
         };
+    }
+
+    private function editIconSvg(): string
+    {
+        $attributes = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+
+        return '<svg ' . $attributes . '><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     }
 
     private function currentUserId(): int

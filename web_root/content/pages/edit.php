@@ -7,21 +7,21 @@
  */
 declare(strict_types=1);
 
-final class _picture_viewer extends PageContextFramework
+final class _edit extends PageContextFramework
 {
     public function id(): string
     {
-        return 'picture_viewer';
+        return 'edit';
     }
 
     public function title(): string
     {
-        return 'Picture Viewer';
+        return 'Edit';
     }
 
     public function subtitle(): string
     {
-        return 'Inspect an accessible SwallowTail photo.';
+        return 'Edit an accessible SwallowTail photo.';
     }
 
     public function cards(): array
@@ -38,7 +38,7 @@ final class _picture_viewer extends PageContextFramework
     ): array {
         return [
             'page' => [
-                'page_id' => 'picture_viewer',
+                'page_id' => 'edit',
                 'page_cards' => $this->cards(),
                 'photo_id' => max(0, (int)$request->query('photo_id', 0)),
                 'csrf_token' => (new SessionAuthenticationService())->csrfToken(),

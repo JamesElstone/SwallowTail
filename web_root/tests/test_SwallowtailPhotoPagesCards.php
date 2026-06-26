@@ -14,7 +14,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
-    foreach (['upload', 'gallery', 'picture_viewer', 'profiles'] as $pageKey) {
+    foreach (['upload', 'gallery', 'view', 'edit', 'profiles'] as $pageKey) {
         $page = $factory->create($pageKey);
         $harness->assertSame($pageKey, $page->id());
     }
@@ -37,6 +37,14 @@ $harness->check(_profiles::class, 'profiles page exposes profile management card
         'rawtheapee_profiles',
         'combined_profile_preview',
     ], $profiles->cards());
+});
+
+$harness->check(_view::class, 'view page exposes picture viewer card', function () use ($harness): void {
+    $harness->assertSame(['picture_viewer'], (new _view())->cards());
+});
+
+$harness->check(_edit::class, 'edit page exposes picture editor card', function () use ($harness): void {
+    $harness->assertSame(['picture_editor'], (new _edit())->cards());
 });
 
 $harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {
@@ -822,7 +830,7 @@ $harness->check(StorageSettingsAction::class, 'clamps storage-blocked poll inter
     $harness->assertSame(86400, (int)$method->invoke($action, 90000));
 });
 
-$harness->check(_gallery::class, 'browse gallery previews link to picture viewer', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery previews link to view and edit pages', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'photoTile');
     $method->setAccessible(true);
@@ -834,9 +842,12 @@ $harness->check(_gallery::class, 'browse gallery previews link to picture viewer
         'preview_ready' => true,
     ]);
 
-    $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=42'));
+    $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
+    $harness->assertTrue(str_contains($html, '?page=edit&amp;photo_id=42'));
+    $harness->assertTrue(str_contains($html, 'aria-label="Edit IMG_0042.CR2"'));
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=preview'));
     $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
+    $harness->assertTrue(str_contains($html, 'gallery-edit-link'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
 
@@ -989,7 +1000,8 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
         'thumbnail_ready' => true,
     ]);
 
-    $harness->assertTrue(str_contains($html, '?page=picture_viewer&amp;photo_id=43'));
+    $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=43'));
+    $harness->assertTrue(str_contains($html, '?page=edit&amp;photo_id=43'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-id="43"'));
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=thumbnail'));
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
@@ -1079,7 +1091,7 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     $harness->assertTrue(str_contains($source, 'data-picture-editor-save disabled'));
 });
 
-$harness->check(_picture_viewer::class, 'picture editor exposes revert control', function () use ($harness): void {
+$harness->check(_edit::class, 'picture editor exposes revert control', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'picture_editor.php');
 
     if (!is_string($source)) {

@@ -54,7 +54,7 @@ final class _recent_uploadsCard extends CardBaseFramework
 
         return '<article class="recent-upload-row">
             <div>
-                <a href="?page=picture_viewer&photo_id=' . rawurlencode((string)$photoId) . '"><strong>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</strong></a>
+                <a href="?page=view&photo_id=' . rawurlencode((string)$photoId) . '"><strong>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</strong></a>
                 <p>' . HelperFramework::escape((string)($photo['created_at'] ?? '')) . ' · ' . HelperFramework::escape($this->formatBytes((int)($photo['original_bytes'] ?? 0))) . '</p>
             </div>
             <div class="recent-upload-badges">
