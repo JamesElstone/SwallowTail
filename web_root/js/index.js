@@ -1991,6 +1991,8 @@
             const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
             const imageTypeLabel = viewer.querySelector('[data-picture-viewer-image-type-label]');
             const fullscreenCloseButton = viewer.querySelector('[data-picture-viewer-fullscreen-close]');
+            const detailInputs = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('.picture-details-tab-input')) : [];
+            const detailPanels = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('[data-picture-details-panel]')) : [];
             let imageNode = viewer.querySelector('[data-picture-viewer-image]');
             let pollTimer = null;
 
@@ -2134,9 +2136,50 @@
                 pollTimer = window.setTimeout(() => poll(attempt + 1), delay);
             }
 
+            async function loadDetailsPanel(panel) {
+                if (!(panel instanceof HTMLElement) || panel.dataset.pictureDetailsLoaded === '1') {
+                    return;
+                }
+
+                const url = String(panel.dataset.pictureDetailsLoadUrl || '').trim();
+                if (url === '') {
+                    panel.dataset.pictureDetailsLoaded = '1';
+                    return;
+                }
+
+                panel.dataset.pictureDetailsLoaded = '1';
+                try {
+                    const response = await sendAjax(url);
+                    if (!response || response.success === false) {
+                        panel.innerHTML = '<p class="helper">Details are not available.</p>';
+                        return;
+                    }
+
+                    panel.innerHTML = String(response.html || '<p class="helper">Details are not available.</p>');
+                } catch (error) {
+                    panel.dataset.pictureDetailsLoaded = '';
+                    panel.innerHTML = '<p class="helper">Details are not available.</p>';
+                    console.error(error);
+                }
+            }
+
             setPill(String(viewer.dataset.pictureViewerStatus || 'queued'));
             setImageTypeLabel(String(viewer.dataset.pictureViewerDisplayType || ''));
             setDetailsCollapsed(true);
+            detailInputs.forEach((input, index) => {
+                if (!(input instanceof HTMLInputElement)) {
+                    return;
+                }
+
+                input.addEventListener('change', () => {
+                    if (input.checked) {
+                        void loadDetailsPanel(detailPanels[index]);
+                    }
+                });
+                if (input.checked) {
+                    void loadDetailsPanel(detailPanels[index]);
+                }
+            });
             if (openDetailsButton instanceof HTMLButtonElement) {
                 openDetailsButton.addEventListener('click', () => setDetailsCollapsed(false));
             }

@@ -103,7 +103,7 @@ final class SwallowtailPhotoUiService
         );
     }
 
-    public function photoDetails(int $photoId, int $userId): ?array
+    public function photoDetails(int $photoId, int $userId, bool $includeDerivativeStatus = true): ?array
     {
 
         if ($photoId <= 0 || $userId <= 0) {
@@ -136,8 +136,8 @@ final class SwallowtailPhotoUiService
             return null;
         }
 
-        $photo = $this->normalisePhotoRow($photo);
-        $photo['derivatives'] = $this->photoImages($photo);
+        $photo = $this->normalisePhotoRow($photo, $includeDerivativeStatus);
+        $photo['derivatives'] = $includeDerivativeStatus ? $this->photoImages($photo) : [];
 
         return $photo;
     }
@@ -389,13 +389,25 @@ final class SwallowtailPhotoUiService
         return $row;
     }
 
-    private function normalisePhotoRow(array $row): array
+    private function normalisePhotoRow(array $row, bool $includeDerivativeStatus = true): array
     {
 
         $row['id'] = (int)($row['id'] ?? 0);
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
+        if (!$includeDerivativeStatus) {
+            $row['preview_ready'] = false;
+            $row['thumbnail_ready'] = false;
+            $row['original_ready'] = false;
+            $row['embedded_ready'] = false;
+            $row['final_ready'] = false;
+            $row['jpeg_ready'] = false;
+            $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
+
+            return $row;
+        }
+
         $row['preview_ready'] = $this->storageService->imageInfo($row, 'preview') !== null;
         $row['thumbnail_ready'] = $this->storageService->imageInfo($row, 'thumbnail') !== null;
         $row['original_ready'] = $this->storageService->imageInfo($row, 'original') !== null;

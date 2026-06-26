@@ -35,20 +35,17 @@ final class _picture_viewerCard extends CardBaseFramework
         }
 
         $userId = $this->currentUserId();
-        $photo = (new SwallowtailPhotoUiService())->photoDetails($photoId, $userId);
+        $photo = (new SwallowtailPhotoUiService())->photoDetails($photoId, $userId, false);
         if ($photo === null) {
             return '<div class="panel-soft warn">The selected photo was not found or is not available to your account.</div>';
         }
 
-        $viewerState = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, $userId);
-        if (empty($viewerState['success'])) {
-            $viewerState = [
-                'display_type' => '',
-                'display_url' => '',
-                'final_status' => 'queued',
-                'state_url' => '/api/photo-viewer-state.php?photo_id=' . rawurlencode((string)$photoId),
-            ];
-        }
+        $viewerState = [
+            'display_type' => '',
+            'display_url' => '',
+            'final_status' => 'queued',
+            'state_url' => '/api/photo-viewer-state.php?photo_id=' . rawurlencode((string)$photoId),
+        ];
         $metadata = $this->metadataForPhoto($photoId);
 
         return '<div class="picture-viewer-layout is-details-collapsed" data-picture-viewer-layout>
@@ -155,17 +152,18 @@ final class _picture_viewerCard extends CardBaseFramework
             ],
             'exif' => [
                 'label' => 'Exif',
-                'content' => $this->propertiesTab($this->metadataProperties($photoId, 'exififd')),
+                'content' => $this->lazyDetailsPlaceholder(),
+                'load_url' => $this->detailsTabLoadUrl($photoId, 'exif'),
             ],
             'camera' => [
                 'label' => $cameraLabel,
-                'content' => $cameraType !== ''
-                    ? $this->propertiesTab($this->metadataProperties($photoId, $cameraType))
-                    : '<p class="helper">Camera make metadata is not available.</p>',
+                'content' => $this->lazyDetailsPlaceholder(),
+                'load_url' => $this->detailsTabLoadUrl($photoId, 'camera'),
             ],
             'pp3' => [
                 'label' => 'PP3',
-                'content' => $this->pp3Tab($photoId),
+                'content' => $this->lazyDetailsPlaceholder(),
+                'load_url' => $this->detailsTabLoadUrl($photoId, 'pp3'),
             ],
         ];
 
@@ -178,7 +176,8 @@ final class _picture_viewerCard extends CardBaseFramework
             $id = $prefix . '-' . $key;
             $inputs .= '<input class="picture-details-tab-input" type="radio" name="' . HelperFramework::escape($prefix) . '" id="' . HelperFramework::escape($id) . '"' . ($index === 1 ? ' checked' : '') . '>';
             $labels .= '<label class="picture-details-tab" for="' . HelperFramework::escape($id) . '">' . HelperFramework::escape((string)$tab['label']) . '</label>';
-            $panels .= '<section class="picture-details-tab-panel">' . (string)$tab['content'] . '</section>';
+            $loadUrl = (string)($tab['load_url'] ?? '');
+            $panels .= '<section class="picture-details-tab-panel" data-picture-details-panel' . ($loadUrl !== '' ? ' data-picture-details-load-url="' . HelperFramework::escape($loadUrl) . '"' : '') . '>' . (string)$tab['content'] . '</section>';
         }
 
         return '<div class="picture-details-tabs">
@@ -186,6 +185,61 @@ final class _picture_viewerCard extends CardBaseFramework
             <div class="picture-details-tablist">' . $labels . '</div>
             <div class="picture-details-tab-panels">' . $panels . '</div>
         </div>';
+    }
+
+    public function lazyDetailsTabContent(int $photoId, int $userId, string $tab): array
+    {
+        $tab = strtolower(trim($tab));
+        if ($photoId <= 0 || $userId <= 0 || !in_array($tab, ['exif', 'camera', 'pp3'], true)) {
+            return [
+                'success' => false,
+                'errors' => ['Details tab was not found.'],
+            ];
+        }
+
+        if (!(new SwallowtailPhotoUiService())->userCanViewPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        if ($tab === 'exif') {
+            return [
+                'success' => true,
+                'html' => $this->propertiesTab($this->metadataProperties($photoId, 'exififd')),
+            ];
+        }
+
+        if ($tab === 'camera') {
+            $metadata = $this->metadataForPhoto($photoId);
+            $cameraType = strtolower(trim((string)($metadata['camera_make'] ?? '')));
+
+            return [
+                'success' => true,
+                'html' => $cameraType !== ''
+                    ? $this->propertiesTab($this->metadataProperties($photoId, $cameraType))
+                    : '<p class="helper">Camera make metadata is not available.</p>',
+            ];
+        }
+
+        return [
+            'success' => true,
+            'html' => $this->pp3Tab($photoId),
+        ];
+    }
+
+    private function lazyDetailsPlaceholder(): string
+    {
+        return '<p class="helper" data-picture-details-placeholder>Loading...</p>';
+    }
+
+    private function detailsTabLoadUrl(int $photoId, string $tab): string
+    {
+        return '/api/photo-details-tab.php?' . http_build_query([
+            'photo_id' => $photoId,
+            'tab' => $tab,
+        ]);
     }
 
     private function infoTab(array $photo, array $metadata): string
