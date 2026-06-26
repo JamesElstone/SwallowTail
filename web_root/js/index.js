@@ -1975,6 +1975,125 @@
         });
     }
 
+    function initialisePictureViewers(root = document) {
+        const viewers = root.querySelectorAll ? root.querySelectorAll('[data-picture-viewer="true"]') : [];
+
+        viewers.forEach((viewer) => {
+            if (!(viewer instanceof HTMLElement) || viewer.dataset.pictureViewerBound === '1') {
+                return;
+            }
+
+            viewer.dataset.pictureViewerBound = '1';
+            const layout = viewer.closest('[data-picture-viewer-layout]');
+            const stateUrl = String(viewer.dataset.pictureViewerStateUrl || '').trim();
+            const pill = viewer.querySelector('[data-picture-viewer-status-pill]');
+            const openDetailsButton = viewer.querySelector('[data-picture-viewer-details-open]');
+            const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
+            let imageNode = viewer.querySelector('[data-picture-viewer-image]');
+            let pollTimer = null;
+
+            if (stateUrl === '') {
+                return;
+            }
+
+            function setDetailsCollapsed(collapsed) {
+                if (!(layout instanceof HTMLElement)) {
+                    return;
+                }
+
+                layout.classList.toggle('is-details-collapsed', collapsed);
+                layout.classList.toggle('is-details-expanded', !collapsed);
+                if (openDetailsButton instanceof HTMLButtonElement) {
+                    openDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                    openDetailsButton.hidden = !collapsed;
+                }
+                if (closeDetailsButton instanceof HTMLButtonElement) {
+                    closeDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                }
+            }
+
+            function setPill(status) {
+                const normalised = ['queued', 'rendering', 'loaded'].includes(status) ? status : 'queued';
+                viewer.dataset.pictureViewerStatus = normalised;
+                if (pill instanceof HTMLElement) {
+                    pill.textContent = normalised.charAt(0).toUpperCase() + normalised.slice(1);
+                    pill.dataset.pictureViewerState = normalised;
+                }
+            }
+
+            function swapImage(url, type) {
+                if (url === '' || type === '') {
+                    return;
+                }
+
+                const placeholder = viewer.querySelector('[data-picture-viewer-placeholder]');
+                if (!(imageNode instanceof HTMLImageElement)) {
+                    imageNode = document.createElement('img');
+                    imageNode.setAttribute('alt', 'Photo');
+                    imageNode.dataset.pictureViewerImage = 'true';
+                    viewer.appendChild(imageNode);
+                }
+
+                if (placeholder instanceof HTMLElement) {
+                    placeholder.remove();
+                }
+
+                if (imageNode.src !== new URL(url, window.location.href).href) {
+                    imageNode.src = url;
+                }
+                imageNode.dataset.pictureViewerImageType = type;
+                viewer.dataset.pictureViewerDisplayType = type;
+            }
+
+            async function poll(attempt = 0) {
+                if (!viewer.isConnected) {
+                    return;
+                }
+
+                try {
+                    const response = await sendAjax(stateUrl);
+                    if (!response || response.success === false) {
+                        setPill('queued');
+                    } else {
+                        const status = String(response.final_status || 'queued');
+                        const displayUrl = String(response.display_url || '');
+                        const displayType = String(response.display_type || '');
+                        setPill(status);
+                        swapImage(displayUrl, displayType);
+
+                        if (status === 'loaded') {
+                            return;
+                        }
+                    }
+                } catch (error) {
+                    setPill('queued');
+                    console.error(error);
+                }
+
+                const delay = attempt < 5 ? 1500 : 4000;
+                pollTimer = window.setTimeout(() => poll(attempt + 1), delay);
+            }
+
+            setPill(String(viewer.dataset.pictureViewerStatus || 'queued'));
+            setDetailsCollapsed(true);
+            if (openDetailsButton instanceof HTMLButtonElement) {
+                openDetailsButton.addEventListener('click', () => setDetailsCollapsed(false));
+            }
+            if (closeDetailsButton instanceof HTMLButtonElement) {
+                closeDetailsButton.addEventListener('click', () => setDetailsCollapsed(true));
+            }
+            if (viewer.dataset.pictureViewerStatus !== 'loaded') {
+                pollTimer = window.setTimeout(() => poll(0), 1000);
+            }
+
+            window.addEventListener('pagehide', () => {
+                if (pollTimer !== null) {
+                    window.clearTimeout(pollTimer);
+                }
+            }, { once: true });
+        });
+    }
+
     function initialisePictureEditors(root = document) {
         const editors = root.querySelectorAll ? root.querySelectorAll('[data-picture-editor="true"]') : [];
 
@@ -2808,6 +2927,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    initialisePictureViewers(replacement);
                     initialisePictureEditors(replacement);
                     initialiseGalleryAutoRefresh(replacement);
                     initialiseCardAutoRefresh(replacement);
@@ -2832,6 +2952,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    initialisePictureViewers(replacement);
                     initialisePictureEditors(replacement);
                     initialiseGalleryAutoRefresh(replacement);
                     initialiseCardAutoRefresh(replacement);
@@ -4187,6 +4308,7 @@
     initialiseRawUploadForms(document);
     initialisePasswordRequirementPanels(document);
     initialiseTableCondensedControls(document);
+    initialisePictureViewers(document);
     initialisePictureEditors(document);
     initialiseGalleryAutoRefresh(document);
     initialiseCardAutoRefresh(document);

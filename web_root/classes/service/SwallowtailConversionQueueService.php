@@ -16,6 +16,7 @@ final class SwallowtailConversionQueueService
     private const PRIORITY_EMBEDDED = 40;
     private const PRIORITY_VIEWED_OTHER = 50;
     private const PRIORITY_VIEWED_ORIGINAL = 51;
+    private const PRIORITY_VIEWED_FINAL = 65;
     private const PRIORITY_PREVIEW = 50;
     private const PRIORITY_PREEMPT_THRESHOLD = 50;
     private const ENQUEUE_ATTEMPTS = 3;
@@ -114,6 +115,15 @@ final class SwallowtailConversionQueueService
         return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_FINAL, $requestedByUserId);
     }
 
+    public function enqueueViewedFinalRefresh(
+        int $photoId,
+        string $profilePath,
+        int $profileVersion,
+        ?int $requestedByUserId = null
+    ): ?int {
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_VIEWED_FINAL, $requestedByUserId);
+    }
+
     private function enqueueProfiledRefresh(
         int $photoId,
         string $imageType,
@@ -196,8 +206,8 @@ final class SwallowtailConversionQueueService
             throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
         }
 
-        $existingJobId = InterfaceDB::fetchColumn(
-            "SELECT id
+        $existingJob = InterfaceDB::fetchOne(
+            "SELECT id, priority, status
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
                AND image_type = :image_type
@@ -214,8 +224,28 @@ final class SwallowtailConversionQueueService
             ], static fn(mixed $value): bool => $value !== null)
         );
 
-        if ($existingJobId !== false && $existingJobId !== null) {
-            return (int)$existingJobId;
+        if (is_array($existingJob)) {
+            $existingJobId = $this->nullablePositiveInt($existingJob['id'] ?? null);
+            if ($existingJobId === null) {
+                return null;
+            }
+
+            if ((string)($existingJob['status'] ?? '') === 'queued' && (int)($existingJob['priority'] ?? 0) < $priority) {
+                InterfaceDB::prepareExecute(
+                    "UPDATE photo_conversion_jobs
+                     SET priority = :priority
+                     WHERE id = :id
+                       AND status = 'queued'
+                       AND priority < :minimum_priority",
+                    [
+                        'id' => $existingJobId,
+                        'priority' => $priority,
+                        'minimum_priority' => $priority,
+                    ]
+                );
+            }
+
+            return $existingJobId;
         }
 
         InterfaceDB::prepareExecute(
@@ -424,6 +454,7 @@ final class SwallowtailConversionQueueService
     private function viewedPhotoPriorityForType(string $imageType): int
     {
         return match (strtolower(trim($imageType))) {
+            'final' => self::PRIORITY_VIEWED_FINAL,
             'original' => self::PRIORITY_VIEWED_ORIGINAL,
             'preview' => self::PRIORITY_PREVIEW,
             default => self::PRIORITY_VIEWED_OTHER,

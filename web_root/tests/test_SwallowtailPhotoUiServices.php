@@ -646,9 +646,11 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
     $sha256 = str_repeat('d', 64);
     $absolute = $storage->imagePath($baseLocation, $sha256, 'preview');
     $thumbnailAbsolute = $storage->imagePath($baseLocation, $sha256, 'thumbnail');
+    $finalAbsolute = $storage->imagePath($baseLocation, $sha256, 'final');
     $storage->ensureDirectoryForPath($absolute);
     file_put_contents($absolute, "\xff\xd8\xff\xd9", LOCK_EX);
     file_put_contents($thumbnailAbsolute, "\xff\xd8\xff\xd9", LOCK_EX);
+    file_put_contents($finalAbsolute, "\xff\xd8\xff\xd9", LOCK_EX);
 
     InterfaceDB::prepareExecute(
         "INSERT INTO photos (
@@ -674,10 +676,17 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
         ]
     );
     $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'asset.CR2'");
+    $library = new SwallowtailPhotoLibraryService();
+    $event = $library->createEvent('Private Asset Gallery');
+    $eventId = (int)($event['id'] ?? 0);
+    $library->assignPhotoToEvent($photoId, $eventId);
+    $library->grantEventPermission($eventId, 903, ['can_view' => true]);
 
     $service = new SwallowtailPhotoUiService();
     $asset = $service->photoAsset($photoId, 902, 'preview');
     $thumbnail = $service->photoAsset($photoId, 902, 'thumbnail');
+    $viewerPreview = $service->photoAsset($photoId, 903, 'preview');
+    $viewerFinalDenied = $service->photoAsset($photoId, 903, 'final');
     $denied = $service->photoAsset($photoId, 904, 'preview');
 
     $harness->assertTrue(is_array($asset));
@@ -686,6 +695,18 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
     $harness->assertTrue(is_array($thumbnail));
     $harness->assertSame($thumbnailAbsolute, (string)$thumbnail['path']);
     $harness->assertSame('thumbnail', (string)$thumbnail['image_type']);
+    $harness->assertTrue(is_array($viewerPreview));
+    $harness->assertSame($absolute, (string)$viewerPreview['path']);
+    $harness->assertSame(null, $viewerFinalDenied);
+
+    $library->grantEventPermission($eventId, 903, [
+        'can_view' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    $viewerFinal = $service->photoAsset($photoId, 903, 'final');
+    $harness->assertTrue(is_array($viewerFinal));
+    $harness->assertSame($finalAbsolute, (string)$viewerFinal['path']);
+    $harness->assertSame('final', (string)$viewerFinal['image_type']);
     $harness->assertSame(null, $denied);
 });
 

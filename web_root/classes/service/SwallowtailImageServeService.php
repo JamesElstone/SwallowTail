@@ -68,7 +68,7 @@ final class SwallowtailImageServeService
 
     private function userCanServeImage(int $userId, int $photoId, string $imageType): bool
     {
-        return $imageType !== '' && $this->photoUiService->userCanViewPhoto($photoId, $userId);
+        return $imageType !== '' && $this->photoUiService->userCanViewImageType($photoId, $userId, $imageType);
     }
 
     private function filenameForImage(string $originalFilename, string $imageType): string

@@ -4119,12 +4119,45 @@ label {
   align-items: start;
 }
 
+.picture-viewer-layout.is-details-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.picture-viewer-layout.is-details-collapsed .picture-viewer-details {
+  display: none;
+}
+
 .picture-viewer-media {
+  position: relative;
+  display: grid;
+  place-items: center;
   min-height: 320px;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--line);
   background: #111827;
+}
+
+.picture-viewer-overlay-actions {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.picture-viewer-overlay-actions .button,
+.picture-viewer-details-toggle {
+  box-shadow: var(--shadow-soft);
+}
+
+.picture-viewer-details-toggle {
+  min-width: 34px;
+  padding-inline: 10px;
+  font-weight: 900;
 }
 
 .picture-viewer-media img {
@@ -4134,13 +4167,133 @@ label {
   object-fit: contain;
 }
 
+.picture-viewer-status-pill {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.picture-viewer-status-pill[data-picture-viewer-state="queued"] {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.picture-viewer-status-pill[data-picture-viewer-state="rendering"] {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.picture-viewer-status-pill[data-picture-viewer-state="loaded"] {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
 .picture-viewer-details {
   display: grid;
   gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  max-height: 72vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .picture-viewer-details h3 {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.picture-viewer-details-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.picture-details-tabs {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  font-size: 0.7em;
+}
+
+.picture-details-tab-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.picture-details-tablist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--line);
+}
+
+.picture-details-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.picture-details-tab:hover {
+  color: var(--primary);
+}
+
+.picture-details-tab-panels {
+  max-height: min(54vh, 620px);
+  min-height: 0;
+  overflow: auto;
+  padding-top: 10px;
+}
+
+.picture-details-tab-panel {
+  display: none;
+}
+
+.picture-details-tab-input:nth-of-type(1):checked ~ .picture-details-tablist .picture-details-tab:nth-child(1),
+.picture-details-tab-input:nth-of-type(2):checked ~ .picture-details-tablist .picture-details-tab:nth-child(2),
+.picture-details-tab-input:nth-of-type(3):checked ~ .picture-details-tablist .picture-details-tab:nth-child(3),
+.picture-details-tab-input:nth-of-type(4):checked ~ .picture-details-tablist .picture-details-tab:nth-child(4) {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.picture-details-tab-input:nth-of-type(1):checked ~ .picture-details-tab-panels .picture-details-tab-panel:nth-child(1),
+.picture-details-tab-input:nth-of-type(2):checked ~ .picture-details-tab-panels .picture-details-tab-panel:nth-child(2),
+.picture-details-tab-input:nth-of-type(3):checked ~ .picture-details-tab-panels .picture-details-tab-panel:nth-child(3),
+.picture-details-tab-input:nth-of-type(4):checked ~ .picture-details-tab-panels .picture-details-tab-panel:nth-child(4) {
+  display: block;
+}
+
+.picture-details-pp3 {
+  margin: 0;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

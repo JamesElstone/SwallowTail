@@ -10,6 +10,7 @@ declare(strict_types=1);
 final class SwallowtailPhotoUiService
 {
     private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final', 'rawtheapee_sample'];
+    private const DOWNLOAD_IMAGE_TYPES = ['original', 'final'];
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
@@ -153,6 +154,10 @@ final class SwallowtailPhotoUiService
             return null;
         }
 
+        if (!$this->userCanViewImageType($photoId, $userId, $type)) {
+            return null;
+        }
+
         $params = ['photo_id' => $photoId];
         $where = 'photo.id = :photo_id AND ' . $this->accessWhereSql($userId, $params, 'photo');
         $photo = InterfaceDB::fetchOne('SELECT * FROM photos photo WHERE ' . $where . ' LIMIT 1', $params);
@@ -189,6 +194,29 @@ final class SwallowtailPhotoUiService
             'SELECT 1 FROM photos photo WHERE ' . $where . ' LIMIT 1',
             $params
         );
+    }
+
+    public function userCanViewImageType(int $photoId, int $userId, string $type): bool
+    {
+
+        if ($photoId <= 0 || $userId <= 0) {
+            return false;
+        }
+
+        $type = strtolower(trim($type));
+        if (!in_array($type, self::IMAGE_TYPES, true)) {
+            return false;
+        }
+
+        if (!$this->userCanViewPhoto($photoId, $userId)) {
+            return false;
+        }
+
+        if (in_array($type, self::DOWNLOAD_IMAGE_TYPES, true)) {
+            return $this->userCanDownloadSingleJpeg($photoId, $userId);
+        }
+
+        return true;
     }
 
     public function userCanEditPhoto(int $photoId, int $userId): bool

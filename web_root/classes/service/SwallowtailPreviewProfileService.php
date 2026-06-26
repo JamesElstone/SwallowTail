@@ -185,6 +185,69 @@ final class SwallowtailPreviewProfileService
         ];
     }
 
+    public function pictureViewerState(int $photoId, int $userId): array
+    {
+        if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
+        $baseline = $this->profileDataService->requestUrgentProfile($photo, 'picture_viewer_final');
+        $canViewFinal = $this->photoUiService->userCanViewImageType($photoId, $userId, 'final');
+        $displayType = $this->pictureViewerDisplayType($photo, $userId);
+        $state = [
+            'success' => true,
+            'photo_id' => $photoId,
+            'display_type' => $displayType,
+            'display_url' => $displayType !== '' ? $this->previewUrl($photoId, $this->latestProfileVersion($photoId, $displayType), null, $displayType) : '',
+            'final_ready' => $displayType === 'final',
+            'final_status' => $displayType === 'final' || !$canViewFinal ? 'loaded' : 'queued',
+            'state_url' => $this->pictureViewerStateUrl($photoId),
+        ];
+
+        if ($displayType === 'final' || !$canViewFinal) {
+            return $state;
+        }
+
+        if (empty($baseline['ready'])) {
+            return $state;
+        }
+
+        $job = $this->activeFinalJob($photoId);
+        if ($job === null) {
+            $profileVersion = $this->nextProfileVersion($photoId, 'final');
+            $profilePath = $this->writeProfile($photo, 'final');
+            $jobId = $this->queueService->enqueueViewedFinalRefresh($photoId, $profilePath, $profileVersion, $userId);
+            if ($jobId !== null) {
+                $job = [
+                    'id' => $jobId,
+                    'profile_version' => $profileVersion,
+                    'status' => 'queued',
+                ];
+            }
+        }
+
+        if (is_array($job)) {
+            $status = (string)($job['status'] ?? 'queued');
+            $state['final_status'] = $status === 'processing' ? 'rendering' : 'queued';
+            $state['job_id'] = max(0, (int)($job['id'] ?? 0));
+            $state['profile_version'] = max(1, (int)($job['profile_version'] ?? 1));
+        }
+
+        return $state;
+    }
+
     public function imageStatus(int $photoId, int $jobId, int $profileVersion, int $userId, string $imageType): array
     {
         $imageType = strtolower(trim($imageType));
@@ -326,6 +389,41 @@ final class SwallowtailPreviewProfileService
         );
 
         return is_array($job) ? $job : null;
+    }
+
+    private function activeFinalJob(int $photoId): ?array
+    {
+        if ($photoId <= 0) {
+            return null;
+        }
+
+        $job = InterfaceDB::fetchOne(
+            "SELECT id, status, profile_version
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = 'final'
+               AND status IN ('queued', 'processing')
+             ORDER BY profile_version DESC, id DESC
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
+
+        return is_array($job) ? $job : null;
+    }
+
+    private function pictureViewerDisplayType(array $photo, int $userId): string
+    {
+        $photoId = max(0, (int)($photo['id'] ?? 0));
+        foreach (['final', 'preview', 'embedded'] as $type) {
+            if (
+                $this->storageService->imageInfo($photo, $type) !== null
+                && $this->photoUiService->userCanViewImageType($photoId, $userId, $type)
+            ) {
+                return $type;
+            }
+        }
+
+        return '';
     }
 
     public function normaliseSettings(array $payload, int $sourceWidth, int $sourceHeight): array
@@ -626,6 +724,13 @@ final class SwallowtailPreviewProfileService
             'job_id' => $jobId,
             'profile_version' => $profileVersion,
             'image_type' => $imageType,
+        ]);
+    }
+
+    private function pictureViewerStateUrl(int $photoId): string
+    {
+        return '/api/photo-viewer-state.php?' . http_build_query([
+            'photo_id' => $photoId,
         ]);
     }
 

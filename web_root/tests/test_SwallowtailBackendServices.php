@@ -1270,16 +1270,87 @@ $harness->check(SwallowtailConversionQueueService::class, 'boosts queued viewed-
         static fn(array $notification): bool => (string)$notification['message_type'] === 'preempt'
     ));
 
-    $harness->assertSame([9101, 9102, 9103], array_map(static fn(array $row): int => (int)$row['job_id'], $boosted));
+    $harness->assertSame([9101, 9102, 9103, 9104], array_map(static fn(array $row): int => (int)$row['job_id'], $boosted));
     $harness->assertSame(50, $priorities[9101] ?? 0);
     $harness->assertSame(51, $priorities[9102] ?? 0);
     $harness->assertSame(50, $priorities[9103] ?? 0);
-    $harness->assertSame(60, $priorities[9104] ?? 0);
+    $harness->assertSame(65, $priorities[9104] ?? 0);
     $harness->assertSame(20, $priorities[9105] ?? 0);
     $harness->assertSame(20, $priorities[9106] ?? 0);
-    $harness->assertCount(3, $preempts);
-    $harness->assertSame(['preview', 'original', 'embedded'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
-    $harness->assertSame([50, 51, 50], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+    $harness->assertCount(4, $preempts);
+    $harness->assertSame(['preview', 'original', 'embedded', 'final'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
+    $harness->assertSame([50, 51, 50, 65], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+});
+
+$harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue bumps existing queued final to priority 65', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state
+        ) VALUES (
+            88,
+            'IMG_0088.CR2',
+            'cr2',
+            100,
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            '/tmp/swallowtail',
+            'uploaded'
+        )"
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (
+            id,
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            profile_path,
+            output_path,
+            profile_version,
+            priority,
+            status
+        ) VALUES (
+            9201,
+            88,
+            'image',
+            'final',
+            '/tmp/source.cr2',
+            '/tmp/final.pp3',
+            '/tmp/final.jpg',
+            3,
+            10,
+            'queued'
+        )"
+    );
+
+    $notifications = [];
+    $queue = new SwallowtailConversionQueueService(static function (int $jobId, string $imageType, int $priority, string $messageType) use (&$notifications): void {
+        $notifications[] = [
+            'job_id' => $jobId,
+            'image_type' => $imageType,
+            'priority' => $priority,
+            'message_type' => $messageType,
+        ];
+    });
+
+    $jobId = $queue->enqueueViewedFinalRefresh(88, '/tmp/final.pp3', 3, 5);
+    $priority = (int)InterfaceDB::fetchColumn('SELECT priority FROM photo_conversion_jobs WHERE id = 9201');
+    $preempts = array_values(array_filter(
+        $notifications,
+        static fn(array $notification): bool => (string)$notification['message_type'] === 'preempt'
+    ));
+
+    $harness->assertSame(9201, $jobId);
+    $harness->assertSame(65, $priority);
+    $harness->assertCount(1, $preempts);
+    $harness->assertSame(65, (int)($preempts[0]['priority'] ?? 0));
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -2303,8 +2374,10 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
     $photo = $library->photoById($photoId);
     $sha256 = (string)($photo['original_sha256'] ?? '');
     $previewPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), $sha256, 'preview');
+    $finalPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), $sha256, 'final');
     $storage->ensureDirectoryForPath($previewPath);
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
     $event = $library->createEvent('Private Gallery');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
@@ -2314,11 +2387,22 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
 
     $library->grantEventPermission((int)$event['id'], 202, ['can_view' => true]);
     $image = $service->derivativeImage($photoId, 'preview', 202);
+    $finalDenied = $service->derivativeImage($photoId, 'final', 202);
 
     $harness->assertTrue(is_array($image));
     $harness->assertSame($previewPath, (string)$image['absolute_path']);
     $harness->assertSame('image/jpeg', (string)$image['content_type']);
     $harness->assertTrue(str_contains((string)$image['etag'], '"'));
+    $harness->assertSame(null, $finalDenied);
+
+    $library->grantEventPermission((int)$event['id'], 202, [
+        'can_view' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    $finalImage = $service->derivativeImage($photoId, 'final', 202);
+    $harness->assertTrue(is_array($finalImage));
+    $harness->assertSame($finalPath, (string)$finalImage['absolute_path']);
+    $harness->assertSame('final', (string)$finalImage['image_type']);
 
     @unlink($source);
 });
