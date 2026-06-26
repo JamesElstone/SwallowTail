@@ -259,8 +259,10 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
     InterfaceDB::execute("CREATE TABLE event_permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
+        grantee_type TEXT NOT NULL DEFAULT 'user',
+        grantee_id INTEGER NOT NULL,
         can_view INTEGER NOT NULL DEFAULT 0,
+        can_edit INTEGER NOT NULL DEFAULT 0,
         can_download_single_jpeg INTEGER NOT NULL DEFAULT 0,
         can_download_event_zip INTEGER NOT NULL DEFAULT 0,
         can_download_all_accessible INTEGER NOT NULL DEFAULT 0,
@@ -269,7 +271,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         expires_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (event_id, user_id)
+        UNIQUE (event_id, grantee_type, grantee_id)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_conversion_jobs (
@@ -2107,15 +2109,18 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
 
     $library->assignPhotoToEvent((int)$result['photo_id'], (int)$event['id']);
     $harness->assertTrue(!$access->userCanViewPhoto(101, (int)$result['photo_id']));
+    $harness->assertTrue(!$access->userCanEditPhoto(101, (int)$result['photo_id']));
 
     $library->grantEventPermission((int)$event['id'], 101, [
         'can_view' => true,
+        'can_edit' => true,
         'can_download_single_jpeg' => true,
         'can_download_original_raw' => false,
     ]);
 
     $harness->assertTrue($access->userCanSeeEvent(101, (int)$event['id']));
     $harness->assertTrue($access->userCanViewPhoto(101, (int)$result['photo_id']));
+    $harness->assertTrue($access->userCanEditPhoto(101, (int)$result['photo_id']));
     $harness->assertTrue($access->userCanDownloadSingleJpeg(101, (int)$event['id']));
     $harness->assertTrue(!$access->userCanDownloadOriginalRaw(101, (int)$event['id']));
 
@@ -2379,7 +2384,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses thumbnail as temp
 
     $event = $library->createEvent('Thumbnail Preview Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
-    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true, 'can_edit' => true]);
 
     $state = (new SwallowtailPreviewProfileService())->editorState($photoId, 303);
     $previewUrl = is_array($state) ? (string)($state['preview_url'] ?? '') : '';
@@ -2421,7 +2426,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview
 
     $event = $library->createEvent('Initial Preview Queue Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
-    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true, 'can_edit' => true]);
 
     $service = new SwallowtailPreviewProfileService();
     $pending = $service->editorState($photoId, 303);
@@ -2471,7 +2476,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview
 
     $event = $library->createEvent('Ready Initial Preview Queue Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
-    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true, 'can_edit' => true]);
 
     $state = (new SwallowtailPreviewProfileService())->editorState($photoId, 303);
     $harness->assertTrue(is_array($state));
@@ -2506,7 +2511,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         ('preview', 'resize', 2, 'Resize', 'DataSpecified', '5', 'int')");
     $event = $library->createEvent('Preview Edit Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
-    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true]);
+    $library->grantEventPermission((int)$event['id'], 303, ['can_view' => true, 'can_edit' => true]);
 
     $service = new SwallowtailPreviewProfileService();
     $denied = $service->enqueuePreview($photoId, 404, [

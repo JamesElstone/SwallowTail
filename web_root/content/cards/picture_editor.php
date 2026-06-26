@@ -30,6 +30,15 @@ final class _picture_editorCard extends CardBaseFramework
         }
 
         $userId = $this->currentUserId();
+        $photoUiService = new SwallowtailPhotoUiService();
+        if (!$photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return '<div class="panel-soft warn full">Photo was not found or is not available to this user.</div>';
+        }
+
+        if (!$photoUiService->userCanEditPhoto($photoId, $userId)) {
+            return '<div class="panel-soft warn full">You can view this photo, but editing is not available to your account.</div>';
+        }
+
         $state = (new SwallowtailPreviewProfileService())->editorState($photoId, $userId);
         if ($state === null) {
             return '<div class="panel-soft warn full">Photo was not found or is not available to this user.</div>';

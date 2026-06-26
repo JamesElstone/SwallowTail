@@ -290,8 +290,10 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
     InterfaceDB::execute("CREATE TABLE event_permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
+        grantee_type TEXT NOT NULL DEFAULT 'user',
+        grantee_id INTEGER NOT NULL,
         can_view INTEGER NOT NULL DEFAULT 0,
+        can_edit INTEGER NOT NULL DEFAULT 0,
         can_download_single_jpeg INTEGER NOT NULL DEFAULT 0,
         can_download_event_zip INTEGER NOT NULL DEFAULT 0,
         can_download_all_accessible INTEGER NOT NULL DEFAULT 0,
@@ -300,7 +302,7 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         expires_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (event_id, user_id)
+        UNIQUE (event_id, grantee_type, grantee_id)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_conversion_jobs (

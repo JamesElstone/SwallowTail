@@ -47,7 +47,9 @@ final class SwallowtailPhotoUiService
                     INNER JOIN events event
                         ON event.id = event_photo.event_id
                     WHERE event_photo.photo_id = photo.id
-                ) AS event_names
+                ) AS event_names,
+                " . $this->effectiveCanEditSql($userId, $params, 'photo') . " AS effective_can_edit,
+                " . $this->effectiveCanDownloadSingleJpegSql($userId, $params, 'photo') . " AS effective_can_download_single_jpeg
              FROM photos photo
              WHERE " . $where . "
              ORDER BY photo.created_at DESC, photo.id DESC
@@ -89,7 +91,8 @@ final class SwallowtailPhotoUiService
                         INNER JOIN events event
                             ON event.id = event_photo.event_id
                         WHERE event_photo.photo_id = photo.id
-                    ) AS event_names
+                    ) AS event_names,
+                    " . $this->effectiveCanEditSql($userId, $params, 'photo') . " AS effective_can_edit
                  FROM photos photo
                  WHERE " . $where . "
                  ORDER BY photo.created_at DESC, photo.id DESC
@@ -120,7 +123,8 @@ final class SwallowtailPhotoUiService
                     INNER JOIN events event
                         ON event.id = event_photo.event_id
                     WHERE event_photo.photo_id = photo.id
-                ) AS event_names
+                ) AS event_names,
+                " . $this->effectiveCanEditSql($userId, $params, 'photo') . " AS effective_can_edit
              FROM photos photo
              WHERE " . $where . "
              LIMIT 1",
@@ -187,6 +191,34 @@ final class SwallowtailPhotoUiService
         );
     }
 
+    public function userCanEditPhoto(int $photoId, int $userId): bool
+    {
+
+        if ($photoId <= 0 || $userId <= 0) {
+            return false;
+        }
+
+        if ($this->isAdminUser($userId)) {
+            return $this->userCanViewPhoto($photoId, $userId);
+        }
+
+        return (new SwallowtailEventAccessService())->userCanEditPhoto($userId, $photoId);
+    }
+
+    public function userCanDownloadSingleJpeg(int $photoId, int $userId): bool
+    {
+
+        if ($photoId <= 0 || $userId <= 0) {
+            return false;
+        }
+
+        if ($this->isAdminUser($userId)) {
+            return $this->userCanViewPhoto($photoId, $userId);
+        }
+
+        return (new SwallowtailEventAccessService())->userCanDownloadSingleJpegForPhoto($userId, $photoId);
+    }
+
     private function photoImages(array $photo): array
     {
 
@@ -213,7 +245,7 @@ final class SwallowtailPhotoUiService
             return $photoAlias . ".upload_state = 'uploaded'";
         }
 
-        $params['access_user_id'] = $userId;
+        $this->applyGranteeParams($userId, $params, 'access');
         $params['access_upload_user_id'] = $userId;
 
         return $photoAlias . ".upload_state = 'uploaded'
@@ -225,12 +257,73 @@ final class SwallowtailPhotoUiService
                     INNER JOIN event_permissions access_permission
                         ON access_permission.event_id = access_event_photo.event_id
                     WHERE access_event_photo.photo_id = " . $photoAlias . ".id
-                      AND access_permission.user_id = :access_user_id
                       AND access_permission.can_view = 1
+                      AND " . $this->granteeWhereSql('access_permission', 'access') . "
                       AND (access_permission.expires_at IS NULL OR access_permission.expires_at > CURRENT_TIMESTAMP)
                     LIMIT 1
                 )
             )";
+    }
+
+    private function effectiveCanEditSql(int $userId, array &$params, string $photoAlias): string
+    {
+
+        if ($this->isAdminUser($userId)) {
+            return '1';
+        }
+
+        $this->applyGranteeParams($userId, $params, 'edit');
+
+        return "COALESCE((
+            SELECT MAX(edit_permission.can_edit)
+            FROM event_photos edit_event_photo
+            INNER JOIN event_permissions edit_permission
+                ON edit_permission.event_id = edit_event_photo.event_id
+            WHERE edit_event_photo.photo_id = " . $photoAlias . ".id
+              AND edit_permission.can_view = 1
+              AND edit_permission.can_edit = 1
+              AND " . $this->granteeWhereSql('edit_permission', 'edit') . "
+              AND (edit_permission.expires_at IS NULL OR edit_permission.expires_at > CURRENT_TIMESTAMP)
+        ), 0)";
+    }
+
+    private function effectiveCanDownloadSingleJpegSql(int $userId, array &$params, string $photoAlias): string
+    {
+
+        if ($this->isAdminUser($userId)) {
+            return '1';
+        }
+
+        $this->applyGranteeParams($userId, $params, 'single_download');
+
+        return "COALESCE((
+            SELECT MAX(single_download_permission.can_download_single_jpeg)
+            FROM event_photos single_download_event_photo
+            INNER JOIN event_permissions single_download_permission
+                ON single_download_permission.event_id = single_download_event_photo.event_id
+            WHERE single_download_event_photo.photo_id = " . $photoAlias . ".id
+              AND single_download_permission.can_view = 1
+              AND single_download_permission.can_download_single_jpeg = 1
+              AND " . $this->granteeWhereSql('single_download_permission', 'single_download') . "
+              AND (single_download_permission.expires_at IS NULL OR single_download_permission.expires_at > CURRENT_TIMESTAMP)
+        ), 0)";
+    }
+
+    private function applyGranteeParams(int $userId, array &$params, string $prefix): void
+    {
+
+        $params[$prefix . '_grantee_user_id'] = $userId;
+        $params[$prefix . '_grantee_role_id'] = $this->roleIdForUser($userId);
+    }
+
+    private function granteeWhereSql(string $permissionAlias, string $prefix): string
+    {
+
+        return "(
+            (" . $permissionAlias . ".grantee_type = 'user' AND " . $permissionAlias . ".grantee_id = :" . $prefix . "_grantee_user_id)
+            OR
+            (" . $permissionAlias . ".grantee_type = 'role' AND " . $permissionAlias . ".grantee_id = :" . $prefix . "_grantee_role_id)
+        )";
     }
 
     private function isAdminUser(int $userId): bool
@@ -243,6 +336,16 @@ final class SwallowtailPhotoUiService
         }
     }
 
+    private function roleIdForUser(int $userId): int
+    {
+
+        try {
+            return (new RoleRepository())->userRoleId($userId);
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
     private function normaliseGalleryPhotoRow(array $row): array
     {
 
@@ -252,6 +355,8 @@ final class SwallowtailPhotoUiService
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
         $row['preview_ready'] = $this->storageService->imageReady($row, 'preview');
         $row['thumbnail_ready'] = !$row['preview_ready'] && $this->storageService->imageReady($row, 'thumbnail');
+        $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
+        $row['effective_can_download_single_jpeg'] = (int)($row['effective_can_download_single_jpeg'] ?? 0) === 1;
 
         return $row;
     }
@@ -269,6 +374,7 @@ final class SwallowtailPhotoUiService
         $row['embedded_ready'] = $this->storageService->imageInfo($row, 'embedded') !== null;
         $row['final_ready'] = $this->storageService->imageInfo($row, 'final') !== null;
         $row['jpeg_ready'] = $row['final_ready'];
+        $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
 
         return $row;
     }

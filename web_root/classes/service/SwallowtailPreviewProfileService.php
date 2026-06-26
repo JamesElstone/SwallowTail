@@ -83,6 +83,13 @@ final class SwallowtailPreviewProfileService
             ];
         }
 
+        if (!$this->photoUiService->userCanEditPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['You do not have permission to edit this photo.'],
+            ];
+        }
+
         $photo = $this->photoLibraryService->photoById($photoId);
         if ($photo === null) {
             return [

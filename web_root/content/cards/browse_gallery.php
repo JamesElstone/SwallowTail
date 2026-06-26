@@ -65,8 +65,10 @@ final class _browse_galleryCard extends CardBaseFramework
         $perPageField = $this->perPageField();
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
 
-        $html = '<div class="gallery-grid"
+        $html = $this->canManageEvents() ? $this->eventAssignmentPane($context) : '';
+        $html .= '<div class="gallery-grid"
             data-gallery-auto-refresh="true"
+            data-gallery-events-grid
             data-gallery-pending="' . ($hasPendingPreviews ? '1' : '0') . '"
             data-gallery-page="' . HelperFramework::escape((string)$page) . '"
             data-gallery-page-field="' . HelperFramework::escape($pageField) . '"
@@ -101,6 +103,7 @@ final class _browse_galleryCard extends CardBaseFramework
         $filename = (string)($photo['original_filename'] ?? 'Photo');
         $viewerUrl = '?page=view&photo_id=' . rawurlencode((string)$photoId);
         $editorUrl = '?page=edit&photo_id=' . rawurlencode((string)$photoId);
+        $downloadUrl = '/api/download.php?kind=photo&photo_id=' . rawurlencode((string)$photoId);
         $previewType = $this->galleryPreviewType($photo);
         $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
         $pendingAttribute = $this->photoNeedsRefresh($photo) ? ' data-gallery-photo-pending="1"' : '';
@@ -108,6 +111,20 @@ final class _browse_galleryCard extends CardBaseFramework
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
         $statusIndicator = $this->statusIndicator($status);
+        $eventCheckbox = '<label class="gallery-event-select" aria-label="Select ' . HelperFramework::escape($filename) . ' for event assignment">
+            <input type="checkbox" name="photo_ids[]" value="' . HelperFramework::escape((string)$photoId) . '" form="gallery-event-assignment-form">
+            <span></span>
+        </label>';
+        $editLink = !empty($photo['effective_can_edit'])
+            ? '<a class="gallery-edit-link" href="' . HelperFramework::escape($editorUrl) . '" aria-label="Edit ' . HelperFramework::escape($filename) . '">
+                ' . $this->editIconSvg() . '
+            </a>'
+            : '';
+        $downloadLink = !empty($photo['effective_can_download_single_jpeg'])
+            ? '<a class="gallery-download-link" href="' . HelperFramework::escape($downloadUrl) . '" aria-label="Download ' . HelperFramework::escape($filename) . '">
+                ' . $this->downloadIconSvg() . '
+            </a>'
+            : '';
 
         return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
             <a class="gallery-view-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
@@ -116,9 +133,9 @@ final class _browse_galleryCard extends CardBaseFramework
                     <strong>' . HelperFramework::escape($filename) . '</strong>
                 </span>
             </a>
-            <a class="gallery-edit-link" href="' . HelperFramework::escape($editorUrl) . '" aria-label="Edit ' . HelperFramework::escape($filename) . '">
-                ' . $this->editIconSvg() . '
-            </a>
+            ' . $eventCheckbox . '
+            ' . $downloadLink . '
+            ' . $editLink . '
         </article>';
     }
 
@@ -173,9 +190,61 @@ final class _browse_galleryCard extends CardBaseFramework
     {
         return '<div class="gallery-footer-controls">'
             . $this->perPageControl($perPage)
+            . $this->eventsControl()
             . $this->autoRefreshControl()
             . $this->autoScrollControl()
             . '</div>';
+    }
+
+    private function eventsControl(): string
+    {
+        if (!$this->canManageEvents()) {
+            return '';
+        }
+
+        return '<button class="button button-inline gallery-events-toggle" type="button" data-gallery-events-toggle aria-expanded="false">Events</button>';
+    }
+
+    private function eventAssignmentPane(array $context): string
+    {
+        $events = (new SwallowtailEventManagementService())->eventOptionsForAssignment();
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        $eventRows = '';
+
+        foreach ($events as $event) {
+            $eventId = (int)($event['id'] ?? 0);
+            $eventRows .= '<div class="gallery-event-assignment-row">
+                <span>
+                    <strong>' . HelperFramework::escape((string)($event['event_name'] ?? 'Event')) . '</strong>
+                    <span class="helper">' . HelperFramework::escape((string)((int)($event['photo_count'] ?? 0))) . ' photos</span>
+                </span>
+                <span class="actions-row">
+                    <button class="button button-inline primary" type="submit" name="assignment_event_id" value="' . HelperFramework::escape((string)$eventId) . '" data-assignment-state="1">Tag</button>
+                    <button class="button button-inline" type="submit" name="assignment_event_id" value="' . HelperFramework::escape((string)$eventId) . '" data-assignment-state="0">Untag</button>
+                </span>
+            </div>';
+        }
+
+        if ($eventRows === '') {
+            $eventRows = '<p class="helper">No active events are available.</p>';
+        }
+
+        return '<aside class="gallery-events-pane" data-gallery-events-pane hidden>
+            <div class="status-head">
+                <div>
+                    <h3>Events</h3>
+                    <p class="helper"><span data-gallery-events-selected-count>0</span> selected</p>
+                </div>
+            </div>
+            <form id="gallery-event-assignment-form" method="post" action="?page=gallery" data-ajax="true">
+                <input type="hidden" name="card_action" value="EventPermissions">
+                <input type="hidden" name="event_permissions_action" value="assign_photos">
+                <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+                <input type="hidden" name="cards[]" value="browse_gallery">
+                <input type="hidden" name="assignment_state" value="1" data-gallery-assignment-state>
+                <div class="gallery-event-assignment-list">' . $eventRows . '</div>
+            </form>
+        </aside>';
     }
 
     private function perPageControl(int $perPage): string
@@ -273,6 +342,13 @@ final class _browse_galleryCard extends CardBaseFramework
         return '<svg ' . $attributes . '><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     }
 
+    private function downloadIconSvg(): string
+    {
+        $attributes = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+
+        return '<svg ' . $attributes . '><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
+    }
+
     private function currentUserId(): int
     {
         $sessionAuthenticationService = new SessionAuthenticationService();
@@ -280,5 +356,13 @@ final class _browse_galleryCard extends CardBaseFramework
         $currentDeviceId = trim((string)AntiFraudService::instance()->requestValue('Client-Device-ID'));
 
         return $sessionAuthenticationService->authenticatedUserId($currentDeviceId);
+    }
+
+    private function canManageEvents(): bool
+    {
+        $userId = $this->currentUserId();
+
+        return $userId > 0
+            && in_array('event_permissions', (new CardAccessFramework())->allowedCardsForUser($userId, ['event_permissions']), true);
     }
 }

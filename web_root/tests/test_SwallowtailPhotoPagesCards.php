@@ -14,7 +14,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
-    foreach (['upload', 'gallery', 'view', 'edit', 'profiles'] as $pageKey) {
+    foreach (['upload', 'gallery', 'view', 'edit', 'profiles', 'download'] as $pageKey) {
         $page = $factory->create($pageKey);
         $harness->assertSame($pageKey, $page->id());
     }
@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview', 'event_downloads'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -45,6 +45,10 @@ $harness->check(_view::class, 'view page exposes picture viewer card', function 
 
 $harness->check(_edit::class, 'edit page exposes picture editor card', function () use ($harness): void {
     $harness->assertSame(['picture_editor'], (new _edit())->cards());
+});
+
+$harness->check(_download::class, 'download page exposes event download card', function () use ($harness): void {
+    $harness->assertSame(['event_downloads'], (new _download())->cards());
 });
 
 $harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {
@@ -840,6 +844,8 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
         'original_filename' => 'IMG_0042.CR2',
         'conversion_state' => 'ready',
         'preview_ready' => true,
+        'effective_can_edit' => true,
+        'effective_can_download_single_jpeg' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
@@ -848,7 +854,25 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
     $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=preview'));
     $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
     $harness->assertTrue(str_contains($html, 'gallery-edit-link'));
+    $harness->assertTrue(str_contains($html, 'gallery-download-link'));
+    $harness->assertTrue(str_contains($html, '/api/download.php?kind=photo&amp;photo_id=42'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
+});
+
+$harness->check(_gallery::class, 'browse gallery hides download link without single jpeg permission', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 42,
+        'original_filename' => 'IMG_0042.CR2',
+        'conversion_state' => 'ready',
+        'preview_ready' => true,
+        'effective_can_download_single_jpeg' => false,
+    ]);
+
+    $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
 });
 
 $harness->check(_gallery::class, 'browse gallery pagination renders first and last controls', function () use ($harness): void {

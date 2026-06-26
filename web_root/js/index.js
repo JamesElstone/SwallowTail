@@ -3879,6 +3879,42 @@
             return;
         }
 
+        const eventUserPickerToggle = event.target instanceof Element ? event.target.closest('[data-event-user-picker-toggle]') : null;
+        if (eventUserPickerToggle instanceof HTMLButtonElement) {
+            event.preventDefault();
+            const card = eventUserPickerToggle.closest('.event-permissions');
+            const picker = card instanceof HTMLElement ? card.querySelector('[data-event-user-picker]') : null;
+            if (picker instanceof HTMLElement) {
+                picker.hidden = !picker.hidden;
+            }
+            return;
+        }
+
+        const galleryEventsToggle = event.target instanceof Element ? event.target.closest('[data-gallery-events-toggle]') : null;
+        if (galleryEventsToggle instanceof HTMLButtonElement) {
+            event.preventDefault();
+            const card = galleryEventsToggle.closest('[data-page-stack-card], .card, body');
+            const pane = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-pane]') : null;
+            const grid = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-grid]') : null;
+            if (pane instanceof HTMLElement && grid instanceof HTMLElement) {
+                const open = pane.hidden;
+                pane.hidden = !open;
+                grid.classList.toggle('is-assigning-events', open);
+                galleryEventsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                updateGalleryEventSelectionCount(card);
+            }
+            return;
+        }
+
+        const assignmentButton = event.target instanceof Element ? event.target.closest('[data-assignment-state]') : null;
+        if (assignmentButton instanceof HTMLButtonElement) {
+            const form = assignmentButton.form;
+            const stateInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-state]') : null;
+            if (stateInput instanceof HTMLInputElement) {
+                stateInput.value = assignmentButton.dataset.assignmentState === '0' ? '0' : '1';
+            }
+        }
+
         const link = event.target instanceof Element ? event.target.closest('[data-ajax-link="true"]') : null;
         if (!(link instanceof HTMLAnchorElement)) {
             const title = event.target instanceof Element ? event.target.closest('.card-title-toggle') : null;
@@ -3939,6 +3975,13 @@
             }
         }
 
+        const galleryEventCheckbox = event.target instanceof Element
+            ? event.target.closest('.gallery-event-select input[type="checkbox"]')
+            : null;
+        if (galleryEventCheckbox instanceof HTMLInputElement) {
+            updateGalleryEventSelectionCount(galleryEventCheckbox.closest('[data-page-stack-card], .card, body'));
+        }
+
         const select = event.target;
         if (!(select instanceof HTMLSelectElement)) {
             return;
@@ -3963,6 +4006,20 @@
             syncVisibleWhenField(event.target);
         }
     });
+
+    function updateGalleryEventSelectionCount(root) {
+        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+            root = document;
+        }
+
+        const count = root.querySelectorAll
+            ? root.querySelectorAll('.gallery-event-select input[type="checkbox"]:checked').length
+            : 0;
+        const label = root.querySelector ? root.querySelector('[data-gallery-events-selected-count]') : null;
+        if (label instanceof HTMLElement) {
+            label.textContent = String(count);
+        }
+    }
 
     initialiseSidebar(document);
     initialisePageCardTabs(document);

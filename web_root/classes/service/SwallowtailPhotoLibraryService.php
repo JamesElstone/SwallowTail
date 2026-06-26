@@ -217,35 +217,100 @@ final class SwallowtailPhotoLibraryService
 
     public function grantEventPermission(int $eventId, int $userId, array $permissions, ?int $grantedByUserId = null): void
     {
+        $this->grantEventGranteePermission($eventId, 'user', $userId, $permissions, $grantedByUserId);
+    }
+
+    public function grantEventRolePermission(int $eventId, int $roleId, array $permissions, ?int $grantedByUserId = null): void
+    {
+        $this->grantEventGranteePermission($eventId, 'role', $roleId, $permissions, $grantedByUserId);
+    }
+
+    public function grantEventGranteePermission(
+        int $eventId,
+        string $granteeType,
+        int $granteeId,
+        array $permissions,
+        ?int $grantedByUserId = null
+    ): void
+    {
+        $granteeType = $this->normaliseEventPermissionGranteeType($granteeType);
+        if ($eventId <= 0 || $granteeId <= 0) {
+            throw new InvalidArgumentException('Event permission target was invalid.');
+        }
+
+        InterfaceDB::transaction(function () use ($eventId, $granteeType, $granteeId, $permissions, $grantedByUserId): void {
+            InterfaceDB::prepareExecute(
+                "DELETE FROM event_permissions
+                 WHERE event_id = :event_id
+                   AND grantee_type = :grantee_type
+                   AND grantee_id = :grantee_id",
+                [
+                    'event_id' => $eventId,
+                    'grantee_type' => $granteeType,
+                    'grantee_id' => $granteeId,
+                ]
+            );
+
+            if (!$this->permissionPayloadHasAnyGrant($permissions)) {
+                return;
+            }
+
+            InterfaceDB::prepareExecute(
+                "INSERT INTO event_permissions (
+                    event_id,
+                    grantee_type,
+                    grantee_id,
+                    can_view,
+                    can_edit,
+                    can_download_single_jpeg,
+                    can_download_event_zip,
+                    can_download_all_accessible,
+                    can_download_original_raw,
+                    granted_by_user_id
+                ) VALUES (
+                    :event_id,
+                    :grantee_type,
+                    :grantee_id,
+                    :can_view,
+                    :can_edit,
+                    :can_download_single_jpeg,
+                    :can_download_event_zip,
+                    :can_download_all_accessible,
+                    :can_download_original_raw,
+                    :granted_by_user_id
+                )",
+                [
+                    'event_id' => $eventId,
+                    'grantee_type' => $granteeType,
+                    'grantee_id' => $granteeId,
+                    'can_view' => !empty($permissions['can_view']) ? 1 : 0,
+                    'can_edit' => !empty($permissions['can_edit']) ? 1 : 0,
+                    'can_download_single_jpeg' => !empty($permissions['can_download_single_jpeg']) ? 1 : 0,
+                    'can_download_event_zip' => !empty($permissions['can_download_event_zip']) ? 1 : 0,
+                    'can_download_all_accessible' => !empty($permissions['can_download_all_accessible']) ? 1 : 0,
+                    'can_download_original_raw' => !empty($permissions['can_download_original_raw']) ? 1 : 0,
+                    'granted_by_user_id' => $this->nullablePositiveInt($grantedByUserId),
+                ]
+            );
+        });
+    }
+
+    public function revokeEventGranteePermission(int $eventId, string $granteeType, int $granteeId): void
+    {
+        $granteeType = $this->normaliseEventPermissionGranteeType($granteeType);
+        if ($eventId <= 0 || $granteeId <= 0) {
+            return;
+        }
+
         InterfaceDB::prepareExecute(
-            "INSERT INTO event_permissions (
-                event_id,
-                user_id,
-                can_view,
-                can_download_single_jpeg,
-                can_download_event_zip,
-                can_download_all_accessible,
-                can_download_original_raw,
-                granted_by_user_id
-            ) VALUES (
-                :event_id,
-                :user_id,
-                :can_view,
-                :can_download_single_jpeg,
-                :can_download_event_zip,
-                :can_download_all_accessible,
-                :can_download_original_raw,
-                :granted_by_user_id
-            )",
+            "DELETE FROM event_permissions
+             WHERE event_id = :event_id
+               AND grantee_type = :grantee_type
+               AND grantee_id = :grantee_id",
             [
                 'event_id' => $eventId,
-                'user_id' => $userId,
-                'can_view' => !empty($permissions['can_view']) ? 1 : 0,
-                'can_download_single_jpeg' => !empty($permissions['can_download_single_jpeg']) ? 1 : 0,
-                'can_download_event_zip' => !empty($permissions['can_download_event_zip']) ? 1 : 0,
-                'can_download_all_accessible' => !empty($permissions['can_download_all_accessible']) ? 1 : 0,
-                'can_download_original_raw' => !empty($permissions['can_download_original_raw']) ? 1 : 0,
-                'granted_by_user_id' => $this->nullablePositiveInt($grantedByUserId),
+                'grantee_type' => $granteeType,
+                'grantee_id' => $granteeId,
             ]
         );
     }
@@ -829,6 +894,34 @@ final class SwallowtailPhotoLibraryService
         $source = strtolower(trim($source));
 
         return in_array($source, ['web', 'api', 'worker', 'cli'], true) ? $source : 'api';
+    }
+
+    private function normaliseEventPermissionGranteeType(string $granteeType): string
+    {
+        $granteeType = strtolower(trim($granteeType));
+        if (!in_array($granteeType, ['user', 'role'], true)) {
+            throw new InvalidArgumentException('Event permission grantee type was invalid.');
+        }
+
+        return $granteeType;
+    }
+
+    private function permissionPayloadHasAnyGrant(array $permissions): bool
+    {
+        foreach ([
+            'can_view',
+            'can_edit',
+            'can_download_single_jpeg',
+            'can_download_event_zip',
+            'can_download_all_accessible',
+            'can_download_original_raw',
+        ] as $key) {
+            if (!empty($permissions[$key])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normaliseFilename(string $filename): string

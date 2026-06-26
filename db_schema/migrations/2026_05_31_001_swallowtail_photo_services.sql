@@ -109,8 +109,10 @@ CREATE TABLE IF NOT EXISTS event_photos (
 CREATE TABLE IF NOT EXISTS event_permissions (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   event_id bigint(20) NOT NULL,
-  user_id int(11) NOT NULL,
+  grantee_type enum('user','role') NOT NULL DEFAULT 'user',
+  grantee_id int(11) NOT NULL,
   can_view tinyint(1) NOT NULL DEFAULT 0,
+  can_edit tinyint(1) NOT NULL DEFAULT 0,
   can_download_single_jpeg tinyint(1) NOT NULL DEFAULT 0,
   can_download_event_zip tinyint(1) NOT NULL DEFAULT 0,
   can_download_all_accessible tinyint(1) NOT NULL DEFAULT 0,
@@ -120,11 +122,10 @@ CREATE TABLE IF NOT EXISTS event_permissions (
   created_at datetime NOT NULL DEFAULT current_timestamp(),
   updated_at datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (id),
-  UNIQUE KEY uq_event_permissions_event_user (event_id, user_id),
-  KEY idx_event_permissions_user (user_id),
+  UNIQUE KEY uq_event_permissions_event_grantee (event_id, grantee_type, grantee_id),
+  KEY idx_event_permissions_grantee (grantee_type, grantee_id, event_id),
   KEY idx_event_permissions_granted_by (granted_by_user_id),
   CONSTRAINT fk_event_permissions_event FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_event_permissions_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_event_permissions_granted_by FOREIGN KEY (granted_by_user_id) REFERENCES users (id) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -7,27 +7,27 @@
  */
 declare(strict_types=1);
 
-final class _gallery extends PageContextFramework
+final class _download extends PageContextFramework
 {
     public function id(): string
     {
-        return 'gallery';
+        return 'download';
     }
 
     public function title(): string
     {
-        return 'Gallery';
+        return 'Download';
     }
 
     public function subtitle(): string
     {
-        return 'Browse accessible SwallowTail previews.';
+        return 'Download accessible event files.';
     }
 
     public function cards(): array
     {
         return [
-            'browse_gallery',
+            'event_downloads',
         ];
     }
 
@@ -36,14 +36,10 @@ final class _gallery extends PageContextFramework
         PageServiceFramework $services,
         ActionResultFramework $actionResult
     ): array {
-        $sessionAuthenticationService = new SessionAuthenticationService();
-        $sessionAuthenticationService->startSession();
-
         return [
             'page' => [
-                'page_id' => 'gallery',
+                'page_id' => 'download',
                 'page_cards' => $this->cards(),
-                'csrf_token' => $sessionAuthenticationService->csrfToken(),
             ],
         ];
     }
