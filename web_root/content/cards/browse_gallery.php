@@ -127,15 +127,19 @@ final class _browse_galleryCard extends CardBaseFramework
             : '';
 
         return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
-            <a class="gallery-view-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
-                <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
+            <div class="gallery-thumb-shell">
+                <a class="gallery-view-link gallery-thumb-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
+                    <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
+                </a>
+                ' . $eventCheckbox . '
+                ' . $downloadLink . '
+                ' . $editLink . '
+            </div>
+            <a class="gallery-view-link gallery-meta-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
                 <span class="gallery-meta">
                     <strong>' . HelperFramework::escape($filename) . '</strong>
                 </span>
             </a>
-            ' . $eventCheckbox . '
-            ' . $downloadLink . '
-            ' . $editLink . '
         </article>';
     }
 
@@ -190,9 +194,9 @@ final class _browse_galleryCard extends CardBaseFramework
     {
         return '<div class="gallery-footer-controls">'
             . $this->perPageControl($perPage)
-            . $this->eventsControl()
             . $this->autoRefreshControl()
             . $this->autoScrollControl()
+            . $this->eventsControl()
             . '</div>';
     }
 
@@ -202,7 +206,7 @@ final class _browse_galleryCard extends CardBaseFramework
             return '';
         }
 
-        return '<button class="button button-inline gallery-events-toggle" type="button" data-gallery-events-toggle aria-expanded="false">Events</button>';
+        return '<button class="button button-inline gallery-events-toggle" type="button" data-gallery-events-toggle aria-expanded="false">Assign Events</button>';
     }
 
     private function eventAssignmentPane(array $context): string
