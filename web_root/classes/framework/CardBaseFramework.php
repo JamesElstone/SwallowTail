@@ -169,7 +169,8 @@ abstract class CardBaseFramework implements CardInterfaceFramework
         string $method = 'post',
         array $formAttributes = [],
         string $buttonClass = 'button primary',
-        string $middleHtml = ''
+        string $middleHtml = '',
+        string $wrapperClass = ''
     ): string {
         $hiddenFields = array_merge(
             [
@@ -188,7 +189,10 @@ abstract class CardBaseFramework implements CardInterfaceFramework
         $hasPreviousPage = (bool)($pagination['has_previous_page'] ?? $currentPage > 1);
         $hasNextPage = (bool)($pagination['has_next_page'] ?? $currentPage < $lastPage);
 
-        return '<div class="status-head">
+        $wrapperClass = trim($wrapperClass);
+        $wrapperClasses = trim('status-head' . ($wrapperClass !== '' ? ' ' . $wrapperClass : ''));
+
+        return '<div class="' . HelperFramework::escape($wrapperClasses) . '">
             <div class="helper">' . HelperFramework::escape(HelperFramework::paginationItemsLabel($pagination, $itemLabel)) . '</div>
             ' . $middleHtml . '
             <div class="actions-row">

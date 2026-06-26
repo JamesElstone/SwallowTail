@@ -859,6 +859,7 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
     $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
     $harness->assertTrue(str_contains($html, 'gallery-edit-link'));
     $harness->assertTrue(str_contains($html, 'gallery-download-link'));
+    $harness->assertTrue(str_contains($html, 'gallery-event-select'));
     $harness->assertTrue(str_contains($html, '/api/download.php?kind=photo&amp;photo_id=42'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
@@ -896,8 +897,31 @@ $harness->check(_gallery::class, 'browse gallery hides edit link without edit pe
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
     $harness->assertTrue(!str_contains($html, '?page=edit&amp;photo_id=42'));
     $harness->assertTrue(!str_contains($html, 'gallery-edit-link'));
-    $harness->assertTrue(str_contains($html, 'gallery-event-select'));
-    $harness->assertTrue(str_contains($html, 'form="gallery-event-assignment-form"'));
+    $harness->assertTrue(!str_contains($html, 'gallery-event-select'));
+    $harness->assertTrue(!str_contains($html, 'form="gallery-event-assignment-form"'));
+});
+
+$harness->check(_gallery::class, 'browse gallery event controls require editable photos', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $editableMethod = new ReflectionMethod($card, 'hasEditablePhotos');
+    $editableMethod->setAccessible(true);
+    $controlsMethod = new ReflectionMethod($card, 'galleryControls');
+    $controlsMethod->setAccessible(true);
+
+    $harness->assertSame(false, $editableMethod->invoke($card, [[
+        'id' => 42,
+        'effective_can_edit' => false,
+    ]]));
+    $harness->assertSame(true, $editableMethod->invoke($card, [[
+        'id' => 43,
+        'effective_can_edit' => true,
+    ]]));
+
+    $hiddenControls = (string)$controlsMethod->invoke($card, 24, false);
+    $shownControls = (string)$controlsMethod->invoke($card, 24, true);
+
+    $harness->assertTrue(!str_contains($hiddenControls, 'data-gallery-events-toggle'));
+    $harness->assertTrue(str_contains($shownControls, 'data-gallery-events-toggle'));
 });
 
 $harness->check(_gallery::class, 'browse gallery pagination renders first and last controls', function () use ($harness): void {
@@ -918,11 +942,18 @@ $harness->check(_gallery::class, 'browse gallery pagination renders first and la
             'first_item' => 25,
             'last_item' => 48,
         ],
-        'photos',
+        'Photos',
         null,
-        ['cards[]' => 'browse_gallery']
+        ['cards[]' => 'browse_gallery'],
+        'post',
+        [],
+        'button primary',
+        '',
+        'gallery-pagination-controls'
     );
 
+    $harness->assertTrue(str_contains($html, 'status-head gallery-pagination-controls'));
+    $harness->assertTrue(str_contains($html, 'Photos 25-48 of 72'));
     $harness->assertTrue(str_contains($html, '>First<'));
     $harness->assertTrue(str_contains($html, '>Prev<'));
     $harness->assertTrue(str_contains($html, '>Next<'));
@@ -1063,18 +1094,29 @@ $harness->check(_gallery::class, 'browse gallery event assignment markup is hidd
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
     $css = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'index.css');
     $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+    $action = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'actions' . DIRECTORY_SEPARATOR . 'EventPermissionsAction.php');
 
-    if (!is_string($source) || !is_string($css) || !is_string($js)) {
+    if (!is_string($source) || !is_string($css) || !is_string($js) || !is_string($action)) {
         throw new RuntimeException('Unable to read gallery source files.');
     }
 
     $harness->assertTrue(str_contains($source, 'data-gallery-events-toggle'));
     $harness->assertTrue(str_contains($source, 'data-gallery-events-pane hidden'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-event-create-toggle'));
+    $harness->assertTrue(str_contains($source, '>Add Event<'));
     $harness->assertTrue(str_contains($source, 'class="gallery-event-select"'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-assignment-event-id'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-assignment-submit hidden disabled'));
     $harness->assertTrue(str_contains($css, '.gallery-event-select'));
-    $harness->assertTrue(str_contains($css, '.gallery-grid.is-assigning-events .gallery-event-select'));
+    $harness->assertTrue(str_contains($css, '.gallery-event-create-backdrop'));
+    $harness->assertTrue(str_contains($css, '.gallery-event-create-window'));
+    $harness->assertTrue(str_contains($css, '.gallery-grid.is-assigning-events.has-selected-event .gallery-event-select'));
     $harness->assertTrue(str_contains($js, 'data-gallery-events-toggle'));
+    $harness->assertTrue(str_contains($js, 'data-gallery-event-create-toggle'));
+    $harness->assertTrue(str_contains($js, 'galleryEventCreateForm'));
     $harness->assertTrue(str_contains($js, 'is-assigning-events'));
+    $harness->assertTrue(str_contains($js, 'has-selected-event'));
+    $harness->assertTrue(str_contains($action, "['event.permissions', 'browse.gallery']"));
 });
 
 $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', function () use ($harness): void {

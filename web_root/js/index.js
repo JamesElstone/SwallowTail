@@ -21,6 +21,7 @@
     const cardMaximizedStorageKey = 'card:maximized';
     const galleryAutoRefreshIntervalMs = 5000;
     let afEphemeralDeviceId = null;
+    let activeGalleryEventCreateButton = null;
     const ajaxNonceBootstrapId = 'ajax-security-bootstrap';
     const ajaxNonceState = {
         available: [],
@@ -3777,6 +3778,100 @@
         return false;
     }
 
+    function clearGalleryEventCreateModal(refocus = false) {
+        document.querySelectorAll('.gallery-event-create-backdrop').forEach((node) => node.remove());
+        document.querySelectorAll('.gallery-event-create-window').forEach((node) => node.remove());
+
+        if (refocus && activeGalleryEventCreateButton instanceof HTMLButtonElement && activeGalleryEventCreateButton.isConnected) {
+            activeGalleryEventCreateButton.focus();
+        }
+
+        activeGalleryEventCreateButton = null;
+    }
+
+    function hiddenInput(name, value) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+
+        return input;
+    }
+
+    function showGalleryEventCreateModal(button) {
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        clearGalleryEventCreateModal(false);
+        activeGalleryEventCreateButton = button;
+
+        const card = button.closest('[data-page-stack-card], .card, body');
+        const existingForm = card instanceof HTMLElement ? card.querySelector('#gallery-event-assignment-form') : null;
+        const csrfInput = existingForm instanceof HTMLFormElement ? existingForm.querySelector('input[name="csrf_token"]') : null;
+        const csrfToken = csrfInput instanceof HTMLInputElement ? csrfInput.value : '';
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'gallery-event-create-backdrop';
+        backdrop.addEventListener('click', () => clearGalleryEventCreateModal(true));
+
+        const windowShell = document.createElement('div');
+        windowShell.className = 'gallery-event-create-window';
+        windowShell.setAttribute('role', 'dialog');
+        windowShell.setAttribute('aria-modal', 'true');
+        windowShell.setAttribute('aria-labelledby', 'gallery-event-create-title');
+
+        const title = document.createElement('h3');
+        title.id = 'gallery-event-create-title';
+        title.textContent = 'Add Event';
+
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = '?page=gallery';
+        form.dataset.ajax = 'true';
+        form.dataset.galleryEventCreateForm = 'true';
+        form.className = 'gallery-event-create-form';
+
+        const label = document.createElement('label');
+        const labelText = document.createElement('span');
+        labelText.textContent = 'Event name';
+        const input = document.createElement('input');
+        input.className = 'input';
+        input.name = 'event_name';
+        input.type = 'text';
+        input.required = true;
+        input.autocomplete = 'off';
+        label.append(labelText, input);
+
+        const actions = document.createElement('div');
+        actions.className = 'gallery-event-create-actions';
+
+        const add = document.createElement('button');
+        add.className = 'button button-inline primary';
+        add.type = 'submit';
+        add.textContent = 'Add';
+
+        const cancel = document.createElement('button');
+        cancel.className = 'button button-inline';
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', () => clearGalleryEventCreateModal(true));
+
+        actions.append(add, cancel);
+        form.append(
+            hiddenInput('card_action', 'EventPermissions'),
+            hiddenInput('event_permissions_action', 'create_event'),
+            hiddenInput('csrf_token', csrfToken),
+            hiddenInput('cards[]', 'browse_gallery'),
+            label,
+            actions
+        );
+        windowShell.append(title, form);
+
+        document.body.append(backdrop, windowShell);
+        input.focus();
+    }
+
     document.addEventListener('submit', async (event) => {
         const form = event.target;
         if (!(form instanceof HTMLFormElement)) {
@@ -3826,6 +3921,7 @@
         }
 
         const restoreProcessingState = beginButtonProcessingState(event.submitter);
+        const closeGalleryEventCreateOnSuccess = form.dataset.galleryEventCreateForm === 'true';
 
         try {
             const payload = await sendAjax(requestUrl, {
@@ -3852,6 +3948,10 @@
             applyAjaxPayloadFragment('cards', () => replaceCards(payload.cards));
             applyAjaxPayloadFragment('flash', () => replaceFlash(payload.flash_html));
             applyAjaxPayloadFragment('visible card', () => showPageCardTabForCard(payload.show_card));
+
+            if (closeGalleryEventCreateOnSuccess) {
+                clearGalleryEventCreateModal(false);
+            }
 
         } catch (error) {
             restoreAjaxNonce(ajaxNonce);
@@ -3890,6 +3990,13 @@
             return;
         }
 
+        const galleryEventCreateToggle = event.target instanceof Element ? event.target.closest('[data-gallery-event-create-toggle]') : null;
+        if (galleryEventCreateToggle instanceof HTMLButtonElement) {
+            event.preventDefault();
+            showGalleryEventCreateModal(galleryEventCreateToggle);
+            return;
+        }
+
         const galleryEventsToggle = event.target instanceof Element ? event.target.closest('[data-gallery-events-toggle]') : null;
         if (galleryEventsToggle instanceof HTMLButtonElement) {
             event.preventDefault();
@@ -3908,10 +4015,39 @@
 
         const assignmentButton = event.target instanceof Element ? event.target.closest('[data-assignment-state]') : null;
         if (assignmentButton instanceof HTMLButtonElement) {
+            if (assignmentButton.hasAttribute('data-gallery-assignment-event')) {
+                event.preventDefault();
+            }
+
             const form = assignmentButton.form;
+            const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
             const stateInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-state]') : null;
+            if (eventInput instanceof HTMLInputElement) {
+                eventInput.value = assignmentButton.value;
+            }
             if (stateInput instanceof HTMLInputElement) {
                 stateInput.value = assignmentButton.dataset.assignmentState === '0' ? '0' : '1';
+            }
+
+            if (assignmentButton.hasAttribute('data-gallery-assignment-event')) {
+                const card = assignmentButton.closest('[data-page-stack-card], .card, body');
+                const grid = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-grid]') : null;
+                if (grid instanceof HTMLElement) {
+                    grid.classList.add('has-selected-event');
+                }
+
+                if (form instanceof HTMLFormElement) {
+                    form.querySelectorAll('[data-gallery-assignment-event]').forEach((button) => {
+                        if (button instanceof HTMLButtonElement) {
+                            const selected = button === assignmentButton;
+                            button.classList.toggle('is-selected', selected);
+                            button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+                        }
+                    });
+                }
+
+                updateGalleryEventSelectionCount(card);
+                return;
             }
         }
 
@@ -3936,6 +4072,12 @@
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
+            if (document.querySelector('.gallery-event-create-window')) {
+                event.preventDefault();
+                clearGalleryEventCreateModal(true);
+                return;
+            }
+
             const maximizedCard = document.querySelector('.card.card-maximized');
             if (maximizedCard instanceof HTMLElement) {
                 event.preventDefault();
@@ -4018,6 +4160,19 @@
         const label = root.querySelector ? root.querySelector('[data-gallery-events-selected-count]') : null;
         if (label instanceof HTMLElement) {
             label.textContent = String(count);
+        }
+
+        const eventInput = root.querySelector ? root.querySelector('[data-gallery-assignment-event-id]') : null;
+        const hasSelectedEvent = eventInput instanceof HTMLInputElement && eventInput.value !== '';
+        const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
+        if (grid instanceof HTMLElement) {
+            grid.classList.toggle('has-selected-event', hasSelectedEvent);
+        }
+
+        const submit = root.querySelector ? root.querySelector('[data-gallery-assignment-submit]') : null;
+        if (submit instanceof HTMLButtonElement) {
+            submit.hidden = !hasSelectedEvent;
+            submit.disabled = !hasSelectedEvent || count === 0;
         }
     }
 

@@ -47,7 +47,7 @@ final class EventPermissionsAction implements ActionInterfaceFramework
     {
         $event = $this->eventService->createEvent((string)$request->input('event_name', ''), $userId);
 
-        return $this->success('Event created.', ['event_id' => (int)$event['id']]);
+        return $this->success('Event created.', ['event_id' => (int)$event['id']], [], ['event.permissions', 'browse.gallery']);
     }
 
     private function selectEvent(RequestFramework $request): ActionResultFramework

@@ -797,6 +797,55 @@ body.sidebar-collapsed .sidebar-hide-collapsed-link-initials .nav-link-short {
   margin-top: 14px;
 }
 
+.gallery-event-create-backdrop {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  z-index: 1999;
+}
+
+.gallery-event-create-window {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 40px));
+  padding: 18px 20px;
+  border: 1px solid rgba(176, 190, 207, 0.92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow);
+  z-index: 2000;
+}
+
+.gallery-event-create-window h3 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+}
+
+.gallery-event-create-form {
+  display: grid;
+  gap: 14px;
+}
+
+.gallery-event-create-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.gallery-event-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .mini-form {
   display: flex;
   gap: 10px;
@@ -3598,6 +3647,25 @@ label {
   flex-wrap: wrap;
 }
 
+.gallery-pagination-controls {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.gallery-pagination-controls > .helper,
+.gallery-pagination-controls > .actions-row,
+.gallery-pagination-controls .gallery-footer-controls {
+  display: inline-flex;
+  align-items: center;
+}
+
+.gallery-pagination-controls .button,
+.gallery-pagination-controls form,
+.gallery-pagination-controls label {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 .gallery-auto-refresh-control {
   display: inline-flex;
   align-items: center;
@@ -3776,9 +3844,7 @@ label {
 }
 
 .gallery-events-pane {
-  float: left;
-  width: min(320px, 100%);
-  margin: 0 18px 18px 0;
+  width: 100%;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3800,11 +3866,20 @@ label {
   background: var(--panel-soft);
 }
 
+.gallery-event-assignment-row [data-gallery-assignment-event].is-selected {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.gallery-event-apply {
+  margin-top: 10px;
+}
+
 .gallery-event-select {
   display: none;
   position: absolute;
-  right: 10px;
-  bottom: 48px;
+  left: 8px;
+  bottom: 8px;
   z-index: 3;
   width: 30px;
   height: 30px;
@@ -3816,7 +3891,7 @@ label {
   box-shadow: var(--shadow-soft);
 }
 
-.gallery-grid.is-assigning-events .gallery-event-select {
+.gallery-grid.is-assigning-events.has-selected-event .gallery-event-select {
   display: inline-flex;
 }
 
