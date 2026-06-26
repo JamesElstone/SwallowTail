@@ -74,6 +74,19 @@ class RedisHeartbeat:
             return None
         return ProfileNotification(photo_id=photo_id, reason=str(payload.get("reason") or ""))
 
+    def pop_rawtheapee_profile_refresh(self) -> bool:
+        queue = self.config.rawtheapee_profile_refresh_queue.strip()
+        if queue == "":
+            return False
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("RPOP", queue))
+                response = self._read_resp(sock)
+        except (OSError, RuntimeError):
+            return False
+        return response is not None
+
     def has_profile_notification(self) -> bool:
         queue = self.config.profile_queue.strip()
         if queue == "":

@@ -11,7 +11,7 @@ final class SwallowtailPreviewProfileService
 {
     private const DEFAULT_SOURCE_WIDTH = 6000;
     private const DEFAULT_SOURCE_HEIGHT = 4000;
-    private const STATUS_IMAGE_TYPES = ['preview', 'final'];
+    private const STATUS_IMAGE_TYPES = ['preview', 'final', 'rawtheapee_sample'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -606,7 +606,7 @@ final class SwallowtailPreviewProfileService
     {
         return '/api/photo-image.php?' . http_build_query([
             'photo_id' => $photoId,
-            'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original'], true) ? $imageType : 'preview',
+            'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original', 'rawtheapee_sample'], true) ? $imageType : 'preview',
             'v' => max(0, $profileVersion),
             'job_id' => $jobId,
         ]);

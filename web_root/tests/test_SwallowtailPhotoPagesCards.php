@@ -14,7 +14,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
-    foreach (['upload', 'gallery', 'picture_viewer'] as $pageKey) {
+    foreach (['upload', 'gallery', 'picture_viewer', 'profiles'] as $pageKey) {
         $page = $factory->create($pageKey);
         $harness->assertSame($pageKey, $page->id());
     }
@@ -23,10 +23,20 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
+});
+
+$harness->check(_profiles::class, 'profiles page exposes profile management cards', function () use ($harness): void {
+    $profiles = new _profiles();
+
+    $harness->assertSame([
+        'internal_profiles',
+        'rawtheapee_profiles',
+        'combined_profile_preview',
+    ], $profiles->cards());
 });
 
 $harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {

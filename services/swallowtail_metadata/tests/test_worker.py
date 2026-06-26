@@ -14,7 +14,7 @@ from unittest.mock import patch
 from swallowtail_metadata.config import DaylightSavingConfig, default_config
 from swallowtail_metadata.db import MetadataDatabase
 from swallowtail_metadata.exiftool import extract_properties, parse_metadata
-from swallowtail_metadata.profile import RawTherapeeBaselineRunner, parse_pp3_properties
+from swallowtail_metadata.profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
 from swallowtail_metadata.worker import MetadataWorker
 
 
@@ -299,6 +299,22 @@ class MetadataParserTest(unittest.TestCase):
         )
 
         self.assertEqual("Common Properties for Transformations", properties[0]["type"])
+
+    def test_rawtheapee_profile_scanner_recurses_and_labels_profiles(self) -> None:
+        root = Path(__file__).resolve().parent / ".tmp" / f"rawtheapee_profiles_{uuid.uuid4().hex}"
+        profile = root / "Non-raw" / "Brighten.pp3"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
+        try:
+            rows = RawTheapeeProfileScanner(str(root)).scan()
+
+            self.assertEqual(1, len(rows))
+            self.assertEqual(str(profile), rows[0].profile_path)
+            self.assertEqual("Non-raw/Brighten.pp3", rows[0].relative_path)
+            self.assertEqual("Non-Raw :: Brighten", rows[0].display_label)
+            self.assertEqual("[Exposure]\nBrightness=12\n", rows[0].profile_content)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class MetadataDatabaseProfileDataTest(unittest.TestCase):

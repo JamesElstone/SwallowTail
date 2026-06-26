@@ -369,6 +369,10 @@ final class AppConfigurationStore
                     'preempt_queue' => 'swallowtail:conversion:preempt',
                     'storage_wake_queue' => 'swallowtail:conversion:storage_wake',
                     'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
+                    'rawtheapee_profile_refresh_queue' => 'swallowtail:metadata:rawtheapee_profiles',
+                ],
+                'rawtheapee' => [
+                    'profile_root' => '/usr/local/share/rawtherapee/profiles',
                 ],
             ],
             'site_context' => [

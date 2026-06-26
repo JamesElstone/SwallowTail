@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailPhotoUiService
 {
-    private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final'];
+    private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final', 'rawtheapee_sample'];
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),

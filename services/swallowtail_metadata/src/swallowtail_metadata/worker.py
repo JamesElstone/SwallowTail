@@ -10,7 +10,7 @@ from typing import Any
 from .config import AppConfig
 from .db import MetadataDatabase
 from .exiftool import ExifToolRunner
-from .profile import RawTherapeeBaselineRunner, parse_pp3_properties
+from .profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
 from .redis_heartbeat import RedisHeartbeat
 
 
@@ -21,15 +21,18 @@ class MetadataWorker:
         self.db = MetadataDatabase(config.database)
         self.exiftool = ExifToolRunner(config.metadata.exiftool_binary)
         self.profile_runner = RawTherapeeBaselineRunner(config.metadata.rawtherapee_binary)
+        self.rawtheapee_scanner = RawTheapeeProfileScanner(config.metadata.rawtheapee_profile_root)
         self.redis = RedisHeartbeat(config.redis)
         self.shutdown_requested = threading.Event()
         self.idle_delay_seconds = config.worker.poll_min_seconds
+        self.last_rawtheapee_profile_scan_at = time.time()
 
     def request_shutdown(self) -> None:
         self.shutdown_requested.set()
 
     def run_forever(self) -> None:
         self.log.info("Metadata worker started")
+        self.scan_rawtheapee_profiles("startup")
         while not self.shutdown_requested.is_set():
             processed = self.run_once()
             if processed:
@@ -42,6 +45,16 @@ class MetadataWorker:
 
     def run_once(self) -> bool:
         self._touch_status()
+        if not hasattr(self, "last_rawtheapee_profile_scan_at"):
+            self.last_rawtheapee_profile_scan_at = time.time()
+        if hasattr(self.redis, "pop_rawtheapee_profile_refresh") and self.redis.pop_rawtheapee_profile_refresh():
+            self.scan_rawtheapee_profiles("refresh")
+            self._touch_status()
+            return True
+        if time.time() - self.last_rawtheapee_profile_scan_at >= 86400:
+            self.scan_rawtheapee_profiles("daily")
+            self._touch_status()
+            return True
         urgent_profile_photo = self._urgent_profile_photo()
         if urgent_profile_photo is not None:
             self.process_profile_photo(urgent_profile_photo)
@@ -64,6 +77,18 @@ class MetadataWorker:
         self.process_profile_photo(profile_photo)
         self._touch_status()
         return True
+
+    def scan_rawtheapee_profiles(self, reason: str) -> int:
+        profiles = self.rawtheapee_scanner.scan()
+        count = self.db.replace_rawtheapee_profiles(profiles)
+        self.last_rawtheapee_profile_scan_at = time.time()
+        self.log.info(
+            "RawTheapee profile scan completed; reason=%s root=%s profiles=%s",
+            reason,
+            self.config.metadata.rawtheapee_profile_root,
+            count,
+        )
+        return count
 
     def _urgent_profile_photo(self) -> dict[str, Any] | None:
         notification = self.redis.pop_profile_notification()

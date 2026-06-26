@@ -331,6 +331,21 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         profile_args = [result.command[index + 1] for index, value in enumerate(result.command) if value == "-p"]
         self.assertEqual([str(pp3)], profile_args)
 
+    def test_rawtheapee_sample_is_supported_as_isolated_output(self) -> None:
+        pp3 = self.root / "sample.pp3"
+        output = self.root / "sample.jpg"
+        pp3.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
+        sample = job(self.root, image_type="rawtheapee_sample", profile_path=str(pp3), output_path=str(output), priority=65)
+
+        sample.validate()
+        result = RawTherapeeRunner(
+            RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
+        ).render(sample, str(self.root / "work"))
+
+        self.assertEqual(0, result.exit_code)
+        self.assertIn("-o", result.command)
+        self.assertTrue(Path(result.temp_output_path).name.endswith("rawtheapee_sample.jpg"))
+
     def test_rawtherapee_nonzero_exit_is_reported(self) -> None:
         failing = Path(__file__).parent / "fixtures" / "fake_rawtherapee_fail.py"
         result = RawTherapeeRunner(
@@ -1370,5 +1385,4 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

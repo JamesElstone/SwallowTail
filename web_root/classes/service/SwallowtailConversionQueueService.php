@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 final class SwallowtailConversionQueueService
 {
-    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
     private const PRIORITY_FINAL = 10;
     private const PRIORITY_ORIGINAL = 20;
     private const PRIORITY_THUMBNAIL = 45;

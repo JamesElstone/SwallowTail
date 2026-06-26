@@ -10,7 +10,7 @@ declare(strict_types=1);
 final class SwallowtailStorageService
 {
     public const DATA_DIRECTORY = 'swallowtail-data';
-    public const IMAGE_TYPES = ['source', 'source_profile', 'embedded', 'thumbnail', 'thumbnail_profile', 'preview', 'preview_profile', 'original', 'final', 'final_profile'];
+    public const IMAGE_TYPES = ['source', 'source_profile', 'embedded', 'thumbnail', 'thumbnail_profile', 'preview', 'preview_profile', 'original', 'final', 'final_profile', 'rawtheapee_sample'];
 
     public function storageLocations(int $requiredBytes = 0, ?string $checksum = null): array
     {

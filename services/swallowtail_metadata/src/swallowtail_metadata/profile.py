@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import subprocess
 import uuid
@@ -17,6 +18,58 @@ class BaselineResult:
     command: list[str]
     stderr: str
     version: str
+
+
+@dataclass(frozen=True)
+class RawTheapeeProfileRow:
+    profile_path: str
+    relative_path: str
+    display_label: str
+    profile_hash: str
+    profile_bytes: int
+    profile_mtime: int
+    profile_content: str
+
+
+class RawTheapeeProfileScanner:
+    def __init__(self, root: str):
+        self.root = Path(root)
+
+    def scan(self) -> list[RawTheapeeProfileRow]:
+        if not self.root.is_dir():
+            return []
+
+        rows: list[RawTheapeeProfileRow] = []
+        for path in sorted(self.root.rglob("*.pp3"), key=lambda item: str(item).lower()):
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            relative = path.relative_to(self.root).as_posix()
+            stat = path.stat()
+            rows.append(
+                RawTheapeeProfileRow(
+                    profile_path=str(path),
+                    relative_path=relative,
+                    display_label=self.display_label(relative),
+                    profile_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    profile_bytes=int(stat.st_size),
+                    profile_mtime=int(stat.st_mtime),
+                    profile_content=content,
+                )
+            )
+        return rows
+
+    @staticmethod
+    def display_label(relative_path: str) -> str:
+        parts = Path(relative_path).with_suffix("").parts
+        labels = []
+        for part in parts:
+            words = [word for word in part.replace("_", "-").split("-") if word]
+            labels.append("-".join(word[:1].upper() + word[1:].lower() for word in words) if words else part)
+        return " :: ".join(labels)
 
 
 class RawTherapeeBaselineRunner:

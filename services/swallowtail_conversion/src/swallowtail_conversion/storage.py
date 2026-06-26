@@ -37,6 +37,7 @@ class ConversionStorageManager:
         "original": ".jpg",
         "final": ".jpg",
         "final_profile": ".pp3",
+        "rawtheapee_sample": ".jpg",
     }
 
     def __init__(

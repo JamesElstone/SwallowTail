@@ -24,6 +24,7 @@ class RedisConfig:
     port: int
     timeout_seconds: int
     profile_queue: str
+    rawtheapee_profile_refresh_queue: str
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class DaylightSavingConfig:
 class MetadataConfig:
     exiftool_binary: str
     rawtherapee_binary: str
+    rawtheapee_profile_root: str
     server_timezone: str
     daylight_saving: DaylightSavingConfig
 
@@ -77,11 +79,18 @@ def default_config() -> AppConfig:
             user="swallowtail_worker",
             password="",
         ),
-        redis=RedisConfig(host="127.0.0.1", port=6379, timeout_seconds=5, profile_queue="swallowtail:metadata:profile_urgent"),
+        redis=RedisConfig(
+            host="127.0.0.1",
+            port=6379,
+            timeout_seconds=5,
+            profile_queue="swallowtail:metadata:profile_urgent",
+            rawtheapee_profile_refresh_queue="swallowtail:metadata:rawtheapee_profiles",
+        ),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
         metadata=MetadataConfig(
             exiftool_binary="/usr/local/bin/exiftool",
             rawtherapee_binary="/usr/local/bin/rawtherapee-cli",
+            rawtheapee_profile_root="/usr/local/share/rawtherapee/profiles",
             server_timezone="Europe/London",
             daylight_saving=DaylightSavingConfig(enabled=False, start="03-31", end="10-31", offset_minutes=60),
         ),
@@ -168,20 +177,29 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             host=str(redis.get("host", config.redis.host)),
             port=int(redis.get("port", config.redis.port)),
             profile_queue=str(redis.get("metadata_profile_queue", config.redis.profile_queue)),
+            rawtheapee_profile_refresh_queue=str(
+                redis.get("rawtheapee_profile_refresh_queue", config.redis.rawtheapee_profile_refresh_queue)
+            ),
         ),
     )
 
 
 def _apply_php_timezone_config(config: AppConfig, swallowtail_config: Any) -> AppConfig:
-    if not isinstance(swallowtail_config, dict) or not isinstance(swallowtail_config.get("timezone"), dict):
+    if not isinstance(swallowtail_config, dict):
         return config
-    timezone_config = swallowtail_config["timezone"]
+    timezone_config = swallowtail_config.get("timezone")
+    timezone_config = timezone_config if isinstance(timezone_config, dict) else {}
+    rawtheapee_config = swallowtail_config.get("rawtheapee")
     timezone = str(timezone_config.get("server") or config.metadata.server_timezone).strip()
     daylight_saving = _daylight_saving_config(timezone_config.get("daylight_saving"), config.metadata.daylight_saving)
+    profile_root = config.metadata.rawtheapee_profile_root
+    if isinstance(rawtheapee_config, dict):
+        profile_root = str(rawtheapee_config.get("profile_root", profile_root))
     return replace(
         config,
         metadata=replace(
             config.metadata,
+            rawtheapee_profile_root=profile_root,
             server_timezone=timezone or config.metadata.server_timezone,
             daylight_saving=daylight_saving,
         ),

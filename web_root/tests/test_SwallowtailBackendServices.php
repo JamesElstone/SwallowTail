@@ -3440,6 +3440,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $fixPreviewProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_002_fix_preview_internal_profile_data.sql';
     $widenProfileSectionsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_003_widen_profile_section_names.sql';
     $internalProfileDataEnabledPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_004_internal_profile_data_enabled.sql';
+    $rawTheapeeProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_005_rawtheapee_profile_data.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3459,12 +3460,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $fixPreviewProfileDataSql = file_get_contents($fixPreviewProfileDataPath);
     $widenProfileSectionsSql = file_get_contents($widenProfileSectionsPath);
     $internalProfileDataEnabledSql = file_get_contents($internalProfileDataEnabledPath);
+    $rawTheapeeProfileDataSql = file_get_contents($rawTheapeeProfileDataPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3493,6 +3495,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'CREATE TABLE IF NOT EXISTS photo_metadata_property',
         'CREATE TABLE IF NOT EXISTS photo_profile_data',
         'CREATE TABLE IF NOT EXISTS internal_profile_data',
+        'CREATE TABLE IF NOT EXISTS rawtheapee_profile_data',
         'UNIQUE KEY uq_photo_profile_data_key (photo_id, type, `key`)',
         'ADD COLUMN revision int NOT NULL DEFAULT 0 AFTER photo_id',
         'ADD UNIQUE KEY uq_photo_profile_data_key (photo_id, type, `key`, revision)',
@@ -3525,6 +3528,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         "`key` varchar(191) NOT NULL",
         "MODIFY type varchar(64) NOT NULL",
         "value_type enum('null','bool','int','float','string') NOT NULL",
+        "'rawtheapee_sample'",
+        'UNIQUE KEY uq_rawtheapee_profile_path (profile_path)',
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));

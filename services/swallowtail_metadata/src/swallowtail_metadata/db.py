@@ -258,6 +258,53 @@ class MetadataDatabase:
         self.connection.commit()
         return stats
 
+    def replace_rawtheapee_profiles(self, profiles: list[Any]) -> int:
+        if not self._table_exists("rawtheapee_profile_data"):
+            return 0
+
+        self._execute("UPDATE rawtheapee_profile_data SET is_available = 0, scanned_at = CURRENT_TIMESTAMP")
+        written = 0
+        for profile in profiles:
+            self._execute(
+                """
+                INSERT INTO rawtheapee_profile_data (
+                    profile_path,
+                    relative_path,
+                    display_label,
+                    profile_hash,
+                    profile_bytes,
+                    profile_mtime,
+                    profile_content,
+                    is_available,
+                    scanned_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP
+                )
+                ON DUPLICATE KEY UPDATE
+                    relative_path = VALUES(relative_path),
+                    display_label = VALUES(display_label),
+                    profile_hash = VALUES(profile_hash),
+                    profile_bytes = VALUES(profile_bytes),
+                    profile_mtime = VALUES(profile_mtime),
+                    profile_content = VALUES(profile_content),
+                    is_available = 1,
+                    scanned_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    str(profile.profile_path),
+                    str(profile.relative_path),
+                    str(profile.display_label),
+                    str(profile.profile_hash),
+                    int(profile.profile_bytes),
+                    int(profile.profile_mtime),
+                    str(profile.profile_content),
+                ),
+            )
+            written += 1
+        self.connection.commit()
+        return written
+
     def _insert_profile_properties_by_section(self, photo_id: int, properties: list[dict[str, Any]]) -> dict[str, int]:
         sections: dict[str, list[dict[str, Any]]] = {}
         largest_value_length = 0
