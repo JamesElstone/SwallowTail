@@ -1,6 +1,7 @@
 LoadModule proxy_module libexec/apache24/mod_proxy.so
 LoadModule proxy_fcgi_module libexec/apache24/mod_proxy_fcgi.so
 LoadModule rewrite_module libexec/apache24/mod_rewrite.so
+LoadModule headers_module libexec/apache24/mod_headers.so
 
 ServerName %%SWALLOWTAIL_SERVER_NAME%%:%%SWALLOWTAIL_HTTP_PORT%%
 
@@ -19,6 +20,10 @@ ServerName %%SWALLOWTAIL_SERVER_NAME%%:%%SWALLOWTAIL_HTTP_PORT%%
     <FilesMatch "\.php$">
         SetHandler "proxy:fcgi://%%SWALLOWTAIL_PHP_FPM_LISTEN%%"
     </FilesMatch>
+
+    <LocationMatch "^/(svg|fonts)/">
+        Header set Cache-Control "public, max-age=2592000, immutable"
+    </LocationMatch>
 
     ErrorLog "%%SWALLOWTAIL_LOG_DIR%%/swallowtail_httpd_error.log"
     LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\" duration_us=%D forwarded_for=\"%{X-Forwarded-For}i\" forwarded_proto=\"%{X-Forwarded-Proto}i\"" swallowtail_combined_timed
