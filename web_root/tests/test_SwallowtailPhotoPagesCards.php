@@ -43,6 +43,32 @@ $harness->check(_view::class, 'view page exposes picture viewer card', function 
     $harness->assertSame(['picture_viewer'], (new _view())->cards());
 });
 
+$harness->check(_picture_viewerCard::class, 'formats camel case metadata keys for display', function () use ($harness): void {
+    $card = new _picture_viewerCard();
+    $method = new ReflectionMethod($card, 'displayMetadataKey');
+    $method->setAccessible(true);
+
+    $harness->assertSame('Recommended Exposure Index', (string)$method->invoke($card, 'RecommendedExposureIndex'));
+    $harness->assertSame('ISO Speed Ratings', (string)$method->invoke($card, 'ISOSpeedRatings'));
+    $harness->assertSame('Lens Model', (string)$method->invoke($card, 'Lens_Model'));
+});
+
+$harness->check(_picture_viewerCard::class, 'renders metadata properties as a two column table', function () use ($harness): void {
+    $card = new _picture_viewerCard();
+    $method = new ReflectionMethod($card, 'propertiesTab');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [[
+        'key' => 'RecommendedExposureIndex',
+        'value' => '200',
+        'value_type' => 'int',
+    ]]);
+
+    $harness->assertTrue(str_contains($html, '<table class="picture-property-table"><tbody>'));
+    $harness->assertTrue(str_contains($html, '<th scope="row">Recommended Exposure Index</th>'));
+    $harness->assertTrue(str_contains($html, '<td>200</td>'));
+});
+
 $harness->check(_edit::class, 'edit page exposes picture editor card', function () use ($harness): void {
     $harness->assertSame(['picture_editor'], (new _edit())->cards());
 });

@@ -1989,6 +1989,8 @@
             const pill = viewer.querySelector('[data-picture-viewer-status-pill]');
             const openDetailsButton = viewer.querySelector('[data-picture-viewer-details-open]');
             const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
+            const imageTypeLabel = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-image-type-label]') : null;
+            const fullscreenCloseButton = viewer.querySelector('[data-picture-viewer-fullscreen-close]');
             let imageNode = viewer.querySelector('[data-picture-viewer-image]');
             let pollTimer = null;
 
@@ -2021,6 +2023,63 @@
                 }
             }
 
+            function displayTypeLabel(type) {
+                const labels = {
+                    embedded: 'Embedded',
+                    thumbnail: 'Thumbnail',
+                    original: 'Original',
+                    preview: 'Preview',
+                    final: 'Final',
+                };
+                const normalised = String(type || '').trim().toLowerCase();
+
+                if (normalised === '') {
+                    return 'Queued';
+                }
+
+                return labels[normalised] || normalised.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+            }
+
+            function setImageTypeLabel(type) {
+                if (imageTypeLabel instanceof HTMLElement) {
+                    imageTypeLabel.textContent = displayTypeLabel(type);
+                }
+            }
+
+            function setPictureFullscreen(active) {
+                viewer.classList.toggle('is-picture-fullscreen', active);
+                document.documentElement.classList.toggle('has-picture-viewer-fullscreen', active);
+                if (fullscreenCloseButton instanceof HTMLButtonElement) {
+                    fullscreenCloseButton.hidden = !active;
+                }
+            }
+
+            async function enterPictureFullscreen() {
+                if (!(imageNode instanceof HTMLImageElement) || String(imageNode.getAttribute('src') || '').trim() === '') {
+                    return;
+                }
+
+                setPictureFullscreen(true);
+                if (document.fullscreenElement !== viewer && typeof viewer.requestFullscreen === 'function') {
+                    try {
+                        await viewer.requestFullscreen({ navigationUI: 'hide' });
+                    } catch (error) {
+                        console.warn('Browser fullscreen was not available for the picture viewer.', error);
+                    }
+                }
+            }
+
+            async function exitPictureFullscreen() {
+                setPictureFullscreen(false);
+                if (document.fullscreenElement === viewer && typeof document.exitFullscreen === 'function') {
+                    try {
+                        await document.exitFullscreen();
+                    } catch (error) {
+                        console.warn('Unable to exit browser fullscreen for the picture viewer.', error);
+                    }
+                }
+            }
+
             function swapImage(url, type) {
                 if (url === '' || type === '') {
                     return;
@@ -2043,6 +2102,7 @@
                 }
                 imageNode.dataset.pictureViewerImageType = type;
                 viewer.dataset.pictureViewerDisplayType = type;
+                setImageTypeLabel(type);
             }
 
             async function poll(attempt = 0) {
@@ -2075,6 +2135,7 @@
             }
 
             setPill(String(viewer.dataset.pictureViewerStatus || 'queued'));
+            setImageTypeLabel(String(viewer.dataset.pictureViewerDisplayType || ''));
             setDetailsCollapsed(true);
             if (openDetailsButton instanceof HTMLButtonElement) {
                 openDetailsButton.addEventListener('click', () => setDetailsCollapsed(false));
@@ -2082,6 +2143,29 @@
             if (closeDetailsButton instanceof HTMLButtonElement) {
                 closeDetailsButton.addEventListener('click', () => setDetailsCollapsed(true));
             }
+            viewer.addEventListener('click', (event) => {
+                if (event.target !== imageNode || viewer.classList.contains('is-picture-fullscreen')) {
+                    return;
+                }
+
+                void enterPictureFullscreen();
+            });
+            if (fullscreenCloseButton instanceof HTMLButtonElement) {
+                fullscreenCloseButton.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    void exitPictureFullscreen();
+                });
+            }
+            document.addEventListener('fullscreenchange', () => {
+                if (document.fullscreenElement !== viewer && viewer.classList.contains('is-picture-fullscreen')) {
+                    setPictureFullscreen(false);
+                }
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && viewer.classList.contains('is-picture-fullscreen')) {
+                    void exitPictureFullscreen();
+                }
+            });
             if (viewer.dataset.pictureViewerStatus !== 'loaded') {
                 pollTimer = window.setTimeout(() => poll(0), 1000);
             }

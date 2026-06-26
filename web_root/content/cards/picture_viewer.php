@@ -59,15 +59,19 @@ final class _picture_viewerCard extends CardBaseFramework
                 data-picture-viewer-display-type="' . HelperFramework::escape((string)($viewerState['display_type'] ?? '')) . '">
                 <div class="picture-viewer-overlay-actions">
                     <a class="button button-inline" href="?page=gallery">Back to Gallery</a>
-                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-open aria-expanded="false" aria-label="Show image details">&lt;</button>
+                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-open aria-expanded="false" aria-label="Show image details">&gt;</button>
                 </div>
                 ' . $this->renderStatusPill((string)($viewerState['final_status'] ?? 'queued')) . '
                 ' . $this->mediaMarkup($photo, $viewerState) . '
+                <button class="picture-viewer-fullscreen-close" type="button" data-picture-viewer-fullscreen-close aria-label="Exit full screen" hidden>&times;</button>
             </div>
             <div class="picture-viewer-details">
                 <div class="picture-viewer-details-header">
-                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-close aria-expanded="true" aria-label="Hide image details">&gt;</button>
-                    <h3>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</h3>
+                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-close aria-expanded="true" aria-label="Hide image details">&lt;</button>
+                    <div class="picture-viewer-title">
+                        <h3>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</h3>
+                        <span class="picture-viewer-image-type" data-picture-viewer-image-type-label>' . HelperFramework::escape($this->imageTypeLabel((string)($viewerState['display_type'] ?? ''))) . '</span>
+                    </div>
                 </div>
                 ' . $this->detailsTabs($photo, $metadata) . '
             </div>
@@ -109,6 +113,20 @@ final class _picture_viewerCard extends CardBaseFramework
         $state = trim(str_replace('_', ' ', $state));
 
         return $state !== '' ? ucwords($state) : 'Unknown';
+    }
+
+    private function imageTypeLabel(string $imageType): string
+    {
+        $imageType = strtolower(trim($imageType));
+
+        return match ($imageType) {
+            'embedded' => 'Embedded',
+            'thumbnail' => 'Thumbnail',
+            'original' => 'Original',
+            'preview' => 'Preview',
+            'final' => 'Final',
+            default => $imageType === '' ? 'Queued' : ucwords(str_replace('_', ' ', $imageType)),
+        };
     }
 
     private function formatBytes(int $bytes): string
@@ -203,13 +221,28 @@ final class _picture_viewerCard extends CardBaseFramework
 
         $rows = '';
         foreach ($properties as $property) {
-            $rows .= $this->metaRow(
-                (string)($property['key'] ?? ''),
-                $this->typedMetadataValue($property['value'] ?? null, (string)($property['value_type'] ?? 'string'))
-            );
+            $label = $this->displayMetadataKey((string)($property['key'] ?? ''));
+            $value = $this->typedMetadataValue($property['value'] ?? null, (string)($property['value_type'] ?? 'string'));
+            if (trim($value) === '') {
+                $value = 'Unknown';
+            }
+
+            $rows .= '<tr>
+                <th scope="row">' . HelperFramework::escape($label) . '</th>
+                <td>' . HelperFramework::escape($value) . '</td>
+            </tr>';
         }
 
-        return '<dl class="picture-meta-list">' . $rows . '</dl>';
+        return '<table class="picture-property-table"><tbody>' . $rows . '</tbody></table>';
+    }
+
+    private function displayMetadataKey(string $key): string
+    {
+        $key = trim(str_replace(['_', '-'], ' ', $key));
+        $key = preg_replace('/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/', ' ', $key) ?? $key;
+        $key = preg_replace('/\s+/', ' ', $key) ?? $key;
+
+        return trim($key);
     }
 
     private function pp3Tab(int $photoId): string
