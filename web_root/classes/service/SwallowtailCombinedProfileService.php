@@ -41,6 +41,7 @@ final class SwallowtailCombinedProfileService
             "SELECT type, `key`, value, value_type
              FROM internal_profile_data
              WHERE image_type = :image_type
+               AND enabled = 1
              ORDER BY `order`, profile_name, type, `key`",
             ['image_type' => $imageType]
         );

@@ -317,6 +317,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         image_type TEXT NOT NULL,
         profile_name TEXT NOT NULL,
         `order` INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
         type TEXT NOT NULL,
         `key` TEXT NOT NULL,
         value TEXT NULL,
@@ -2319,12 +2320,13 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
         (7, 0, 'RAW Bayer', 'Method', 'amaze', 'string'),
         (7, 1, 'RAW Bayer', 'Method', 'igv', 'string'),
         (7, 0, 'Common Properties for Transformations', 'Method', 'log', 'string')");
-    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, type, `key`, value, value_type) VALUES
-        ('preview', 'first', 1, 'RAW Bayer', 'Method', 'amaze', 'string'),
-        ('preview', 'second', 2, 'RAW Bayer', 'Method', 'fast', 'string'),
-        ('preview', 'second', 2, 'Resize', 'ShortEdge', '820', 'int'),
-        ('preview', 'second', 2, 'Resize', 'DataSpecified', '5', 'int'),
-        ('embedded', 'ignored', 1, 'Resize', 'LongEdge', '100', 'int')");
+    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, enabled, type, `key`, value, value_type) VALUES
+        ('preview', 'first', 1, 1, 'RAW Bayer', 'Method', 'amaze', 'string'),
+        ('preview', 'second', 2, 1, 'RAW Bayer', 'Method', 'fast', 'string'),
+        ('preview', 'second', 2, 1, 'Resize', 'ShortEdge', '820', 'int'),
+        ('preview', 'second', 2, 1, 'Resize', 'DataSpecified', '5', 'int'),
+        ('preview', 'disabled', 3, 0, 'Resize', 'LongEdge', '999', 'int'),
+        ('embedded', 'ignored', 1, 1, 'Resize', 'LongEdge', '100', 'int')");
 
     $service = new SwallowtailCombinedProfileService();
     $base = $service->photoProfileContent(7);
@@ -2340,6 +2342,7 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
     $harness->assertTrue(str_contains($preview, "[Resize]"));
     $harness->assertTrue(str_contains($preview, "ShortEdge=820"));
     $harness->assertTrue(str_contains($preview, "DataSpecified=5"));
+    $harness->assertTrue(!str_contains($preview, "LongEdge=999"));
     $harness->assertSame($base, $service->applyInternalProfiles('final', $base));
     $harness->assertSame($base, $service->applyInternalProfiles('embedded', $base));
 
@@ -3436,6 +3439,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $reassertPreviewFinalPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_001_reassert_preview_final_conversion_types.sql';
     $fixPreviewProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_002_fix_preview_internal_profile_data.sql';
     $widenProfileSectionsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_003_widen_profile_section_names.sql';
+    $internalProfileDataEnabledPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_004_internal_profile_data_enabled.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3454,12 +3458,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $reassertPreviewFinalSql = file_get_contents($reassertPreviewFinalPath);
     $fixPreviewProfileDataSql = file_get_contents($fixPreviewProfileDataPath);
     $widenProfileSectionsSql = file_get_contents($widenProfileSectionsPath);
+    $internalProfileDataEnabledSql = file_get_contents($internalProfileDataEnabledPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3497,6 +3502,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'image_type varchar(32) NOT NULL',
         'profile_name varchar(64) NOT NULL',
         '`order` int NOT NULL',
+        'enabled tinyint(1) NOT NULL DEFAULT 1',
+        'ADD COLUMN enabled tinyint(1) NOT NULL DEFAULT 1 AFTER `order`',
         "'performance', 1",
         "'resize', 2",
         "'RAW Bayer', 'Method', 'fast'",
