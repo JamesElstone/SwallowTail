@@ -379,7 +379,18 @@ class MetadataDatabase:
              WHERE job.status = 'succeeded'
                AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample')
                AND asset.id IS NULL
-             ORDER BY job.completed_at DESC, job.id DESC
+             ORDER BY
+                   CASE job.image_type
+                       WHEN 'thumbnail' THEN 0
+                       WHEN 'preview' THEN 1
+                       WHEN 'final' THEN 2
+                       WHEN 'original' THEN 3
+                       WHEN 'embedded' THEN 4
+                       WHEN 'rawtheapee_sample' THEN 5
+                       ELSE 6
+                   END,
+                   job.completed_at DESC,
+                   job.id DESC
              LIMIT 1
             """
         )

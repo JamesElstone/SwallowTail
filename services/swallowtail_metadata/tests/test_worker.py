@@ -581,6 +581,24 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertIsNot(main_connection, worker_connections[0])
         self.assertEqual(2, len(created))
 
+    def test_unrecorded_asset_backfill_prioritises_gallery_assets(self) -> None:
+        database, connection = self.database()
+        database._table_exists = lambda _table_name: True
+
+        database.next_unrecorded_image_asset_job()
+
+        sql = next(
+            sql for sql, _params in connection.executed
+            if "FROM photo_conversion_jobs job" in sql
+        )
+        self.assertIn("WHEN 'thumbnail' THEN 0", sql)
+        self.assertIn("WHEN 'preview' THEN 1", sql)
+        self.assertIn("WHEN 'final' THEN 2", sql)
+        self.assertIn("WHEN 'original' THEN 3", sql)
+        self.assertIn("WHEN 'embedded' THEN 4", sql)
+        self.assertIn("WHEN 'rawtheapee_sample' THEN 5", sql)
+        self.assertLess(sql.index("WHEN 'thumbnail' THEN 0"), sql.index("job.completed_at DESC"))
+
 
 class RawTherapeeBaselineRunnerTest(unittest.TestCase):
     def test_health_check_accepts_rawtherapee_version_output_with_nonzero_exit(self) -> None:
