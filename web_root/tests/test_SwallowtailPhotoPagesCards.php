@@ -378,12 +378,14 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     $harness->assertSame(2, (int)($summary['photos_current'] ?? 0));
     $harness->assertSame(7, (int)($jobs['total'] ?? 0));
     $harness->assertSame(2, (int)($jobs['outstanding'] ?? 0));
-    $harness->assertSame(3, (int)($jobs['completed'] ?? 0));
+    $harness->assertSame(4, (int)($jobs['completed'] ?? 0));
     $harness->assertSame('embedded', (string)($durations[0]['image_type'] ?? ''));
     $harness->assertSame(2, (int)($durations[0]['completed_jobs'] ?? 0));
     $harness->assertSame(1.0, (float)($durations[0]['average_seconds'] ?? 0));
     $harness->assertSame('thumbnail', (string)($durations[1]['image_type'] ?? ''));
     $harness->assertSame(1, (int)($durations[1]['completed_jobs'] ?? 0));
+    $harness->assertSame('original', (string)($durations[2]['image_type'] ?? ''));
+    $harness->assertSame(1, (int)($durations[2]['completed_jobs'] ?? 0));
 });
 
 $harness->check(_statisticsCard::class, 'renders dashboard statistics totals and timings', function () use ($harness): void {

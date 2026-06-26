@@ -408,7 +408,14 @@ $harness->check(SwallowtailWebRawUploadService::class, 'accepts signed-in CR2 we
     $photo = InterfaceDB::fetchOne('SELECT uploaded_via, uploaded_by_user_id FROM photos LIMIT 1');
     $harness->assertSame('web', (string)($photo['uploaded_via'] ?? ''));
     $harness->assertSame(902, (int)($photo['uploaded_by_user_id'] ?? 0));
-    $harness->assertSame(2, InterfaceDB::tableRowCount('photo_conversion_jobs'));
+    $harness->assertSame(3, InterfaceDB::tableRowCount('photo_conversion_jobs'));
+    $harness->assertSame(
+        ['embedded', 'thumbnail', 'original'],
+        array_map(
+            static fn(array $row): string => (string)($row['image_type'] ?? ''),
+            InterfaceDB::fetchAll('SELECT image_type FROM photo_conversion_jobs ORDER BY id')
+        )
+    );
 
     @unlink($source);
 });
