@@ -1989,7 +1989,7 @@
             const pill = viewer.querySelector('[data-picture-viewer-status-pill]');
             const openDetailsButton = viewer.querySelector('[data-picture-viewer-details-open]');
             const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
-            const imageTypeLabel = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-image-type-label]') : null;
+            const imageTypeLabel = viewer.querySelector('[data-picture-viewer-image-type-label]');
             const fullscreenCloseButton = viewer.querySelector('[data-picture-viewer-fullscreen-close]');
             let imageNode = viewer.querySelector('[data-picture-viewer-image]');
             let pollTimer = null;

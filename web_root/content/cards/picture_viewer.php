@@ -62,16 +62,14 @@ final class _picture_viewerCard extends CardBaseFramework
                     <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-open aria-expanded="false" aria-label="Show image details">&gt;</button>
                 </div>
                 ' . $this->renderStatusPill((string)($viewerState['final_status'] ?? 'queued')) . '
+                <span class="picture-viewer-image-type" data-picture-viewer-image-type-label>' . HelperFramework::escape($this->imageTypeLabel((string)($viewerState['display_type'] ?? ''))) . '</span>
                 ' . $this->mediaMarkup($photo, $viewerState) . '
                 <button class="picture-viewer-fullscreen-close" type="button" data-picture-viewer-fullscreen-close aria-label="Exit full screen" hidden>&times;</button>
             </div>
             <div class="picture-viewer-details">
                 <div class="picture-viewer-details-header">
                     <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-close aria-expanded="true" aria-label="Hide image details">&lt;</button>
-                    <div class="picture-viewer-title">
-                        <h3>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</h3>
-                        <span class="picture-viewer-image-type" data-picture-viewer-image-type-label>' . HelperFramework::escape($this->imageTypeLabel((string)($viewerState['display_type'] ?? ''))) . '</span>
-                    </div>
+                    <h3>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</h3>
                 </div>
                 ' . $this->detailsTabs($photo, $metadata) . '
             </div>
