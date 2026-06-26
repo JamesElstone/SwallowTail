@@ -42,7 +42,7 @@ The intended flow is:
 2. SwallowTail computes a checksum for duplicate detection.
 3. The source file is stored outside `web_root`.
 4. The photo starts as unassigned, so normal event viewers cannot see it.
-5. A conversion process creates image files such as embedded, original, thumbnail, and filtered JPEGs.
+5. A conversion process creates image files such as embedded, original, thumbnail, preview, and final JPEGs.
 6. An admin or editor assigns the photo to one or more events.
 7. Event permissions decide which users can view and download the photo.
 8. Private generated image files are streamed by the application after checking access.
@@ -71,9 +71,9 @@ Current core features:
 - CR2 RAW image upload through the web UI and device API.
 - SpiceBush desktop/CLI registration and upload-token based API access.
 - SHA-256 quick checksum preflight and duplicate detection during ingest.
-- Off-web-root storage for RAW sources, generated JPEGs, thumbnails, filtered previews, and PP3 profiles.
+- Off-web-root storage for RAW sources, generated JPEGs, thumbnails, previews, final images, and PP3 profiles.
 - Dynamic storage discovery with root-partition exclusion, free-space thresholds, optional checksum round-robin selection, ZFS dataset selection, cached storage snapshots, and queued storage migrations.
-- RAW-to-JPEG conversion jobs for embedded, original, thumbnail, and filtered preview outputs.
+- RAW-to-JPEG conversion jobs for embedded, original, thumbnail, preview, and final outputs.
 - FreeBSD rc.d services for conversion work and storage cache/migration work.
 - Event, photo assignment, and event-permission service tables.
 - Tiled gallery, single-photo viewer, picture editor preview flow, recent uploads, storage summary, and storage settings UI.

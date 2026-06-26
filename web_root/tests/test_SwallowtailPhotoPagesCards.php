@@ -1064,6 +1064,9 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     $harness->assertTrue(str_contains($source, 'SwallowtailPhotoMetadataSummaryService'));
     $harness->assertTrue(str_contains($source, 'data-picture-editor-display-state'));
     $harness->assertTrue(str_contains($source, 'Displaying: '));
+    $harness->assertTrue(str_contains($source, 'data-picture-editor-field="\' . HelperFramework::escape($key) . \'" disabled'));
+    $harness->assertTrue(str_contains($source, 'data-picture-editor-check="\' . HelperFramework::escape($key) . \'" disabled'));
+    $harness->assertTrue(str_contains($source, 'data-picture-editor-save disabled'));
 });
 
 $harness->check(_picture_viewer::class, 'picture editor exposes revert control', function () use ($harness): void {

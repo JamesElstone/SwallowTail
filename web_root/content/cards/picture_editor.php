@@ -144,8 +144,8 @@ final class _picture_editorCard extends CardBaseFramework
                     . $this->rangeField('perspective.vertical', 'Vertical', (float)($perspective['vertical'] ?? 0), -100, 100, 1)
                 ) . '
                 <div class="picture-editor-actions">
-                    <button class="button button-inline primary" type="button" data-picture-editor-save>Save</button>
-                    <button class="button button-inline picture-editor-revert" type="button" data-picture-editor-revert>Revert to Baseline</button>
+                    <button class="button button-inline primary" type="button" data-picture-editor-save disabled>Save</button>
+                    <button class="button button-inline picture-editor-revert" type="button" data-picture-editor-revert disabled>Revert to Baseline</button>
                 </div>
             </div>
         </div>';
@@ -164,7 +164,7 @@ final class _picture_editorCard extends CardBaseFramework
         $id = 'picture-editor-' . str_replace('.', '-', $key);
 
         return '<label class="picture-editor-toggle" for="' . HelperFramework::escape($id) . '">
-            <input id="' . HelperFramework::escape($id) . '" type="checkbox" value="1" ' . ($checked ? 'checked' : '') . ' data-picture-editor-check="' . HelperFramework::escape($key) . '">
+            <input id="' . HelperFramework::escape($id) . '" type="checkbox" value="1" ' . ($checked ? 'checked' : '') . ' data-picture-editor-check="' . HelperFramework::escape($key) . '" disabled>
             <span>' . HelperFramework::escape($label) . '</span>
         </label>';
     }
@@ -176,8 +176,8 @@ final class _picture_editorCard extends CardBaseFramework
 
         return '<label class="picture-editor-field" for="' . HelperFramework::escape($id) . '">
             <span>' . HelperFramework::escape($label) . '</span>
-            <input id="' . HelperFramework::escape($id) . '" type="range" min="' . (string)$min . '" max="' . (string)$max . '" step="' . (string)$step . '" value="' . HelperFramework::escape((string)$value) . '" data-picture-editor-field="' . HelperFramework::escape($key) . '">
-            <input type="number" min="' . (string)$min . '" max="' . (string)$max . '" step="' . (string)$step . '" value="' . HelperFramework::escape((string)$value) . '" data-picture-editor-number="' . HelperFramework::escape($key) . '">
+            <input id="' . HelperFramework::escape($id) . '" type="range" min="' . (string)$min . '" max="' . (string)$max . '" step="' . (string)$step . '" value="' . HelperFramework::escape((string)$value) . '" data-picture-editor-field="' . HelperFramework::escape($key) . '" disabled>
+            <input type="number" min="' . (string)$min . '" max="' . (string)$max . '" step="' . (string)$step . '" value="' . HelperFramework::escape((string)$value) . '" data-picture-editor-number="' . HelperFramework::escape($key) . '" disabled>
         </label>';
     }
 

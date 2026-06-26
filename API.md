@@ -252,7 +252,8 @@ Successful response:
     "embedded": {"job_id": 456, "status": "queued"},
     "original": {"job_id": 457, "status": "processing"},
     "thumbnail": {"job_id": 458, "status": "succeeded"},
-    "filtered": {"job_id": null, "status": "not_queued"},
+    "preview": {"job_id": null, "status": "not_queued"},
+    "final": {"job_id": null, "status": "not_queued"},
     "profile": {"job_id": null, "status": "not_queued"}
   },
   "images": {
@@ -264,7 +265,8 @@ Successful response:
       "modified_at": "2026-06-18T12:00:00+00:00",
       "sha256": "..."
     },
-    "filtered": {"ready": false},
+    "preview": {"ready": false},
+    "final": {"ready": false},
     "profile": {"ready": false}
   }
 }

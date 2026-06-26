@@ -82,9 +82,9 @@ $harness->run(CardRendererFramework::class, function (GeneratedServiceClassTestH
     $harness->check(CardRendererFramework::class, 'omits missing optional context service params', function () use ($harness, $instance, $services, $resolveCardService): void {
         $result = $resolveCardService->invoke(
             $instance,
-            'uploaded_filtered',
+            'uploaded_recent',
             [
-                'key' => 'uploaded_filtered',
+                'key' => 'uploaded_recent',
                 'service' => CardRendererOptionalParamTestService::class,
                 'method' => 'filterUploadHistory',
                 'params' => ['filter' => ':uploads.filter'],
@@ -100,9 +100,9 @@ $harness->run(CardRendererFramework::class, function (GeneratedServiceClassTestH
     $harness->check(CardRendererFramework::class, 'keeps missing required context service params as errors', function () use ($harness, $instance, $services, $resolveCardService): void {
         $result = $resolveCardService->invoke(
             $instance,
-            'uploaded_filtered',
+            'uploaded_recent',
             [
-                'key' => 'uploaded_filtered',
+                'key' => 'uploaded_recent',
                 'service' => CardRendererOptionalParamTestService::class,
                 'method' => 'requireUploadHistoryFilter',
                 'params' => ['filter' => ':uploads.filter'],
