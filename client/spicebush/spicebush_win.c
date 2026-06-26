@@ -42,7 +42,7 @@
 #define ID_MAIN_SHUTDOWN_TIMER 4001
 #define MAX_TEXT 1024
 #define QUEUE_INITIAL 128
-#define STATS_LABEL_COUNT 17
+#define STATS_LABEL_COUNT 18
 #define RAW_UPLOAD_RETRY 0
 #define RAW_UPLOAD_OK 1
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
@@ -108,6 +108,7 @@ typedef struct AppState {
     DWORD uploadMillisWindowNext;
     U64 uploadMillisWindowTotal;
     U64 serverMaxRawUploadBytes;
+    DWORD unavailableDriveWarningMask;
     DWORD nextQueueId;
     DWORD queueDoneSinceCompact;
     int statsPingState;
@@ -155,6 +156,25 @@ static int ShutdownRequested(void);
 static DWORD ClearUploadedHistoryCache(void);
 static U64 ParseU64(const char *text);
 static void RecordSuccessfulUpload(DWORD elapsedMillis);
+static DWORD PendingQueueCountForDrive(char letter, int *processing);
+static int SourceDriveUnavailable(const char *path, char *letterOut);
+static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path);
+
+static HWND ForegroundAlertOwner(void)
+{
+    if (g_app.statsWindow && IsWindowVisible(g_app.statsWindow)) return g_app.statsWindow;
+    if (g_app.registerWindow && IsWindowVisible(g_app.registerWindow)) return g_app.registerWindow;
+    return NULL;
+}
+
+static void BringAlertOwnerForward(HWND owner)
+{
+    if (!owner) return;
+    ShowWindow(owner, SW_SHOWNORMAL);
+    SetWindowPos(owner, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetWindowPos(owner, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    SetForegroundWindow(owner);
+}
 
 static HICON AppIcon(void)
 {
@@ -1963,6 +1983,19 @@ static void ProcessPath(DWORD queueId, const char *path)
     DWORD start = GetTickCount();
     LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
     if (!ComputeSha256(path, hash, sizeof(hash), &sizeBytes)) {
+        if (SourceDriveUnavailable(path, NULL)) {
+            LogMessage("Process deferred: source drive unavailable during SHA-256 path=%s delay_ms=%lu",
+                path,
+                (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
+            WarnIfUnavailableSourceDriveHasPendingWork(path);
+            QueueRequeue(queueId, path);
+            if (g_app.stopEvent) {
+                WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
+            } else {
+                Sleep(RAW_UPLOAD_RETRY_DELAY_MS);
+            }
+            return;
+        }
         InterlockedIncrement(&g_app.totalFailed);
         LogMessage("Process failed: could not calculate SHA-256 path=%s", path);
         AppendQueueDone(queueId, "failed_permanent");
@@ -2142,6 +2175,102 @@ static int PathOnDrive(const char *path, char letter)
         && (path[2] == '\\' || path[2] == '/');
 }
 
+static int SourceDriveUnavailable(const char *path, char *letterOut)
+{
+    char letter;
+    char root[] = "A:\\";
+    UINT type;
+    DWORD attrs;
+    DWORD error;
+
+    if (!path || !path[0] || path[1] != ':' || (path[2] != '\\' && path[2] != '/')) return 0;
+    letter = path[0];
+    if (letter >= 'a' && letter <= 'z') letter = (char)(letter - 'a' + 'A');
+    if (letter < 'A' || letter > 'Z') return 0;
+
+    root[0] = letter;
+    type = GetDriveTypeA(root);
+    if (type == DRIVE_NO_ROOT_DIR) {
+        if (letterOut) *letterOut = letter;
+        return 1;
+    }
+
+    attrs = GetFileAttributesA(root);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        error = GetLastError();
+        if (type == DRIVE_UNKNOWN
+            || error == ERROR_PATH_NOT_FOUND
+            || error == ERROR_FILE_NOT_FOUND
+            || error == ERROR_NOT_READY
+            || error == ERROR_DEVICE_NOT_CONNECTED) {
+            if (letterOut) *letterOut = letter;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void ShowWarningAlert(const char *message)
+{
+    HWND owner = ForegroundAlertOwner();
+    UINT flags = MB_ICONWARNING | MB_OK | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL;
+
+    BringAlertOwnerForward(owner);
+    MessageBeep(MB_ICONWARNING);
+    MessageBoxA(owner, message, APP_NAME, flags);
+}
+
+static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path)
+{
+    char letter = '\0';
+    char root[] = "A:\\";
+    DWORD bit;
+    DWORD pending;
+    DWORD unuploaded;
+    int processing = 0;
+    int shouldWarn = 0;
+    char message[512];
+
+    if (!SourceDriveUnavailable(path, &letter)) return;
+    bit = 1UL << (letter - 'A');
+    root[0] = letter;
+
+    EnterCriticalSection(&g_app.lock);
+    if ((g_app.unavailableDriveWarningMask & bit) == 0) {
+        g_app.unavailableDriveWarningMask |= bit;
+        shouldWarn = 1;
+    }
+    LeaveCriticalSection(&g_app.lock);
+
+    pending = PendingQueueCountForDrive(letter, &processing);
+    unuploaded = pending + (processing ? 1 : 0);
+    if (unuploaded == 0) unuploaded = 1;
+
+    if (!shouldWarn) {
+        LogMessage("Unavailable source drive warning suppressed: root=%s pending=%lu processing=%s",
+            root,
+            (unsigned long)pending,
+            processing ? "yes" : "no");
+        return;
+    }
+
+    SbSnprintf(message, sizeof(message),
+        "%s is no longer available while %lu file%s from it %s still waiting to upload.\r\n\r\n"
+        "Reinsert the card and let SpiceBush finish before formatting it.",
+        root,
+        (unsigned long)unuploaded,
+        unuploaded == 1 ? "" : "s",
+        unuploaded == 1 ? "was" : "were");
+
+    LogMessage("Unavailable source drive warning: root=%s pending=%lu processing=%s",
+        root,
+        (unsigned long)pending,
+        processing ? "yes" : "no");
+    ShowWarningAlert(message);
+    ShowTrayBalloon(g_app.mainWindow, APP_NAME, message, 10000);
+}
+
 static DWORD WINAPI ScanDriveThread(LPVOID param)
 {
     ScanRequest *request = (ScanRequest *)param;
@@ -2221,6 +2350,9 @@ static void HandleDeviceArrival(LPARAM lp)
     }
     mask = ((DEV_BROADCAST_VOLUME *)hdr)->dbcv_unitmask;
     LogMessage("Device arrival volume mask=0x%08lx", (unsigned long)mask);
+    EnterCriticalSection(&g_app.lock);
+    g_app.unavailableDriveWarningMask &= ~mask;
+    LeaveCriticalSection(&g_app.lock);
     for (i = 0; i < 26; i++) {
         if (mask & (1UL << i)) StartScanDrive((char)('A' + i), 3);
     }
@@ -2272,7 +2404,7 @@ static void WarnIfRemovedDriveHasPendingWork(char letter)
         root,
         (unsigned long)pending,
         processing ? "yes" : "no");
-    MessageBoxA(g_app.mainWindow ? g_app.mainWindow : NULL, message, APP_NAME, MB_ICONWARNING | MB_OK);
+    ShowWarningAlert(message);
     ShowTrayBalloon(g_app.mainWindow, APP_NAME, message, 10000);
 }
 
@@ -2604,8 +2736,11 @@ static int ConfirmGracefulShutdown(HWND hwnd)
     LONG processing = InterlockedCompareExchange(&g_app.processing, 0, 0);
     LONG activeScans = InterlockedCompareExchange(&g_app.activeScans, 0, 0);
     DWORD unuploaded = pending + (processing ? 1 : 0);
+    HWND owner;
+    UINT flags = MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL;
     char message[512];
     int answer;
+    (void)hwnd;
 
     if (unuploaded == 0 && activeScans == 0) return 1;
 
@@ -2634,7 +2769,10 @@ static int ConfirmGracefulShutdown(HWND hwnd)
             activeScans == 1 ? " is" : "s are");
     }
 
-    answer = MessageBoxA(hwnd, message, APP_NAME, MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+    owner = ForegroundAlertOwner();
+    BringAlertOwnerForward(owner);
+    MessageBeep(MB_ICONWARNING);
+    answer = MessageBoxA(owner, message, APP_NAME, flags);
     LogMessage("Shutdown warning: unuploaded=%lu active_scans=%ld answer=%s",
         (unsigned long)unuploaded,
         activeScans,
@@ -2739,7 +2877,7 @@ static void ShowStatsWindow(void)
         RECT rect;
         rect.left = 0;
         rect.top = 0;
-        rect.right = 18 + 180 + 18;
+        rect.right = 18 + 280 + 18;
         rect.bottom = 580;
         AdjustWindowRect(&rect, style, FALSE);
         g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
@@ -2820,7 +2958,8 @@ static void RefreshStats(void)
     char text[256];
     char foundText[32];
     char uploadedText[32];
-    char alreadyText[32];
+    char alreadyLocalText[32];
+    char alreadyRemoteText[32];
     char pendingText[32];
     char failedText[32];
     char rejectedOversizeText[32];
@@ -2834,6 +2973,8 @@ static void RefreshStats(void)
     LONG found;
     LONG uploaded;
     LONG alreadyUploaded;
+    LONG alreadyLocal;
+    LONG alreadyRemote;
     LONG failed;
     LONG rejectedOversize;
     LONG scanned;
@@ -2848,7 +2989,9 @@ static void RefreshStats(void)
     pending = (LONG)g_app.queueCount;
     found = g_app.totalFound;
     uploaded = g_app.totalUploaded;
-    alreadyUploaded = g_app.totalKnown + g_app.totalSkippedLocal;
+    alreadyLocal = g_app.totalSkippedLocal;
+    alreadyRemote = g_app.totalKnown;
+    alreadyUploaded = alreadyLocal + alreadyRemote;
     failed = g_app.totalFailed;
     rejectedOversize = g_app.totalRejectedOversize;
     scanned = g_app.totalScannedDrives;
@@ -2871,7 +3014,8 @@ static void RefreshStats(void)
 
     FormatCount(found, foundText, sizeof(foundText));
     FormatCount(uploaded, uploadedText, sizeof(uploadedText));
-    FormatCount(alreadyUploaded, alreadyText, sizeof(alreadyText));
+    FormatCount(alreadyLocal, alreadyLocalText, sizeof(alreadyLocalText));
+    FormatCount(alreadyRemote, alreadyRemoteText, sizeof(alreadyRemoteText));
     FormatCount(pending, pendingText, sizeof(pendingText));
     FormatCount(failed, failedText, sizeof(failedText));
     FormatCount(rejectedOversize, rejectedOversizeText, sizeof(rejectedOversizeText));
@@ -2900,25 +3044,27 @@ static void RefreshStats(void)
     SetWindowTextIfChanged(g_app.statsLabels[5], text);
     SbSnprintf(text, sizeof(text), "Uploaded this session: %s", uploadedText);
     SetWindowTextIfChanged(g_app.statsLabels[6], text);
-    SbSnprintf(text, sizeof(text), "Already uploaded: %s", alreadyText);
+    SbSnprintf(text, sizeof(text), "Already uploaded (local cache): %s", alreadyLocalText);
     SetWindowTextIfChanged(g_app.statsLabels[7], text);
-    SbSnprintf(text, sizeof(text), "Waiting to upload: %s", pendingText);
+    SbSnprintf(text, sizeof(text), "Already uploaded (remote): %s", alreadyRemoteText);
     SetWindowTextIfChanged(g_app.statsLabels[8], text);
-    SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
+    SbSnprintf(text, sizeof(text), "Waiting to upload: %s", pendingText);
     SetWindowTextIfChanged(g_app.statsLabels[9], text);
-    SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedOversizeText);
+    SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
     SetWindowTextIfChanged(g_app.statsLabels[10], text);
-    SetWindowTextIfChanged(g_app.statsLabels[11], "");
+    SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedOversizeText);
+    SetWindowTextIfChanged(g_app.statsLabels[11], text);
+    SetWindowTextIfChanged(g_app.statsLabels[12], "");
     SbSnprintf(text, sizeof(text), "Drives scanned this session: %s", scannedText);
-    SetWindowTextIfChanged(g_app.statsLabels[12], text);
-    SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextIfChanged(g_app.statsLabels[13], text);
-    SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
+    SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextIfChanged(g_app.statsLabels[14], text);
-    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
+    SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
     SetWindowTextIfChanged(g_app.statsLabels[15], text);
-    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
     SetWindowTextIfChanged(g_app.statsLabels[16], text);
+    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SetWindowTextIfChanged(g_app.statsLabels[17], text);
 }
 
 typedef struct RegisterRequest {
@@ -3073,12 +3219,12 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE:
         {
             int margin = 18;
-            int buttonWidth = 180;
-            int buttonY = 410;
+            int buttonWidth = 220;
+            int buttonY = 432;
             int pauseY = buttonY + 36;
             int clearY = pauseY + 36;
             int pingY = clearY + 36;
-            int labelWidth = buttonWidth;
+            int labelWidth = 280;
             for (i = 0; i < STATS_LABEL_COUNT; i++) {
                 g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
             }
