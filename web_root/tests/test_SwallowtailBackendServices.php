@@ -18,6 +18,7 @@ $harness->run(SwallowtailConversionStatusApiService::class);
 $harness->run(SwallowtailQuickChecksumApiService::class);
 $harness->run(SwallowtailSpiceBushRegistrationApiService::class);
 $harness->run(SwallowtailEventAccessService::class);
+$harness->run(SwallowtailEventManagementService::class);
 $harness->run(SwallowtailConversionQueueService::class);
 $harness->run(SwallowtailStorageLocationService::class);
 $harness->run(SwallowtailImageServeService::class);
@@ -2127,6 +2128,164 @@ $harness->check(SwallowtailEventAccessService::class, 'keeps event access least 
     @unlink($source);
 });
 
+$harness->check(SwallowtailEventAccessService::class, 'combines user and role event grants additively', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    foreach ([[401, 'Family Viewer', 7], [402, 'Admin Viewer', -1], [403, 'Expired Viewer', 8]] as $user) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO users (
+                id,
+                display_name,
+                email_address,
+                password_hash,
+                role_id
+            ) VALUES (
+                :id,
+                :display_name,
+                :email_address,
+                '',
+                :role_id
+            )",
+            [
+                'id' => $user[0],
+                'display_name' => $user[1],
+                'email_address' => 'swallowtail-event-' . (string)$user[0] . '@example.test',
+                'role_id' => $user[2],
+            ]
+        );
+    }
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0012.CR2');
+    $photoId = (int)$result['photo_id'];
+    $event = $library->createEvent('Family Party');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+
+    $access = new SwallowtailEventAccessService();
+    $library->grantEventRolePermission((int)$event['id'], 7, [
+        'can_view' => true,
+        'can_edit' => false,
+    ]);
+
+    $harness->assertTrue($access->userCanViewPhoto(401, $photoId));
+    $harness->assertTrue(!$access->userCanEditPhoto(401, $photoId));
+
+    $library->grantEventPermission((int)$event['id'], 401, [
+        'can_view' => true,
+        'can_edit' => true,
+    ]);
+
+    $harness->assertTrue($access->userCanEditPhoto(401, $photoId));
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO event_permissions (
+            event_id,
+            grantee_type,
+            grantee_id,
+            can_view,
+            can_edit,
+            expires_at
+        ) VALUES (
+            :event_id,
+            'role',
+            8,
+            1,
+            1,
+            '2000-01-01 00:00:00'
+        )",
+        ['event_id' => (int)$event['id']]
+    );
+
+    $harness->assertTrue(!$access->userCanViewPhoto(403, $photoId));
+    $harness->assertTrue((new SwallowtailPhotoUiService())->userCanEditPhoto($photoId, 402));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailEventManagementService::class, 'keeps event user permission search lazy and limited', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+
+    InterfaceDB::execute("DROP TABLE IF EXISTS role_card_permissions");
+    InterfaceDB::execute("DROP TABLE IF EXISTS roles");
+    InterfaceDB::execute("CREATE TABLE roles (
+        id INTEGER PRIMARY KEY,
+        role_name TEXT NOT NULL
+    )");
+    InterfaceDB::execute("CREATE TABLE role_card_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role_id INTEGER NOT NULL,
+        card_key TEXT NOT NULL
+    )");
+    InterfaceDB::prepareExecute("INSERT INTO roles (id, role_name) VALUES (7, 'Family'), (8, 'Friends')");
+
+    for ($i = 0; $i < 12; $i++) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO users (
+                id,
+                display_name,
+                email_address,
+                password_hash,
+                role_id
+            ) VALUES (
+                :id,
+                :display_name,
+                :email_address,
+                '',
+                :role_id
+            )",
+            [
+                'id' => 500 + $i,
+                'display_name' => 'Searchable Person ' . (string)$i,
+                'email_address' => 'searchable-' . (string)$i . '@example.test',
+                'role_id' => $i % 2 === 0 ? 7 : 8,
+            ]
+        );
+    }
+
+    $library = new SwallowtailPhotoLibraryService();
+    $event = $library->createEvent('Searchable Event');
+    $eventId = (int)$event['id'];
+    $library->grantEventPermission($eventId, 500, ['can_view' => true]);
+
+    $service = new SwallowtailEventManagementService();
+    $userRows = $service->userPermissionRows($eventId);
+    $searchRows = $service->searchUsers($eventId, 'Searchable');
+    $roleRows = $service->rolePermissionRows($eventId);
+
+    $harness->assertCount(1, $userRows);
+    $harness->assertSame(500, (int)($userRows[0]['grantee_id'] ?? 0));
+    $harness->assertSame(8, count($searchRows));
+    $harness->assertTrue(!in_array(500, array_map(static fn(array $row): int => (int)($row['id'] ?? 0), $searchRows), true));
+    $harness->assertCount(2, $roleRows);
+
+    $service->setPermission($eventId, 'role', 7, [
+        'can_edit' => true,
+    ], 501);
+
+    $grant = InterfaceDB::fetchOne(
+        "SELECT can_view, can_edit
+         FROM event_permissions
+         WHERE event_id = :event_id
+           AND grantee_type = 'role'
+           AND grantee_id = 7
+         LIMIT 1",
+        ['event_id' => $eventId]
+    );
+
+    $harness->assertTrue(is_array($grant));
+    $harness->assertSame(1, (int)($grant['can_view'] ?? 0));
+    $harness->assertSame(1, (int)($grant['can_edit'] ?? 0));
+});
+
 $harness->check(SwallowtailImageServeService::class, 'resolves only authorised private image files', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
@@ -3446,6 +3605,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $widenProfileSectionsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_003_widen_profile_section_names.sql';
     $internalProfileDataEnabledPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_004_internal_profile_data_enabled.sql';
     $rawTheapeeProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_005_rawtheapee_profile_data.sql';
+    $eventEditPermissionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_006_event_edit_permission.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3466,12 +3626,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $widenProfileSectionsSql = file_get_contents($widenProfileSectionsPath);
     $internalProfileDataEnabledSql = file_get_contents($internalProfileDataEnabledPath);
     $rawTheapeeProfileDataSql = file_get_contents($rawTheapeeProfileDataPath);
+    $eventEditPermissionSql = file_get_contents($eventEditPermissionPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql) || !is_string($eventEditPermissionSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql . "\n" . $eventEditPermissionSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3480,6 +3641,15 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'CREATE TABLE IF NOT EXISTS storage_migration_job_items',
         'CREATE TABLE IF NOT EXISTS photos',
         'CREATE TABLE IF NOT EXISTS event_permissions',
+        "grantee_type enum('user','role') NOT NULL DEFAULT 'user'",
+        'grantee_id int(11) NOT NULL',
+        'can_edit tinyint(1) NOT NULL DEFAULT 0',
+        'UNIQUE KEY uq_event_permissions_event_grantee (event_id, grantee_type, grantee_id)',
+        'KEY idx_event_permissions_grantee (grantee_type, grantee_id, event_id)',
+        'ADD COLUMN IF NOT EXISTS grantee_type',
+        'ADD COLUMN IF NOT EXISTS grantee_id',
+        'UPDATE event_permissions',
+        'DROP COLUMN IF EXISTS user_id',
         'CREATE TABLE IF NOT EXISTS api_upload_tokens',
         'CREATE TABLE IF NOT EXISTS api_upload_token_cidrs',
         'CREATE TABLE IF NOT EXISTS photo_conversion_jobs',

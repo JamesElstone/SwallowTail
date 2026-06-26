@@ -14,7 +14,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
-    foreach (['upload', 'gallery', 'view', 'edit', 'profiles', 'download'] as $pageKey) {
+    foreach (['upload', 'gallery', 'view', 'edit', 'profiles', 'download', 'events'] as $pageKey) {
         $page = $factory->create($pageKey);
         $harness->assertSame($pageKey, $page->id());
     }
@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview', 'event_downloads'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview', 'event_downloads', 'event_permissions'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -49,6 +49,10 @@ $harness->check(_edit::class, 'edit page exposes picture editor card', function 
 
 $harness->check(_download::class, 'download page exposes event download card', function () use ($harness): void {
     $harness->assertSame(['event_downloads'], (new _download())->cards());
+});
+
+$harness->check(_events::class, 'events page exposes event permissions card', function () use ($harness): void {
+    $harness->assertSame(['event_permissions'], (new _events())->cards());
 });
 
 $harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {
@@ -875,6 +879,27 @@ $harness->check(_gallery::class, 'browse gallery hides download link without sin
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
 });
 
+$harness->check(_gallery::class, 'browse gallery hides edit link without edit permission', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 42,
+        'original_filename' => 'IMG_0042.CR2',
+        'conversion_state' => 'ready',
+        'preview_ready' => true,
+        'effective_can_edit' => false,
+        'effective_can_download_single_jpeg' => true,
+    ]);
+
+    $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
+    $harness->assertTrue(!str_contains($html, '?page=edit&amp;photo_id=42'));
+    $harness->assertTrue(!str_contains($html, 'gallery-edit-link'));
+    $harness->assertTrue(str_contains($html, 'gallery-event-select'));
+    $harness->assertTrue(str_contains($html, 'form="gallery-event-assignment-form"'));
+});
+
 $harness->check(_gallery::class, 'browse gallery pagination renders first and last controls', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'paginationControls');
@@ -1022,6 +1047,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
         'conversion_state' => 'processing',
         'preview_ready' => false,
         'thumbnail_ready' => true,
+        'effective_can_edit' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=43'));
@@ -1031,6 +1057,24 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, 'Preview pending'));
+});
+
+$harness->check(_gallery::class, 'browse gallery event assignment markup is hidden by default', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
+    $css = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'index.css');
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+
+    if (!is_string($source) || !is_string($css) || !is_string($js)) {
+        throw new RuntimeException('Unable to read gallery source files.');
+    }
+
+    $harness->assertTrue(str_contains($source, 'data-gallery-events-toggle'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-events-pane hidden'));
+    $harness->assertTrue(str_contains($source, 'class="gallery-event-select"'));
+    $harness->assertTrue(str_contains($css, '.gallery-event-select'));
+    $harness->assertTrue(str_contains($css, '.gallery-grid.is-assigning-events .gallery-event-select'));
+    $harness->assertTrue(str_contains($js, 'data-gallery-events-toggle'));
+    $harness->assertTrue(str_contains($js, 'is-assigning-events'));
 });
 
 $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', function () use ($harness): void {
@@ -1108,6 +1152,8 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     }
 
     $harness->assertTrue(str_contains($source, 'SwallowtailPhotoMetadataSummaryService'));
+    $harness->assertTrue(str_contains($source, 'userCanEditPhoto'));
+    $harness->assertTrue(str_contains($source, 'editing is not available to your account'));
     $harness->assertTrue(str_contains($source, 'data-picture-editor-display-state'));
     $harness->assertTrue(str_contains($source, 'Displaying: '));
     $harness->assertTrue(str_contains($source, 'data-picture-editor-field="\' . HelperFramework::escape($key) . \'" disabled'));
@@ -1124,4 +1170,38 @@ $harness->check(_edit::class, 'picture editor exposes revert control', function 
 
     $harness->assertTrue(str_contains($source, 'data-picture-editor-revert'));
     $harness->assertTrue(str_contains($source, 'Revert to Baseline'));
+});
+
+$harness->check(_event_permissionsCard::class, 'event permissions card uses searchable user picker', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'event_permissions.php');
+    $serviceSource = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'service' . DIRECTORY_SEPARATOR . 'SwallowtailEventManagementService.php');
+
+    if (!is_string($source) || !is_string($serviceSource)) {
+        throw new RuntimeException('Unable to read event permission source.');
+    }
+
+    $harness->assertTrue(str_contains($source, 'Role Permissions'));
+    $harness->assertTrue(str_contains($source, 'User Permissions'));
+    $harness->assertTrue(str_contains($source, '+ Add User Permissions'));
+    $harness->assertTrue(str_contains($source, 'data-event-user-picker'));
+    $harness->assertTrue(str_contains($source, 'userPermissionRows'));
+    $harness->assertTrue(str_contains($serviceSource, 'searchUsers'));
+    $harness->assertTrue(str_contains($serviceSource, 'LIMIT " . (string)$limit'));
+});
+
+$harness->check('SwallowTail SVG', 'events icon matches user and role icon style', function () use ($harness): void {
+    $path = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'svg' . DIRECTORY_SEPARATOR . 'events.svg';
+    $svg = file_get_contents($path);
+
+    if (!is_string($svg)) {
+        throw new RuntimeException('Unable to read events SVG.');
+    }
+
+    $harness->assertTrue(str_contains($svg, 'Swallowtail'));
+    $harness->assertTrue(str_contains($svg, 'viewBox="0 0 24 24"'));
+    $harness->assertTrue(str_contains($svg, 'fill="none"'));
+    $harness->assertTrue(str_contains($svg, 'stroke="#ffffff"'));
+    $harness->assertTrue(str_contains($svg, 'stroke-width="1.35"'));
+    $harness->assertTrue(str_contains($svg, 'stroke-linecap="round"'));
+    $harness->assertTrue(str_contains($svg, 'stroke-linejoin="round"'));
 });

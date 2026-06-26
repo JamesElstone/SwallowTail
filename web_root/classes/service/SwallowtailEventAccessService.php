@@ -198,9 +198,15 @@ final class SwallowtailEventAccessService
 
     private function granteeParams(int $userId): array
     {
+        try {
+            $roleId = $this->roleRepository->userRoleId($userId);
+        } catch (Throwable) {
+            $roleId = 0;
+        }
+
         return [
             'grantee_user_id' => $userId,
-            'grantee_role_id' => $this->roleRepository->userRoleId($userId),
+            'grantee_role_id' => $roleId,
         ];
     }
 }
