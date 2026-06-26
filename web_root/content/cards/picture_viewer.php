@@ -58,9 +58,9 @@ final class _picture_viewerCard extends CardBaseFramework
                 data-picture-viewer-status="' . HelperFramework::escape((string)($viewerState['final_status'] ?? 'queued')) . '"
                 data-picture-viewer-display-type="' . HelperFramework::escape((string)($viewerState['display_type'] ?? '')) . '">
                 <div class="picture-viewer-overlay-actions">
-                    <a class="button button-inline" href="?page=gallery">Back to Gallery</a>
-                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-open aria-expanded="false" aria-label="Show image details">&gt;</button>
+                    <a class="button button-inline picture-viewer-maximized-only" href="?page=gallery">Back to Gallery</a>
                 </div>
+                <button class="button button-inline picture-viewer-details-toggle picture-viewer-details-open-toggle" type="button" data-picture-viewer-details-open aria-expanded="false" aria-label="Show image details">&lt;</button>
                 ' . $this->renderStatusPill((string)($viewerState['final_status'] ?? 'queued')) . '
                 <span class="picture-viewer-image-type" data-picture-viewer-image-type-label>' . HelperFramework::escape($this->imageTypeLabel((string)($viewerState['display_type'] ?? ''))) . '</span>
                 ' . $this->mediaMarkup($photo, $viewerState) . '
@@ -68,7 +68,7 @@ final class _picture_viewerCard extends CardBaseFramework
             </div>
             <div class="picture-viewer-details">
                 <div class="picture-viewer-details-header">
-                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-close aria-expanded="true" aria-label="Hide image details">&lt;</button>
+                    <button class="button button-inline picture-viewer-details-toggle" type="button" data-picture-viewer-details-close aria-expanded="true" aria-label="Hide image details">&gt;</button>
                     <h3>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</h3>
                 </div>
                 ' . $this->detailsTabs($photo, $metadata) . '

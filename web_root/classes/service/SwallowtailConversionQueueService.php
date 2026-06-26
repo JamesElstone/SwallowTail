@@ -101,27 +101,30 @@ final class SwallowtailConversionQueueService
         int $photoId,
         string $profilePath,
         int $profileVersion,
-        ?int $requestedByUserId = null
+        ?int $requestedByUserId = null,
+        string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'preview', $profilePath, $profileVersion, self::PRIORITY_PREVIEW, $requestedByUserId);
+        return $this->enqueueProfiledRefresh($photoId, 'preview', $profilePath, $profileVersion, self::PRIORITY_PREVIEW, $requestedByUserId, $profileSignature);
     }
 
     public function enqueueFinalRefresh(
         int $photoId,
         string $profilePath,
         int $profileVersion,
-        ?int $requestedByUserId = null
+        ?int $requestedByUserId = null,
+        string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_FINAL, $requestedByUserId);
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_FINAL, $requestedByUserId, $profileSignature);
     }
 
     public function enqueueViewedFinalRefresh(
         int $photoId,
         string $profilePath,
         int $profileVersion,
-        ?int $requestedByUserId = null
+        ?int $requestedByUserId = null,
+        string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_VIEWED_FINAL, $requestedByUserId);
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_VIEWED_FINAL, $requestedByUserId, $profileSignature);
     }
 
     private function enqueueProfiledRefresh(
@@ -130,10 +133,11 @@ final class SwallowtailConversionQueueService
         string $profilePath,
         int $profileVersion,
         int $priority,
-        ?int $requestedByUserId
+        ?int $requestedByUserId,
+        string $profileSignature
     ): ?int {
         $notifyAfterCommit = !InterfaceDB::inTransaction();
-        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageType, $profilePath, $profileVersion, $priority, $requestedByUserId): array {
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageType, $profilePath, $profileVersion, $priority, $requestedByUserId, $profileSignature): array {
             $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
             if ($photo === null) {
                 return [];
@@ -153,11 +157,14 @@ final class SwallowtailConversionQueueService
                 $profilePath,
                 $profileVersion,
                 $priority,
-                $requestedByUserId
+                $requestedByUserId,
+                null,
+                null,
+                $profileSignature
             );
 
-            if ($imageType === 'preview') {
-                $this->markObsoletePreviewJobs($photoId, [$jobId]);
+            if ($jobId !== null && in_array($imageType, ['preview', 'final'], true)) {
+                $this->markObsoleteProfileJobs($photoId, $imageType, [$jobId]);
             }
             $this->setPhotoConversionState($photoId, 'processing');
 
@@ -187,7 +194,8 @@ final class SwallowtailConversionQueueService
         string|int $priority = self::PRIORITY_ORIGINAL,
         ?int $requestedByUserId = null,
         ?int $outputWidth = null,
-        ?int $outputHeight = null
+        ?int $outputHeight = null,
+        string $profileSignature = ''
     ): ?int {
         if ($photoId <= 0) {
             return null;
@@ -201,6 +209,14 @@ final class SwallowtailConversionQueueService
         $outputHeight = $this->nullablePositiveInt($outputHeight);
         $inputPath = $this->normaliseRequiredPath($inputPath, 1000);
         $outputPath = $this->normaliseRequiredPath($outputPath, 1000);
+        $profileSignature = $this->normaliseProfileSignature($profileSignature);
+        $hasProfileSignatureColumn = InterfaceDB::columnExists('photo_conversion_jobs', 'profile_signature');
+        $profileSignatureSql = '';
+        $profileSignatureParams = [];
+        if ($hasProfileSignatureColumn && $profileSignature !== '') {
+            $profileSignatureSql = ' AND profile_signature = :profile_signature';
+            $profileSignatureParams['profile_signature'] = $profileSignature;
+        }
 
         if (($outputWidth === null) !== ($outputHeight === null)) {
             throw new InvalidArgumentException('Conversion output width and height must be supplied together.');
@@ -213,6 +229,7 @@ final class SwallowtailConversionQueueService
                AND image_type = :image_type
                AND profile_version = :profile_version
                AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
+               " . $profileSignatureSql . "
                AND status IN ('queued', 'processing')
              ORDER BY id DESC
              LIMIT 1",
@@ -221,7 +238,7 @@ final class SwallowtailConversionQueueService
                 'image_type' => $imageType,
                 'profile_version' => $profileVersion,
                 'profile_path' => $profilePath,
-            ], static fn(mixed $value): bool => $value !== null)
+            ] + $profileSignatureParams, static fn(mixed $value): bool => $value !== null)
         );
 
         if (is_array($existingJob)) {
@@ -248,46 +265,57 @@ final class SwallowtailConversionQueueService
             return $existingJobId;
         }
 
+        $insertColumns = [
+            'photo_id',
+            'job_type',
+            'image_type',
+            'input_path',
+            'profile_path',
+            'output_path',
+            'output_width',
+            'output_height',
+            'profile_version',
+            'requested_by_user_id',
+            'priority',
+            'status',
+        ];
+        $insertValues = [
+            ':photo_id',
+            "'image'",
+            ':image_type',
+            ':input_path',
+            ':profile_path',
+            ':output_path',
+            ':output_width',
+            ':output_height',
+            ':profile_version',
+            ':requested_by_user_id',
+            ':priority',
+            "'queued'",
+        ];
+        $insertParams = [
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+            'input_path' => $inputPath,
+            'profile_path' => $profilePath,
+            'output_path' => $outputPath,
+            'output_width' => $outputWidth,
+            'output_height' => $outputHeight,
+            'profile_version' => $profileVersion,
+            'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
+            'priority' => $priority,
+        ];
+
+        if ($hasProfileSignatureColumn) {
+            $insertColumns[] = 'profile_signature';
+            $insertValues[] = ':profile_signature';
+            $insertParams['profile_signature'] = $profileSignature === '' ? null : $profileSignature;
+        }
+
         InterfaceDB::prepareExecute(
-            "INSERT INTO photo_conversion_jobs (
-                photo_id,
-                job_type,
-                image_type,
-                input_path,
-                profile_path,
-                output_path,
-                output_width,
-                output_height,
-                profile_version,
-                requested_by_user_id,
-                priority,
-                status
-            ) VALUES (
-                :photo_id,
-                'image',
-                :image_type,
-                :input_path,
-                :profile_path,
-                :output_path,
-                :output_width,
-                :output_height,
-                :profile_version,
-                :requested_by_user_id,
-                :priority,
-                'queued'
-            )",
-            [
-                'photo_id' => $photoId,
-                'image_type' => $imageType,
-                'input_path' => $inputPath,
-                'profile_path' => $profilePath,
-                'output_path' => $outputPath,
-                'output_width' => $outputWidth,
-                'output_height' => $outputHeight,
-                'profile_version' => $profileVersion,
-                'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
-                'priority' => $priority,
-            ]
+            "INSERT INTO photo_conversion_jobs (" . implode(', ', $insertColumns) . ")
+             VALUES (" . implode(', ', $insertValues) . ")",
+            $insertParams
         );
 
         $jobId = InterfaceDB::fetchColumn(
@@ -299,6 +327,7 @@ final class SwallowtailConversionQueueService
                AND input_path = :input_path
                AND output_path = :output_path
                AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
+               " . $profileSignatureSql . "
                AND status = 'queued'
              ORDER BY id DESC
              LIMIT 1",
@@ -309,7 +338,7 @@ final class SwallowtailConversionQueueService
                 'input_path' => $inputPath,
                 'output_path' => $outputPath,
                 'profile_path' => $profilePath,
-            ], static fn(mixed $value): bool => $value !== null)
+            ] + $profileSignatureParams, static fn(mixed $value): bool => $value !== null)
         );
 
         return $this->nullablePositiveInt($jobId);
@@ -549,8 +578,9 @@ final class SwallowtailConversionQueueService
         );
     }
 
-    private function markObsoletePreviewJobs(int $photoId, array $keepJobIds): void
+    private function markObsoleteProfileJobs(int $photoId, string $imageType, array $keepJobIds): void
     {
+        $imageType = $this->normaliseImageType($imageType);
         $keepJobIds = array_values(array_filter(array_map(
             static fn(mixed $value): int => (int)$value,
             $keepJobIds
@@ -575,11 +605,14 @@ final class SwallowtailConversionQueueService
                  completed_at = CURRENT_TIMESTAMP,
                  locked_at = NULL,
                  locked_by = NULL,
-                 last_error = 'Obsolete preview profile'
+                 last_error = :last_error
              WHERE photo_id = :photo_id
                AND status IN ('queued', 'processing')
-               AND image_type = 'preview'" . $notInSql,
-            $params
+               AND image_type = :image_type" . $notInSql,
+            $params + [
+                'image_type' => $imageType,
+                'last_error' => 'Obsolete ' . $imageType . ' profile',
+            ]
         );
     }
 
@@ -645,6 +678,13 @@ final class SwallowtailConversionQueueService
         $path = trim((string)$path);
 
         return $path === '' ? null : substr($path, 0, $maxLength);
+    }
+
+    private function normaliseProfileSignature(string $signature): string
+    {
+        $signature = strtolower(trim($signature));
+
+        return preg_match('/^[a-f0-9]{64}$/', $signature) === 1 ? $signature : '';
     }
 
     private function nullablePositiveInt(mixed $value): ?int

@@ -286,6 +286,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         output_width INTEGER NULL,
         output_height INTEGER NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
+        profile_signature TEXT NULL,
         requested_by_user_id INTEGER NULL,
         priority INTEGER NOT NULL DEFAULT 20,
         status TEXT NOT NULL DEFAULT 'queued',
@@ -2601,6 +2602,74 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
     }
 });
 
+$harness->check(SwallowtailCombinedProfileService::class, 'signs latest profile rows and enabled internal overlays', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::execute("INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+        (7, 0, 'swallowtail', 'status', 'processed', 'string'),
+        (7, 0, 'Exposure', 'Brightness', '12', 'int'),
+        (7, 0, 'RAW Bayer', 'Method', 'amaze', 'string'),
+        (7, 1, 'RAW Bayer', 'Method', 'igv', 'string')");
+    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, enabled, type, `key`, value, value_type) VALUES
+        ('preview', 'performance', 1, 1, 'RAW Bayer', 'Method', 'fast', 'string'),
+        ('preview', 'disabled', 2, 0, 'Resize', 'LongEdge', '999', 'int')");
+
+    $service = new SwallowtailCombinedProfileService();
+    $initial = $service->profileSignature(7, 'preview');
+    $harness->assertSame(1, preg_match('/^[a-f0-9]{64}$/', $initial));
+
+    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, enabled, type, `key`, value, value_type) VALUES
+        ('preview', 'disabled-extra', 3, 0, 'Resize', 'ShortEdge', '640', 'int')");
+    $disabledOverlay = $service->profileSignature(7, 'preview');
+    $harness->assertSame($initial, $disabledOverlay);
+
+    InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, enabled, type, `key`, value, value_type) VALUES
+        ('preview', 'enabled-extra', 4, 1, 'Resize', 'ShortEdge', '820', 'int')");
+    $enabledOverlay = $service->profileSignature(7, 'preview');
+    $harness->assertTrue($enabledOverlay !== $initial);
+
+    InterfaceDB::execute("INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+        (7, 2, 'RAW Bayer', 'Method', 'lmmse', 'string')");
+    $latestRevision = $service->profileSignature(7, 'preview');
+    $harness->assertTrue($latestRevision !== $enabledOverlay);
+});
+
+$harness->check(SwallowtailCombinedProfileService::class, 'requests metadata profile data when combined profile rows are missing', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $redis = new class {
+        public array $pushes = [];
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->pushes[] = [
+                'key' => $key,
+                'payload' => $payload,
+                'max_length' => $maxLength,
+            ];
+
+            return true;
+        }
+    };
+
+    try {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_combiner_test');
+        $service = new SwallowtailCombinedProfileService(new SwallowtailProfileDataService($redis));
+        $content = $service->combinedProfileContent(91, 'final');
+
+        $harness->assertSame('', trim($content));
+        $harness->assertSame('queued', (string)InterfaceDB::fetchColumn(
+            "SELECT value FROM photo_profile_data WHERE photo_id = 91 AND type = 'swallowtail' AND `key` = 'status' LIMIT 1"
+        ));
+        $harness->assertCount(1, $redis->pushes);
+        $harness->assertSame('swallowtail:metadata:profile_combiner_test', $redis->pushes[0]['key']);
+        $harness->assertSame(91, (int)$redis->pushes[0]['payload']['photo_id']);
+        $harness->assertSame('combined_profile_final', (string)$redis->pushes[0]['payload']['reason']);
+    } finally {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+    }
+});
+
 $harness->check(SwallowtailPreviewProfileService::class, 'uses thumbnail as temporary display without marking preview ready', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
@@ -2733,6 +2802,376 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview
     @unlink($source);
 });
 
+$harness->check(SwallowtailPreviewProfileService::class, 'polls active final job even when an older final image exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0013.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $finalPath = $storage->imagePath($base, $sha256, 'final');
+    $finalProfilePath = $storage->imagePath($base, $sha256, 'final_profile');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($finalProfilePath, "[Exposure]\nBrightness=10\n", LOCK_EX);
+
+    $event = $library->createEvent('Stale Final Viewer Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_edit' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    (new SwallowtailProfileDataService())->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+    $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => $currentProfileSignature,
+        ]
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 2, :profile_signature, 10, 'queued')",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => $currentProfileSignature,
+        ]
+    );
+
+    $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
+    $activeJobId = (int)InterfaceDB::fetchColumn(
+        "SELECT id FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_version = 2 LIMIT 1",
+        ['photo_id' => $photoId]
+    );
+
+    $harness->assertSame('final', (string)($state['display_type'] ?? ''));
+    $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
+    $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
+    $harness->assertSame($activeJobId, (int)($state['job_id'] ?? 0));
+    $harness->assertSame(2, (int)($state['profile_version'] ?? 0));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'type=final'));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertSame(65, (int)InterfaceDB::fetchColumn(
+        "SELECT priority FROM photo_conversion_jobs WHERE id = :id LIMIT 1",
+        ['id' => $activeJobId]
+    ));
+
+    InterfaceDB::prepareExecute(
+        "UPDATE photo_conversion_jobs SET status = 'succeeded', completed_at = CURRENT_TIMESTAMP WHERE id = :id",
+        ['id' => $activeJobId]
+    );
+    $loaded = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
+
+    $harness->assertSame('loaded', (string)($loaded['final_status'] ?? ''));
+    $harness->assertSame(true, (bool)($loaded['final_ready'] ?? false));
+    $harness->assertTrue(str_contains((string)($loaded['display_url'] ?? ''), 'v=2'));
+    $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'final',
+    ]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active final job and queues current signature', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0015.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $finalPath = $storage->imagePath($base, $sha256, 'final');
+    $finalProfilePath = $storage->imagePath($base, $sha256, 'final_profile');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($finalProfilePath, "[Exposure]\nBrightness=10\n", LOCK_EX);
+
+    $event = $library->createEvent('Stale Active Final Viewer Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_edit' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    $profileData = new SwallowtailProfileDataService();
+    $profileData->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+    $profileData->setValue($photoId, 'Exposure', 'Brightness', '18', 'int');
+    $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
+    $staleProfileSignature = str_repeat('a', 64);
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => $staleProfileSignature,
+        ]
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 2, :profile_signature, 10, 'queued')",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => $staleProfileSignature,
+        ]
+    );
+
+    $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
+    $newJob = InterfaceDB::fetchOne(
+        "SELECT id, profile_version, profile_signature, priority
+         FROM photo_conversion_jobs
+         WHERE photo_id = :photo_id
+           AND image_type = 'final'
+           AND status = 'queued'
+         ORDER BY id DESC
+         LIMIT 1",
+        ['photo_id' => $photoId]
+    );
+
+    $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
+    $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(is_array($newJob));
+    $harness->assertSame(3, (int)($newJob['profile_version'] ?? 0));
+    $harness->assertSame($currentProfileSignature, (string)($newJob['profile_signature'] ?? ''));
+    $harness->assertSame(65, (int)($newJob['priority'] ?? 0));
+    $harness->assertSame('obsolete', (string)InterfaceDB::fetchColumn(
+        "SELECT status FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_version = 2 LIMIT 1",
+        ['photo_id' => $photoId]
+    ));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'shows stale final temporarily while queueing fresh final signature', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0016.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $finalPath = $storage->imagePath($base, $sha256, 'final');
+    $finalProfilePath = $storage->imagePath($base, $sha256, 'final_profile');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($finalProfilePath, "[Exposure]\nBrightness=10\n", LOCK_EX);
+
+    $event = $library->createEvent('Stale Existing Final Viewer Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_edit' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    $profileData = new SwallowtailProfileDataService();
+    $profileData->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+    $profileData->setValue($photoId, 'Exposure', 'Brightness', '22', 'int');
+    $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => str_repeat('b', 64),
+        ]
+    );
+
+    $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
+    $freshJob = InterfaceDB::fetchOne(
+        "SELECT profile_version, profile_signature, status
+         FROM photo_conversion_jobs
+         WHERE photo_id = :photo_id
+           AND image_type = 'final'
+           AND profile_signature = :profile_signature
+         ORDER BY id DESC
+         LIMIT 1",
+        [
+            'photo_id' => $photoId,
+            'profile_signature' => $currentProfileSignature,
+        ]
+    );
+
+    $harness->assertSame('final', (string)($state['display_type'] ?? ''));
+    $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
+    $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(is_array($freshJob));
+    $harness->assertSame(2, (int)($freshJob['profile_version'] ?? 0));
+    $harness->assertSame('queued', (string)($freshJob['status'] ?? ''));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'loads final when succeeded job matches current signature', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $storage = new SwallowtailStorageService();
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService($storage, $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0017.CR2');
+    $photoId = (int)$result['photo_id'];
+    $photo = $library->photoById($photoId);
+    $sha256 = (string)($photo['original_sha256'] ?? '');
+    $base = (string)($photo['storage_base_location'] ?? '');
+    $finalPath = $storage->imagePath($base, $sha256, 'final');
+    $finalProfilePath = $storage->imagePath($base, $sha256, 'final_profile');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($finalProfilePath, "[Exposure]\nBrightness=10\n", LOCK_EX);
+
+    $event = $library->createEvent('Fresh Existing Final Viewer Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_edit' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+    $profileData = new SwallowtailProfileDataService();
+    $profileData->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
+    $profileData->setValue($photoId, 'Exposure', 'Brightness', '28', 'int');
+    $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 5, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        [
+            'photo_id' => $photoId,
+            'input_path' => $storage->imagePath($base, $sha256, 'source'),
+            'profile_path' => $finalProfilePath,
+            'output_path' => $finalPath,
+            'profile_signature' => $currentProfileSignature,
+        ]
+    );
+
+    $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
+
+    $harness->assertSame('loaded', (string)($state['final_status'] ?? ''));
+    $harness->assertSame(true, (bool)($state['final_ready'] ?? false));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=5'));
+    $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+        'photo_id' => $photoId,
+        'image_type' => 'final',
+    ]));
+
+    @unlink($source);
+});
+
+$harness->check(SwallowtailPreviewProfileService::class, 'keeps polling while final profile metadata is pending', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $library = new SwallowtailPhotoLibraryService();
+    $ingest = new SwallowtailPhotoIngestService(new SwallowtailStorageService(), $library, new SwallowtailConversionQueueService());
+    $result = $ingest->ingestLocalRawFile($source, 'IMG_0014.CR2');
+    $photoId = (int)$result['photo_id'];
+
+    $event = $library->createEvent('Pending Final Profile Event');
+    $library->assignPhotoToEvent($photoId, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_edit' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+
+    $redis = new class {
+        public array $pushes = [];
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->pushes[] = [
+                'key' => $key,
+                'payload' => $payload,
+                'max_length' => $maxLength,
+            ];
+
+            return true;
+        }
+    };
+
+    try {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_viewer_pending_test');
+        $service = new SwallowtailPreviewProfileService(
+            profileDataService: new SwallowtailProfileDataService($redis)
+        );
+        $state = $service->pictureViewerState($photoId, 303);
+
+        $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
+        $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
+        $harness->assertSame(0, InterfaceDB::countWhere('photo_conversion_jobs', [
+            'photo_id' => $photoId,
+            'image_type' => 'final',
+        ]));
+        $harness->assertCount(1, $redis->pushes);
+        $harness->assertSame('swallowtail:metadata:profile_viewer_pending_test', $redis->pushes[0]['key']);
+        $harness->assertSame($photoId, (int)$redis->pushes[0]['payload']['photo_id']);
+        $harness->assertSame('picture_viewer_final', (string)$redis->pushes[0]['payload']['reason']);
+    } finally {
+        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+        @unlink($source);
+    }
+});
+
 $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 preview refresh outside web root', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     AppConfigurationStore::config(true);
     $swallowtailCreateSqliteSchema();
@@ -2790,7 +3229,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     }
 
     $job = InterfaceDB::fetchOne(
-        "SELECT profile_path, profile_version, requested_by_user_id, priority, output_width, output_height
+        "SELECT profile_path, profile_version, profile_signature, requested_by_user_id, priority, output_width, output_height
          FROM photo_conversion_jobs
          WHERE id = :id",
         ['id' => (int)$queued['job_id']]
@@ -2801,6 +3240,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     }
     $profilePath = (string)($job['profile_path'] ?? '');
     $harness->assertSame(1, (int)($job['profile_version'] ?? 0));
+    $harness->assertSame(1, preg_match('/^[a-f0-9]{64}$/', (string)($job['profile_signature'] ?? '')));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
     $harness->assertSame(50, (int)($job['priority'] ?? 0));
     $harness->assertSame(0, (int)($job['output_width'] ?? 0));
@@ -3690,6 +4130,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $internalProfileDataEnabledPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_004_internal_profile_data_enabled.sql';
     $rawTheapeeProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_005_rawtheapee_profile_data.sql';
     $eventEditPermissionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_006_event_edit_permission.sql';
+    $conversionProfileSignaturePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_007_conversion_profile_signature.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3711,12 +4152,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $internalProfileDataEnabledSql = file_get_contents($internalProfileDataEnabledPath);
     $rawTheapeeProfileDataSql = file_get_contents($rawTheapeeProfileDataPath);
     $eventEditPermissionSql = file_get_contents($eventEditPermissionPath);
+    $conversionProfileSignatureSql = file_get_contents($conversionProfileSignaturePath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql) || !is_string($eventEditPermissionSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql) || !is_string($eventEditPermissionSql) || !is_string($conversionProfileSignatureSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql . "\n" . $eventEditPermissionSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql . "\n" . $eventEditPermissionSql . "\n" . $conversionProfileSignatureSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3742,6 +4184,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'dataset_name',
         'image_type enum',
         'profile_path',
+        'profile_signature char(64) DEFAULT NULL',
+        'KEY idx_conversion_jobs_profile_signature (photo_id, image_type, profile_signature, status)',
         'output_width',
         'duration_seconds',
         "'embedded'",

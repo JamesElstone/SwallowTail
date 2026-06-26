@@ -112,15 +112,17 @@ final class SwallowtailPreviewProfileService
         $settings = $this->normaliseSettings($payload, $dimensions['width'], $dimensions['height']);
         $this->profileDataService->recordChangedRows($photoId, $this->profileRowsForSettings($settings));
         $profileVersion = $this->nextProfileVersion($photoId, $imageType);
+        $profileSignature = $this->combinedProfileService->profileSignature($photoId, $imageType);
         $profilePath = $this->writeProfile($photo, $imageType);
 
         $jobId = $imageType === 'final'
-            ? $this->queueService->enqueueFinalRefresh($photoId, $profilePath, $profileVersion, $userId)
+            ? $this->queueService->enqueueFinalRefresh($photoId, $profilePath, $profileVersion, $userId, $profileSignature)
             : $this->queueService->enqueuePreviewRefresh(
                 $photoId,
                 $profilePath,
                 $profileVersion,
-                $userId
+                $userId,
+                $profileSignature
             );
 
         if ($jobId === null) {
@@ -204,36 +206,64 @@ final class SwallowtailPreviewProfileService
 
         $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
         $baseline = $this->profileDataService->requestUrgentProfile($photo, 'picture_viewer_final');
+        $baselineReady = !empty($baseline['ready']);
         $canViewFinal = $this->photoUiService->userCanViewImageType($photoId, $userId, 'final');
+        $finalProfileSignature = '';
+        if ($canViewFinal && $baselineReady) {
+            $finalProfileSignature = $this->combinedProfileService->profileSignature($photoId, 'final');
+        }
+        $job = $canViewFinal
+            ? $this->activeFinalJob($photoId, $baselineReady ? $finalProfileSignature : '')
+            : null;
         $displayType = $this->pictureViewerDisplayType($photo, $userId);
+        $displayVersion = $this->displayProfileVersion($photoId, $displayType, $job, $finalProfileSignature);
+        $signatureSupported = $this->profileSignatureColumnAvailable();
+        $finalFresh = $displayType === 'final'
+            && $job === null
+            && (
+                !$signatureSupported
+                || (
+                    $baselineReady
+                    && $finalProfileSignature !== ''
+                    && $this->latestSucceededProfileVersion($photoId, 'final', $finalProfileSignature) > 0
+                )
+            );
         $state = [
             'success' => true,
             'photo_id' => $photoId,
             'display_type' => $displayType,
-            'display_url' => $displayType !== '' ? $this->previewUrl($photoId, $this->latestProfileVersion($photoId, $displayType), null, $displayType) : '',
-            'final_ready' => $displayType === 'final',
-            'final_status' => $displayType === 'final' || !$canViewFinal ? 'loaded' : 'queued',
+            'display_url' => $displayType !== '' ? $this->previewUrl($photoId, $displayVersion, null, $displayType) : '',
+            'final_ready' => $displayType === 'final' && $finalFresh,
+            'final_status' => ($displayType === 'final' && $finalFresh) || !$canViewFinal ? 'loaded' : 'queued',
             'state_url' => $this->pictureViewerStateUrl($photoId),
         ];
 
-        if ($displayType === 'final' || !$canViewFinal) {
+        if (!$canViewFinal) {
             return $state;
         }
 
-        if (empty($baseline['ready'])) {
+        if (!$baselineReady) {
             return $state;
         }
 
-        $job = $this->activeFinalJob($photoId);
+        if ($displayType === 'final' && $finalFresh) {
+            return $state;
+        }
+
+        if ($finalProfileSignature === '') {
+            return $state;
+        }
+
         if ($job === null) {
             $profileVersion = $this->nextProfileVersion($photoId, 'final');
             $profilePath = $this->writeProfile($photo, 'final');
-            $jobId = $this->queueService->enqueueViewedFinalRefresh($photoId, $profilePath, $profileVersion, $userId);
+            $jobId = $this->queueService->enqueueViewedFinalRefresh($photoId, $profilePath, $profileVersion, $userId, $finalProfileSignature);
             if ($jobId !== null) {
                 $job = [
                     'id' => $jobId,
                     'profile_version' => $profileVersion,
                     'status' => 'queued',
+                    'profile_signature' => $finalProfileSignature,
                 ];
             }
         }
@@ -348,8 +378,9 @@ final class SwallowtailPreviewProfileService
         $job = $this->activePreviewJob($photoId);
         if ($job === null) {
             $profileVersion = $this->nextProfileVersion($photoId, 'preview');
+            $profileSignature = $this->combinedProfileService->profileSignature($photoId, 'preview');
             $profilePath = $this->writeProfile($photo, 'preview');
-            $jobId = $this->queueService->enqueuePreviewRefresh($photoId, $profilePath, $profileVersion, $userId);
+            $jobId = $this->queueService->enqueuePreviewRefresh($photoId, $profilePath, $profileVersion, $userId, $profileSignature);
             if ($jobId !== null) {
                 $job = [
                     'id' => $jobId,
@@ -391,24 +422,42 @@ final class SwallowtailPreviewProfileService
         return is_array($job) ? $job : null;
     }
 
-    private function activeFinalJob(int $photoId): ?array
+    private function activeFinalJob(int $photoId, string $currentProfileSignature = ''): ?array
     {
         if ($photoId <= 0) {
             return null;
         }
 
-        $job = InterfaceDB::fetchOne(
-            "SELECT id, status, profile_version
+        $signatureColumn = $this->profileSignatureColumnAvailable();
+        $selectSignature = $signatureColumn ? ', profile_signature' : '';
+        $jobs = InterfaceDB::fetchAll(
+            "SELECT id, status, profile_version" . $selectSignature . "
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
                AND image_type = 'final'
                AND status IN ('queued', 'processing')
-             ORDER BY profile_version DESC, id DESC
-             LIMIT 1",
+             ORDER BY profile_version DESC, id DESC",
             ['photo_id' => $photoId]
         );
 
-        return is_array($job) ? $job : null;
+        if ($jobs === []) {
+            return null;
+        }
+
+        $currentProfileSignature = $this->normaliseProfileSignature($currentProfileSignature);
+        if (!$signatureColumn || $currentProfileSignature === '') {
+            return is_array($jobs[0]) ? $jobs[0] : null;
+        }
+
+        foreach ($jobs as $job) {
+            if ($this->normaliseProfileSignature((string)($job['profile_signature'] ?? '')) === $currentProfileSignature) {
+                return $job;
+            }
+
+            $this->markFinalJobObsolete((int)($job['id'] ?? 0), 'Stale final profile signature');
+        }
+
+        return null;
     }
 
     private function pictureViewerDisplayType(array $photo, int $userId): string
@@ -424,6 +473,53 @@ final class SwallowtailPreviewProfileService
         }
 
         return '';
+    }
+
+    private function displayProfileVersion(int $photoId, string $displayType, ?array $activeFinalJob, string $finalProfileSignature = ''): int
+    {
+        if ($displayType === '') {
+            return 0;
+        }
+
+        if ($displayType === 'final') {
+            if ($activeFinalJob !== null) {
+                return $this->latestSucceededProfileVersion($photoId, 'final');
+            }
+
+            $matchingVersion = $this->latestSucceededProfileVersion($photoId, 'final', $finalProfileSignature);
+            if ($matchingVersion > 0) {
+                return $matchingVersion;
+            }
+
+            $latestSucceededVersion = $this->latestSucceededProfileVersion($photoId, 'final');
+
+            return $latestSucceededVersion > 0 ? $latestSucceededVersion : $this->latestProfileVersion($photoId, 'final');
+        }
+
+        return $this->latestProfileVersion($photoId, $displayType);
+    }
+
+    private function markFinalJobObsolete(int $jobId, string $reason): void
+    {
+        if ($jobId <= 0) {
+            return;
+        }
+
+        InterfaceDB::prepareExecute(
+            "UPDATE photo_conversion_jobs
+             SET status = 'obsolete',
+                 completed_at = CURRENT_TIMESTAMP,
+                 locked_at = NULL,
+                 locked_by = NULL,
+                 last_error = :reason
+             WHERE id = :id
+               AND image_type = 'final'
+               AND status IN ('queued', 'processing')",
+            [
+                'id' => $jobId,
+                'reason' => substr($reason, 0, 512),
+            ]
+        );
     }
 
     public function normaliseSettings(array $payload, int $sourceWidth, int $sourceHeight): array
@@ -705,6 +801,45 @@ final class SwallowtailPreviewProfileService
                 'image_type' => $imageType,
             ]
         );
+    }
+
+    private function latestSucceededProfileVersion(int $photoId, string $imageType, string $profileSignature = ''): int
+    {
+        if ($photoId <= 0) {
+            return 0;
+        }
+
+        $profileSignature = $this->normaliseProfileSignature($profileSignature);
+        $signatureSql = '';
+        $params = [
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+        ];
+        if ($profileSignature !== '' && $this->profileSignatureColumnAvailable()) {
+            $signatureSql = ' AND profile_signature = :profile_signature';
+            $params['profile_signature'] = $profileSignature;
+        }
+
+        return (int)InterfaceDB::fetchColumn(
+            "SELECT COALESCE(MAX(profile_version), 0)
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND status = 'succeeded'" . $signatureSql,
+            $params
+        );
+    }
+
+    private function profileSignatureColumnAvailable(): bool
+    {
+        return InterfaceDB::columnExists('photo_conversion_jobs', 'profile_signature');
+    }
+
+    private function normaliseProfileSignature(string $signature): string
+    {
+        $signature = strtolower(trim($signature));
+
+        return preg_match('/^[a-f0-9]{64}$/', $signature) === 1 ? $signature : '';
     }
 
     private function previewUrl(int $photoId, int $profileVersion, ?int $jobId, string $imageType = 'preview'): string
