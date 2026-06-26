@@ -1,7 +1,9 @@
 LoadModule proxy_module libexec/apache24/mod_proxy.so
 LoadModule proxy_fcgi_module libexec/apache24/mod_proxy_fcgi.so
 LoadModule rewrite_module libexec/apache24/mod_rewrite.so
-LoadModule headers_module libexec/apache24/mod_headers.so
+<IfModule !headers_module>
+    LoadModule headers_module libexec/apache24/mod_headers.so
+</IfModule>
 
 ServerName %%SWALLOWTAIL_SERVER_NAME%%:%%SWALLOWTAIL_HTTP_PORT%%
 
