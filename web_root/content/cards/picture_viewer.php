@@ -292,7 +292,7 @@ final class _picture_viewerCard extends CardBaseFramework
              FROM photo_metadata_property
              WHERE photo_id = :photo_id
                AND type = :type
-             ORDER BY `key`",
+             ORDER BY LOWER(`key`), `key`",
             [
                 'photo_id' => $photoId,
                 'type' => $type,

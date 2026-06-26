@@ -4323,7 +4323,7 @@ html.has-picture-viewer-fullscreen body {
   position: relative;
   display: grid;
   min-height: 0;
-  font-size: 0.7em;
+  font-size: 0.8em;
 }
 
 .picture-details-tab-input {
@@ -4394,6 +4394,7 @@ html.has-picture-viewer-fullscreen body {
 .picture-property-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: inherit;
   table-layout: fixed;
 }
 
@@ -4409,7 +4410,7 @@ html.has-picture-viewer-fullscreen body {
 .picture-property-table th {
   width: 42%;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: inherit;
   font-weight: 800;
   text-transform: uppercase;
 }
