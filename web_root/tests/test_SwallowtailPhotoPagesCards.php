@@ -1027,6 +1027,29 @@ $harness->check(_gallery::class, 'browse gallery renders auto refresh control', 
     $harness->assertTrue(str_contains($html, '>Auto refresh<'));
 });
 
+$harness->check(_gallery::class, 'browse gallery auto refresh defaults to enabled', function () use ($harness): void {
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+
+    if (!is_string($js)) {
+        throw new RuntimeException('Unable to read gallery JavaScript.');
+    }
+
+    $harness->assertTrue(str_contains($js, 'const stored = window.localStorage.getItem(galleryAutoRefreshStorageKey);'));
+    $harness->assertTrue(str_contains($js, "return stored === null ? true : stored === '1';"));
+});
+
+$harness->check(_gallery::class, 'browse gallery sends asset hints between card refreshes', function () use ($harness): void {
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+
+    if (!is_string($js)) {
+        throw new RuntimeException('Unable to read gallery JavaScript.');
+    }
+
+    $harness->assertTrue(str_contains($js, 'const galleryCardRefreshIntervalMs = 30000;'));
+    $harness->assertTrue(str_contains($js, 'function galleryAssetHintPayload(target)'));
+    $harness->assertTrue(str_contains($js, "'/api/gallery-asset-hints.php'"));
+});
+
 $harness->check(_gallery::class, 'browse gallery renders auto scroll control', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'autoScrollControl');
@@ -1037,6 +1060,84 @@ $harness->check(_gallery::class, 'browse gallery renders auto scroll control', f
     $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-control'));
     $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-toggle'));
     $harness->assertTrue(str_contains($html, '>Auto scroll<'));
+});
+
+$harness->check(_gallery::class, 'browse gallery chooses thumbnail then preview asset scan hints', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'galleryAssetScanType');
+    $method->setAccessible(true);
+
+    $harness->assertSame('thumbnail', $method->invoke($card, [
+        'preview_ready' => false,
+        'thumbnail_ready' => false,
+    ]));
+    $harness->assertSame('preview', $method->invoke($card, [
+        'preview_ready' => false,
+        'thumbnail_ready' => true,
+    ]));
+    $harness->assertSame(null, $method->invoke($card, [
+        'preview_ready' => true,
+        'thumbnail_ready' => true,
+    ]));
+});
+
+$harness->check(SwallowtailPhotoAssetNotificationService::class, 'queues metadata asset scan hints for existing files', function () use ($harness): void {
+    $root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'swallowtail-asset-hint-' . bin2hex(random_bytes(4));
+    $sha256 = str_repeat('a', 64);
+    $redis = new class {
+        public array $pushes = [];
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->pushes[] = [
+                'key' => $key,
+                'payload' => $payload,
+                'max_length' => $maxLength,
+            ];
+
+            return true;
+        }
+    };
+
+    try {
+        AppConfigurationStore::set('swallowtail.redis.metadata_asset_queue', 'swallowtail:metadata:asset_gallery_test');
+        $storage = new SwallowtailStorageService();
+        $path = $storage->imagePath($root, $sha256, 'thumbnail');
+        $storage->ensureDirectoryForPath($path);
+        file_put_contents($path, "\xFF\xD8\xFF\xD9", LOCK_EX);
+
+        $service = new SwallowtailPhotoAssetNotificationService($redis, $storage);
+        $queued = $service->notifyPhotoAsset([
+            'id' => 42,
+            'original_sha256' => $sha256,
+            'storage_base_location' => $root,
+        ], 'thumbnail', 'browse_gallery_auto_refresh');
+
+        $harness->assertSame(true, $queued);
+        $harness->assertCount(1, $redis->pushes);
+        $harness->assertSame('swallowtail:metadata:asset_gallery_test', $redis->pushes[0]['key']);
+        $harness->assertSame(1024, (int)$redis->pushes[0]['max_length']);
+        $harness->assertSame(0, (int)$redis->pushes[0]['payload']['job_id']);
+        $harness->assertSame(42, (int)$redis->pushes[0]['payload']['photo_id']);
+        $harness->assertSame('thumbnail', (string)$redis->pushes[0]['payload']['image_type']);
+        $harness->assertSame($path, (string)$redis->pushes[0]['payload']['output_path']);
+        $harness->assertSame('browse_gallery_auto_refresh', (string)$redis->pushes[0]['payload']['reason']);
+    } finally {
+        AppConfigurationStore::set('swallowtail.redis.metadata_asset_queue', 'swallowtail:metadata:asset_urgent');
+        if (isset($path) && is_file($path)) {
+            @unlink($path);
+        }
+        if (is_dir($root)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($iterator as $item) {
+                $item->isDir() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
+            }
+            @rmdir($root);
+        }
+    }
 });
 
 $harness->check(_gallery::class, 'browse gallery renders page size selector', function () use ($harness): void {

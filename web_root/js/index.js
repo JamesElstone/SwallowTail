@@ -20,6 +20,7 @@
     const galleryAutoScrollStorageKey = 'gallery:auto-scroll:browse_gallery';
     const cardMaximizedStorageKey = 'card:maximized';
     const galleryAutoRefreshIntervalMs = 5000;
+    const galleryCardRefreshIntervalMs = 30000;
     let afEphemeralDeviceId = null;
     let activeGalleryEventCreateButton = null;
     const ajaxNonceBootstrapId = 'ajax-security-bootstrap';
@@ -3181,13 +3182,14 @@
 
     function galleryAutoRefreshEnabled() {
         if (!afStorageAvailable('localStorage')) {
-            return false;
+            return true;
         }
 
         try {
-            return window.localStorage.getItem(galleryAutoRefreshStorageKey) === '1';
+            const stored = window.localStorage.getItem(galleryAutoRefreshStorageKey);
+            return stored === null ? true : stored === '1';
         } catch (error) {
-            return false;
+            return true;
         }
     }
 
@@ -3284,6 +3286,27 @@
         return payload;
     }
 
+    function galleryAssetHintPayload(target) {
+        const pageField = String(target.dataset.galleryPageField || '').trim();
+        const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
+        const perPageField = String(target.dataset.galleryPerPageField || '').trim();
+        const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
+        const payload = {
+            _ajax: '1',
+            reason: 'browse_gallery_auto_refresh',
+        };
+
+        if (pageField !== '') {
+            payload[pageField] = String(pageValue);
+        }
+
+        if (perPageField !== '') {
+            payload[perPageField] = String(perPageValue);
+        }
+
+        return payload;
+    }
+
     function galleryResponseCard(response, card) {
         const html = String((response.cards || {})[card.id] || '').trim();
         if (html === '') {
@@ -3351,6 +3374,7 @@
 
             const state = {
                 inFlight: false,
+                lastCardRefreshAt: 0,
                 timerId: null,
             };
             refreshControl.checked = galleryAutoRefreshEnabled();
@@ -3393,22 +3417,32 @@
 
                 state.inFlight = true;
                 const shouldAutoScroll = scrollControl.checked;
-                const payload = galleryCardRefreshPayload(card, target);
+                const shouldRefreshCard = shouldAutoScroll
+                    || Date.now() - state.lastCardRefreshAt >= galleryCardRefreshIntervalMs;
+                const payload = shouldRefreshCard
+                    ? galleryCardRefreshPayload(card, target)
+                    : galleryAssetHintPayload(target);
+                const refreshUrl = shouldRefreshCard
+                    ? window.location.href
+                    : '/api/gallery-asset-hints.php';
 
                 try {
-                    const response = await sendAjax(window.location.href, {
+                    const response = await sendAjax(refreshUrl, {
                         method: 'POST',
                         body: JSON.stringify(payload),
                         headers: { 'Content-Type': 'application/json' },
                     });
 
-                    applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
-                    if (shouldAutoScroll) {
-                        applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
-                    } else {
-                        applyAjaxPayloadFragment('gallery pending tiles', () => {
-                            replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
-                        });
+                    if (shouldRefreshCard) {
+                        state.lastCardRefreshAt = Date.now();
+                        applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
+                        if (shouldAutoScroll) {
+                            applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
+                        } else {
+                            applyAjaxPayloadFragment('gallery pending tiles', () => {
+                                replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
+                            });
+                        }
                     }
                 } catch (error) {
                     console.error('Failed to auto refresh gallery.', error);

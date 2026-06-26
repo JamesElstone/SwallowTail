@@ -110,7 +110,7 @@ class RedisHeartbeat:
             return None
         image_type = str(payload.get("image_type") or "").strip().lower()
         output_path = str(payload.get("output_path") or "").strip()
-        if job_id <= 0 or photo_id <= 0 or image_type == "" or output_path == "":
+        if job_id < 0 or photo_id <= 0 or image_type == "" or output_path == "":
             return None
         return AssetNotification(
             job_id=job_id,

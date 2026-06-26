@@ -185,6 +185,14 @@ class MetadataWorker:
             self.log.warning("Source profile generation %s for photo=%s: %s", status, photo_id, exc)
 
     def process_asset_notification(self, notification: AssetNotification) -> None:
+        self.log.info(
+            "Received image asset notification photo=%s image_type=%s job=%s reason=%s path=%s",
+            notification.photo_id,
+            notification.image_type,
+            notification.job_id,
+            notification.reason,
+            notification.output_path,
+        )
         self.process_asset_job({
             "job_id": notification.job_id,
             "photo_id": notification.photo_id,

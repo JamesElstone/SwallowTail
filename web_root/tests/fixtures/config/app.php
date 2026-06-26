@@ -60,6 +60,7 @@ return array (
     'redis' => 
     array (
       'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
+      'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
     ),
   ),
 );

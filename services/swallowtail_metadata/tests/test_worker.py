@@ -782,6 +782,10 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(240, asset["height"])
         self.assertEqual("f" * 64, asset["profile_signature"])
         self.assertEqual(91, asset["conversion_job_id"])
+        self.assertIn(
+            f"Received image asset notification photo=42 image_type=final job=91 reason=conversion_completed path={output}",
+            worker.log.infos,
+        )
 
     def test_run_once_backfills_unrecorded_asset_when_idle(self) -> None:
         output = self.root / "preview.jpg"

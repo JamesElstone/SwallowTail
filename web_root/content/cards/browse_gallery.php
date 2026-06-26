@@ -61,6 +61,7 @@ final class _browse_galleryCard extends CardBaseFramework
         }
 
         $hasPendingPreviews = $this->hasPendingPreviews($rows);
+        $this->notifyPendingGalleryAssets($rows);
         $pageField = $this->paginationPageField();
         $perPageField = $this->perPageField();
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
@@ -154,6 +155,39 @@ final class _browse_galleryCard extends CardBaseFramework
         }
 
         return !empty($photo['thumbnail_ready']) ? 'thumbnail' : null;
+    }
+
+    /**
+     * @param array<int, mixed> $rows
+     */
+    private function notifyPendingGalleryAssets(array $rows): void
+    {
+        $notifier = new SwallowtailPhotoAssetNotificationService();
+        foreach ($rows as $photo) {
+            if (!is_array($photo) || !$this->photoNeedsRefresh($photo)) {
+                continue;
+            }
+
+            $imageType = $this->galleryAssetScanType($photo);
+            if ($imageType === null) {
+                continue;
+            }
+
+            $notifier->notifyPhotoAsset($photo, $imageType, 'browse_gallery_auto_refresh');
+        }
+    }
+
+    private function galleryAssetScanType(array $photo): ?string
+    {
+        if (empty($photo['thumbnail_ready'])) {
+            return 'thumbnail';
+        }
+
+        if (empty($photo['preview_ready'])) {
+            return 'preview';
+        }
+
+        return null;
     }
 
     /**

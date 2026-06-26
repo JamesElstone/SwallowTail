@@ -303,6 +303,15 @@ class ConversionWorker:
             return
         if not notified:
             self.log.warning("Metadata asset queue notification was not accepted for job=%s", job.id)
+            return
+        self.log.info(
+            "Queued metadata asset notification job=%s photo=%s image_type=%s queue=%s path=%s",
+            job.id,
+            job.photo_id,
+            job.image_type,
+            self.config.redis.metadata_asset_queue,
+            output_path,
+        )
 
     def _preserve_original_source_profile(self, job, result) -> Path | None:
         if job.image_type != "original" or not getattr(result, "temp_profile_path", None):

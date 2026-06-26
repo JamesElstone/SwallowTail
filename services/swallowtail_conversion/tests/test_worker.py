@@ -843,6 +843,7 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertEqual(str(self.root / "final.jpg"), worker.redis.payload["output_path"])
         self.assertEqual("a" * 64, worker.redis.payload["profile_signature"])
         self.assertEqual("conversion_completed", worker.redis.payload["reason"])
+        self.assertTrue(any("Queued metadata asset notification job=1 photo=2 image_type=preview" in line for line in logs.output))
         self.assertTrue(any("Completed job=1" in line and "duration_seconds=12.346" in line for line in logs.output))
 
     def test_original_job_preserves_rawtherapee_pp3_as_source_profile(self) -> None:

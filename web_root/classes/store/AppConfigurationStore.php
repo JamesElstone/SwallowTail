@@ -369,6 +369,7 @@ final class AppConfigurationStore
                     'preempt_queue' => 'swallowtail:conversion:preempt',
                     'storage_wake_queue' => 'swallowtail:conversion:storage_wake',
                     'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
+                    'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
                     'rawtheapee_profile_refresh_queue' => 'swallowtail:metadata:rawtheapee_profiles',
                 ],
                 'rawtheapee' => [
