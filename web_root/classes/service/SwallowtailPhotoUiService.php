@@ -14,6 +14,7 @@ final class SwallowtailPhotoUiService
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+        private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
     ) {
     }
 
@@ -165,7 +166,7 @@ final class SwallowtailPhotoUiService
             return null;
         }
 
-        $info = $this->storageService->imageInfo($photo, $type);
+        $info = $this->assetService->assetForPhoto($photo, $type);
         if ($info === null) {
             return null;
         }
@@ -252,7 +253,7 @@ final class SwallowtailPhotoUiService
 
         $images = [];
         foreach (self::IMAGE_TYPES as $type) {
-            $info = $this->storageService->imageInfo($photo, $type);
+            $info = $this->assetService->assetForPhoto($photo, $type);
             if ($info !== null) {
                 $images[$type] = [
                     'image_type' => $type,
@@ -381,8 +382,8 @@ final class SwallowtailPhotoUiService
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
-        $row['preview_ready'] = $this->storageService->imageReady($row, 'preview');
-        $row['thumbnail_ready'] = !$row['preview_ready'] && $this->storageService->imageReady($row, 'thumbnail');
+        $row['preview_ready'] = $this->assetService->assetForPhoto($row, 'preview') !== null;
+        $row['thumbnail_ready'] = !$row['preview_ready'] && $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
         $row['effective_can_download_single_jpeg'] = (int)($row['effective_can_download_single_jpeg'] ?? 0) === 1;
 
@@ -408,11 +409,11 @@ final class SwallowtailPhotoUiService
             return $row;
         }
 
-        $row['preview_ready'] = $this->storageService->imageInfo($row, 'preview') !== null;
-        $row['thumbnail_ready'] = $this->storageService->imageInfo($row, 'thumbnail') !== null;
-        $row['original_ready'] = $this->storageService->imageInfo($row, 'original') !== null;
-        $row['embedded_ready'] = $this->storageService->imageInfo($row, 'embedded') !== null;
-        $row['final_ready'] = $this->storageService->imageInfo($row, 'final') !== null;
+        $row['preview_ready'] = $this->assetService->assetForPhoto($row, 'preview') !== null;
+        $row['thumbnail_ready'] = $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
+        $row['original_ready'] = $this->assetService->assetForPhoto($row, 'original') !== null;
+        $row['embedded_ready'] = $this->assetService->assetForPhoto($row, 'embedded') !== null;
+        $row['final_ready'] = $this->assetService->assetForPhoto($row, 'final') !== null;
         $row['jpeg_ready'] = $row['final_ready'];
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
 

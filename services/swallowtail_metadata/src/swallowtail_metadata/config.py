@@ -24,6 +24,7 @@ class RedisConfig:
     port: int
     timeout_seconds: int
     profile_queue: str
+    asset_queue: str
     rawtheapee_profile_refresh_queue: str
 
 
@@ -84,6 +85,7 @@ def default_config() -> AppConfig:
             port=6379,
             timeout_seconds=5,
             profile_queue="swallowtail:metadata:profile_urgent",
+            asset_queue="swallowtail:metadata:asset_urgent",
             rawtheapee_profile_refresh_queue="swallowtail:metadata:rawtheapee_profiles",
         ),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
@@ -177,6 +179,7 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             host=str(redis.get("host", config.redis.host)),
             port=int(redis.get("port", config.redis.port)),
             profile_queue=str(redis.get("metadata_profile_queue", config.redis.profile_queue)),
+            asset_queue=str(redis.get("metadata_asset_queue", config.redis.asset_queue)),
             rawtheapee_profile_refresh_queue=str(
                 redis.get("rawtheapee_profile_refresh_queue", config.redis.rawtheapee_profile_refresh_queue)
             ),

@@ -16,7 +16,7 @@ class ConversionJob:
     input_path: str
     profile_path: str | None
     output_path: str
-    profile_version: int
+    profile_signature: str
     attempts: int
     priority: int = 0
     output_width: int | None = None
@@ -31,7 +31,7 @@ class ConversionJob:
             input_path=str(row["input_path"] or ""),
             profile_path=str(row["profile_path"]) if row.get("profile_path") else None,
             output_path=str(row["output_path"] or ""),
-            profile_version=max(1, int(row.get("profile_version") or 1)),
+            profile_signature=str(row.get("profile_signature") or ""),
             attempts=int(row.get("attempts") or 0),
             priority=int(row.get("priority") or 0),
             output_width=cls._positive_int_or_none(row.get("output_width")),

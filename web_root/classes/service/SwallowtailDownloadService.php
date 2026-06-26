@@ -14,6 +14,7 @@ final class SwallowtailDownloadService
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
         private readonly SwallowtailEventAccessService $eventAccessService = new SwallowtailEventAccessService(),
+        private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
     ) {
     }
 
@@ -173,7 +174,9 @@ final class SwallowtailDownloadService
                 continue;
             }
 
-            $info = $this->storageService->imageInfo($row, $imageType);
+            $info = in_array($imageType, ['source', 'final_profile'], true)
+                ? $this->localStoredFileInfo($row, $imageType)
+                : $this->assetService->assetForPhoto($row, $imageType);
             if ($info === null) {
                 continue;
             }
@@ -191,6 +194,33 @@ final class SwallowtailDownloadService
         }
 
         return $files;
+    }
+
+    private function localStoredFileInfo(array $photo, string $imageType): ?array
+    {
+        $checksum = strtolower(trim((string)($photo['original_sha256'] ?? '')));
+        $base = trim((string)($photo['storage_base_location'] ?? ''));
+        if ($checksum === '' || $base === '') {
+            return null;
+        }
+
+        $path = $this->storageService->imagePath($base, $checksum, $imageType);
+        if (!is_file($path) || !is_readable($path)) {
+            return null;
+        }
+
+        $bytes = $imageType === 'source' ? (int)($photo['original_bytes'] ?? 0) : (int)filesize($path);
+        if ($bytes <= 0) {
+            $bytes = (int)filesize($path);
+        }
+        if ($bytes <= 0) {
+            return null;
+        }
+
+        return [
+            'absolute_path' => $path,
+            'bytes' => $bytes,
+        ];
     }
 
     private function assertCanDownloadEventType(array $permissions, string $imageType): void

@@ -15,6 +15,16 @@ class ProfileNotification:
     reason: str
 
 
+@dataclass(frozen=True)
+class AssetNotification:
+    job_id: int
+    photo_id: int
+    image_type: str
+    output_path: str
+    profile_signature: str
+    reason: str
+
+
 class RedisHeartbeat:
     def __init__(self, config: RedisConfig):
         self.config = config
@@ -73,6 +83,43 @@ class RedisHeartbeat:
         if photo_id <= 0:
             return None
         return ProfileNotification(photo_id=photo_id, reason=str(payload.get("reason") or ""))
+
+    def pop_asset_notification(self) -> AssetNotification | None:
+        queue = self.config.asset_queue.strip()
+        if queue == "":
+            return None
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("RPOP", queue))
+                response = self._read_resp(sock)
+        except (OSError, RuntimeError):
+            return None
+        if response is None:
+            return None
+        try:
+            payload = json.loads(self._to_text(response))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            job_id = int(payload.get("job_id") or 0)
+            photo_id = int(payload.get("photo_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        image_type = str(payload.get("image_type") or "").strip().lower()
+        output_path = str(payload.get("output_path") or "").strip()
+        if job_id <= 0 or photo_id <= 0 or image_type == "" or output_path == "":
+            return None
+        return AssetNotification(
+            job_id=job_id,
+            photo_id=photo_id,
+            image_type=image_type,
+            output_path=output_path,
+            profile_signature=str(payload.get("profile_signature") or "").strip().lower(),
+            reason=str(payload.get("reason") or ""),
+        )
 
     def pop_rawtheapee_profile_refresh(self) -> bool:
         queue = self.config.rawtheapee_profile_refresh_queue.strip()

@@ -110,9 +110,11 @@ final class SwallowtailRawTheapeeProfileService
             $inputPath,
             $outputPath,
             (string)$profile['profile_path'],
-            max(1, (int)$profileId),
             self::SAMPLE_PRIORITY,
-            $userId
+            $userId,
+            null,
+            null,
+            ''
         );
 
         if ($jobId === null) {
@@ -127,15 +129,9 @@ final class SwallowtailRawTheapeeProfileService
             'status_url' => '/api/photo-status.php?' . http_build_query([
                 'photo_id' => $photoId,
                 'job_id' => $jobId,
-                'profile_version' => max(1, (int)$profileId),
                 'image_type' => self::SAMPLE_IMAGE_TYPE,
             ]),
-            'image_url' => '/api/photo-image.php?' . http_build_query([
-                'photo_id' => $photoId,
-                'type' => self::SAMPLE_IMAGE_TYPE,
-                'job_id' => $jobId,
-                'v' => max(1, (int)$profileId),
-            ]),
+            'image_url' => '',
         ];
     }
 }

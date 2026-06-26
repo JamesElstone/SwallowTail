@@ -145,6 +145,7 @@ class ConversionWorker:
             shutil.move(str(output), str(final))
             source_profile_path = self._preserve_original_source_profile(job, result)
             self.db.complete_job(job, str(final), result.command, result.stderr, result.duration_seconds)
+            self._notify_metadata_asset(job, final)
             if source_profile_path is not None:
                 self.log.info(
                     "Completed job=%s output=%s duration_seconds=%.3f source_profile=%s",
@@ -284,6 +285,24 @@ class ConversionWorker:
     def _touch_status(self) -> None:
         if not self.redis.touch_service("swallowtail_conversion"):
             self.log.debug("Unable to refresh Redis heartbeat for conversion worker")
+
+    def _notify_metadata_asset(self, job: ConversionJob, output_path: Path) -> None:
+        payload = {
+            "job_id": job.id,
+            "photo_id": job.photo_id,
+            "image_type": job.image_type,
+            "output_path": str(output_path),
+            "profile_signature": job.profile_signature,
+            "reason": "conversion_completed",
+            "queued_at": int(time.time()),
+        }
+        try:
+            notified = self.redis.push_asset_notification(payload)
+        except Exception as exc:
+            self.log.warning("Unable to notify metadata asset queue for job=%s: %s", job.id, exc)
+            return
+        if not notified:
+            self.log.warning("Metadata asset queue notification was not accepted for job=%s", job.id)
 
     def _preserve_original_source_profile(self, job, result) -> Path | None:
         if job.image_type != "original" or not getattr(result, "temp_profile_path", None):

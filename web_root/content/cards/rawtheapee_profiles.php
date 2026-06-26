@@ -105,14 +105,22 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             return '<div class="panel-soft warn full">No accessible photo is available.</div>';
         }
 
-        $sampleReady = (new SwallowtailStorageService())->imageInfo($photo, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE) !== null;
-        $type = $sampleReady
-            ? SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE
-            : (!empty($photo['preview_ready']) ? 'preview' : (!empty($photo['thumbnail_ready']) ? 'thumbnail' : 'embedded'));
+        $assetService = new SwallowtailPhotoAssetService();
+        $sampleAsset = $assetService->assetForPhoto($photo, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE);
+        $previewAsset = $assetService->assetForPhoto($photo, 'preview');
+        $thumbnailAsset = $assetService->assetForPhoto($photo, 'thumbnail');
+        $embeddedAsset = $assetService->assetForPhoto($photo, 'embedded');
+        $asset = $sampleAsset ?? $previewAsset ?? $thumbnailAsset ?? $embeddedAsset;
+        $type = is_array($asset) ? (string)($asset['image_type'] ?? 'embedded') : 'embedded';
+        $version = is_array($asset) ? (string)($asset['sha256'] ?? '') : '';
 
         return '<div class="full gallery-grid">
             <span class="gallery-tile">
-                <span class="gallery-thumb"><img src="/api/photo-image.php?photo_id=' . HelperFramework::escape((string)$photoId) . '&type=' . HelperFramework::escape($type) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '"></span>
+                <span class="gallery-thumb"><img src="/api/photo-image.php?' . HelperFramework::escape(http_build_query([
+                    'photo_id' => $photoId,
+                    'type' => $type,
+                    'v' => $version,
+                ])) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '"></span>
                 <span class="gallery-meta"><strong>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</strong></span>
             </span>
         </div>';

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import sys
 import threading
@@ -15,6 +16,7 @@ from swallowtail_metadata.config import DaylightSavingConfig, default_config
 from swallowtail_metadata.db import MetadataDatabase
 from swallowtail_metadata.exiftool import extract_properties, parse_metadata
 from swallowtail_metadata.profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
+from swallowtail_metadata.redis_heartbeat import AssetNotification
 from swallowtail_metadata.worker import MetadataWorker
 
 
@@ -29,6 +31,8 @@ class FakeDatabase:
         self.profile_deferred = []
         self.profile_processing = []
         self.profile_ready = []
+        self.asset_jobs = []
+        self.image_assets = []
         self.count_payload = {"ready": 0, "deferred": 0, "failed": 0}
 
     def next_photo(self):
@@ -42,6 +46,9 @@ class FakeDatabase:
 
     def next_unprofiled_photo(self):
         return self.unprofiled_photos.pop(0) if self.unprofiled_photos else None
+
+    def next_unrecorded_image_asset_job(self):
+        return self.asset_jobs.pop(0) if self.asset_jobs else None
 
     def upsert_ready(self, photo_id, fields, raw):
         self.ready.append((photo_id, fields, raw))
@@ -68,6 +75,30 @@ class FakeDatabase:
     def defer_profile(self, photo_id, message, max_attempts, retry_delay_seconds):
         self.profile_deferred.append((photo_id, message, max_attempts, retry_delay_seconds))
         return "queued"
+
+    def upsert_image_asset(
+        self,
+        photo_id,
+        image_type,
+        sha256,
+        bytes_size,
+        modified_at,
+        width,
+        height,
+        profile_signature,
+        conversion_job_id,
+    ):
+        self.image_assets.append({
+            "photo_id": photo_id,
+            "image_type": image_type,
+            "sha256": sha256,
+            "bytes": bytes_size,
+            "modified_at": modified_at,
+            "width": width,
+            "height": height,
+            "profile_signature": profile_signature,
+            "conversion_job_id": conversion_job_id,
+        })
 
     def counts(self):
         return self.count_payload
@@ -98,6 +129,7 @@ class FakeRedis:
     def __init__(self):
         self.touched = []
         self.profile_notifications = []
+        self.asset_notifications = []
         self.profile_notification_available = False
 
     def touch_service(self, service_key):
@@ -106,6 +138,9 @@ class FakeRedis:
 
     def pop_profile_notification(self):
         return self.profile_notifications.pop(0) if self.profile_notifications else None
+
+    def pop_asset_notification(self):
+        return self.asset_notifications.pop(0) if self.asset_notifications else None
 
     def has_profile_notification(self):
         return self.profile_notification_available or bool(self.profile_notifications)
@@ -147,6 +182,18 @@ class FakeLog:
 
     def debug(self, message, *args, **_kwargs):
         self.debugs.append(message % args if args else message)
+
+
+def display_jpeg(width: int, height: int, payload: bytes = b"asset") -> bytes:
+    return (
+        b"\xff\xd8"
+        + b"\xff\xc0\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+        + payload
+        + b"\xff\xd9"
+    )
 
 
 class FakeCursor:
@@ -687,6 +734,56 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(1, len(db.unprofiled_photos))
         self.assertIn("Urgent profile notification received; photo=17 reason=picture_viewer", worker.log.infos)
 
+    def test_run_once_processes_asset_notification_before_profile_backfill(self) -> None:
+        output = self.root / "final.jpg"
+        output.write_bytes(display_jpeg(320, 240, b"final-asset"))
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 19, "storage_base_location": str(self.root), "original_sha256": "abcdef" + ("0" * 58)})
+        redis = FakeRedis()
+        redis.asset_notifications.append(AssetNotification(
+            job_id=91,
+            photo_id=42,
+            image_type="final",
+            output_path=str(output),
+            profile_signature="f" * 64,
+            reason="conversion_completed",
+        ))
+        worker = self.worker(db, redis=redis)
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual([], db.profile_processing)
+        self.assertEqual(1, len(db.image_assets))
+        asset = db.image_assets[0]
+        self.assertEqual(42, asset["photo_id"])
+        self.assertEqual("final", asset["image_type"])
+        self.assertEqual(hashlib.sha256(output.read_bytes()).hexdigest(), asset["sha256"])
+        self.assertEqual(output.stat().st_size, asset["bytes"])
+        self.assertEqual(int(output.stat().st_mtime), asset["modified_at"])
+        self.assertEqual(320, asset["width"])
+        self.assertEqual(240, asset["height"])
+        self.assertEqual("f" * 64, asset["profile_signature"])
+        self.assertEqual(91, asset["conversion_job_id"])
+
+    def test_run_once_backfills_unrecorded_asset_when_idle(self) -> None:
+        output = self.root / "preview.jpg"
+        output.write_bytes(display_jpeg(160, 90, b"preview-asset"))
+        db = FakeDatabase()
+        db.asset_jobs.append({
+            "job_id": 92,
+            "photo_id": 43,
+            "image_type": "preview",
+            "output_path": str(output),
+            "profile_signature": "e" * 64,
+        })
+        worker = self.worker(db)
+
+        self.assertTrue(worker.run_once())
+
+        self.assertEqual(1, len(db.image_assets))
+        self.assertEqual("preview", db.image_assets[0]["image_type"])
+        self.assertEqual("e" * 64, db.image_assets[0]["profile_signature"])
+
     def test_run_once_generates_source_profile_when_metadata_is_idle(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
@@ -778,7 +875,7 @@ class MetadataWorkerTest(unittest.TestCase):
 
         self.assertFalse(worker.run_once())
 
-        self.assertIn("No metadata or profile records returned; worker idle", worker.log.infos)
+        self.assertIn("No metadata, profile, or asset records returned; worker idle", worker.log.infos)
 
     def test_source_profile_generation_does_not_wait_for_preview(self) -> None:
         checksum = "abcdef" + ("0" * 58)

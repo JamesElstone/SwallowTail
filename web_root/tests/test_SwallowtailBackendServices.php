@@ -74,6 +74,57 @@ function swallowtail_backend_test_temp_file(string $prefix): string
     return $path;
 }
 
+function swallowtail_backend_record_asset(
+    int $photoId,
+    string $imageType,
+    string $path,
+    string $sha256,
+    ?string $profileSignature = null,
+    ?int $conversionJobId = null
+): void {
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_image_assets (
+            photo_id,
+            image_type,
+            sha256,
+            bytes,
+            modified_at,
+            width,
+            height,
+            profile_signature,
+            conversion_job_id,
+            generated_at
+        ) VALUES (
+            :photo_id,
+            :image_type,
+            :sha256,
+            :bytes,
+            :modified_at,
+            1,
+            1,
+            :profile_signature,
+            :conversion_job_id,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(photo_id, image_type) DO UPDATE SET
+            sha256 = excluded.sha256,
+            bytes = excluded.bytes,
+            modified_at = excluded.modified_at,
+            profile_signature = excluded.profile_signature,
+            conversion_job_id = excluded.conversion_job_id,
+            updated_at = CURRENT_TIMESTAMP",
+        [
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+            'sha256' => $sha256,
+            'bytes' => max(1, (int)@filesize($path)),
+            'modified_at' => max(1, (int)@filemtime($path)),
+            'profile_signature' => $profileSignature,
+            'conversion_job_id' => $conversionJobId,
+        ]
+    );
+}
+
 register_shutdown_function(static function (): void {
     swallowtail_backend_remove_tree(swallowtail_backend_test_tmp_root());
     swallowtail_backend_remove_tree(swallowtail_backend_storage_tmp_root());
@@ -285,7 +336,6 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         output_path TEXT NULL,
         output_width INTEGER NULL,
         output_height INTEGER NULL,
-        profile_version INTEGER NOT NULL DEFAULT 1,
         profile_signature TEXT NULL,
         requested_by_user_id INTEGER NULL,
         priority INTEGER NOT NULL DEFAULT 20,
@@ -301,6 +351,23 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         duration_seconds REAL NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE photo_image_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        image_type TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        modified_at INTEGER NOT NULL,
+        width INTEGER NULL,
+        height INTEGER NULL,
+        profile_signature TEXT NULL,
+        conversion_job_id INTEGER NULL,
+        generated_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (photo_id, image_type)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_profile_data (
@@ -1314,7 +1381,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue 
             input_path,
             profile_path,
             output_path,
-            profile_version,
+            profile_signature,
             priority,
             status
         ) VALUES (
@@ -1325,7 +1392,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue 
             '/tmp/source.cr2',
             '/tmp/final.pp3',
             '/tmp/final.jpg',
-            3,
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
             10,
             'queued'
         )"
@@ -1341,7 +1408,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue 
         ];
     });
 
-    $jobId = $queue->enqueueViewedFinalRefresh(88, '/tmp/final.pp3', 3, 5);
+    $jobId = $queue->enqueueViewedFinalRefresh(88, '/tmp/final.pp3', 3, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
     $priority = (int)InterfaceDB::fetchColumn('SELECT priority FROM photo_conversion_jobs WHERE id = 9201');
     $preempts = array_values(array_filter(
         $notifications,
@@ -2379,6 +2446,8 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
     $storage->ensureDirectoryForPath($previewPath);
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'preview', $previewPath, str_repeat('a', 64));
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('b', 64));
 
     $event = $library->createEvent('Private Gallery');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
@@ -2453,6 +2522,7 @@ $harness->check(SwallowtailImageServeService::class, 'serves admin-visible unass
 
     $storage->ensureDirectoryForPath($originalPath);
     file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'original', $originalPath, str_repeat('c', 64));
 
     $service = new SwallowtailImageServeService();
     $harness->assertSame(null, $service->derivativeImage($photoId, 'original', 902));
@@ -2693,6 +2763,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'uses thumbnail as temp
     $storage->ensureDirectoryForPath($thumbnailPath);
     @unlink($previewPath);
     file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'thumbnail', $thumbnailPath, str_repeat('d', 64));
 
     $event = $library->createEvent('Thumbnail Preview Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
@@ -2735,6 +2806,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview
     $thumbnailPath = $storage->imagePath($base, $sha256, 'thumbnail');
     $storage->ensureDirectoryForPath($thumbnailPath);
     file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'thumbnail', $thumbnailPath, str_repeat('e', 64));
 
     $event = $library->createEvent('Initial Preview Queue Event');
     $library->assignPhotoToEvent($photoId, (int)$event['id']);
@@ -2836,8 +2908,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
     $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
 
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
@@ -2846,9 +2918,10 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
             'profile_signature' => $currentProfileSignature,
         ]
     );
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('1', 64), $currentProfileSignature);
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 2, :profile_signature, 10, 'queued')",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'queued')",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
@@ -2860,7 +2933,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
 
     $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
     $activeJobId = (int)InterfaceDB::fetchColumn(
-        "SELECT id FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_version = 2 LIMIT 1",
+        "SELECT id FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND status IN ('queued', 'processing') LIMIT 1",
         ['photo_id' => $photoId]
     );
 
@@ -2868,9 +2941,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
     $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
     $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
     $harness->assertSame($activeJobId, (int)($state['job_id'] ?? 0));
-    $harness->assertSame(2, (int)($state['profile_version'] ?? 0));
     $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'type=final'));
-    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('1', 64)));
     $harness->assertSame(65, (int)InterfaceDB::fetchColumn(
         "SELECT priority FROM photo_conversion_jobs WHERE id = :id LIMIT 1",
         ['id' => $activeJobId]
@@ -2880,11 +2952,12 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
         "UPDATE photo_conversion_jobs SET status = 'succeeded', completed_at = CURRENT_TIMESTAMP WHERE id = :id",
         ['id' => $activeJobId]
     );
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('2', 64), $currentProfileSignature, $activeJobId);
     $loaded = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
 
     $harness->assertSame('loaded', (string)($loaded['final_status'] ?? ''));
     $harness->assertSame(true, (bool)($loaded['final_ready'] ?? false));
-    $harness->assertTrue(str_contains((string)($loaded['display_url'] ?? ''), 'v=2'));
+    $harness->assertTrue(str_contains((string)($loaded['display_url'] ?? ''), 'v=' . str_repeat('2', 64)));
     $harness->assertSame(2, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => $photoId,
         'image_type' => 'final',
@@ -2930,8 +3003,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active
     $staleProfileSignature = str_repeat('a', 64);
 
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
@@ -2940,9 +3013,10 @@ $harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active
             'profile_signature' => $staleProfileSignature,
         ]
     );
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('1', 64), $staleProfileSignature);
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 2, :profile_signature, 10, 'queued')",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'queued')",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
@@ -2954,7 +3028,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active
 
     $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
     $newJob = InterfaceDB::fetchOne(
-        "SELECT id, profile_version, profile_signature, priority
+        "SELECT id, profile_signature, priority
          FROM photo_conversion_jobs
          WHERE photo_id = :photo_id
            AND image_type = 'final'
@@ -2966,14 +3040,13 @@ $harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active
 
     $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
     $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
-    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('1', 64)));
     $harness->assertTrue(is_array($newJob));
-    $harness->assertSame(3, (int)($newJob['profile_version'] ?? 0));
     $harness->assertSame($currentProfileSignature, (string)($newJob['profile_signature'] ?? ''));
     $harness->assertSame(65, (int)($newJob['priority'] ?? 0));
     $harness->assertSame('obsolete', (string)InterfaceDB::fetchColumn(
-        "SELECT status FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_version = 2 LIMIT 1",
-        ['photo_id' => $photoId]
+        "SELECT status FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_signature = :profile_signature AND status = 'obsolete' LIMIT 1",
+        ['photo_id' => $photoId, 'profile_signature' => $staleProfileSignature]
     ));
 
     @unlink($source);
@@ -3013,22 +3086,24 @@ $harness->check(SwallowtailPreviewProfileService::class, 'shows stale final temp
     $profileData->setValue($photoId, 'swallowtail', 'status', 'processed', 'string');
     $profileData->setValue($photoId, 'Exposure', 'Brightness', '22', 'int');
     $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
+    $staleProfileSignature = str_repeat('b', 64);
 
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 1, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
             'profile_path' => $finalProfilePath,
             'output_path' => $finalPath,
-            'profile_signature' => str_repeat('b', 64),
+            'profile_signature' => $staleProfileSignature,
         ]
     );
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('1', 64), $staleProfileSignature);
 
     $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
     $freshJob = InterfaceDB::fetchOne(
-        "SELECT profile_version, profile_signature, status
+        "SELECT profile_signature, status
          FROM photo_conversion_jobs
          WHERE photo_id = :photo_id
            AND image_type = 'final'
@@ -3044,9 +3119,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'shows stale final temp
     $harness->assertSame('final', (string)($state['display_type'] ?? ''));
     $harness->assertSame('queued', (string)($state['final_status'] ?? ''));
     $harness->assertSame(false, (bool)($state['final_ready'] ?? true));
-    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=1'));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('1', 64)));
     $harness->assertTrue(is_array($freshJob));
-    $harness->assertSame(2, (int)($freshJob['profile_version'] ?? 0));
     $harness->assertSame('queued', (string)($freshJob['status'] ?? ''));
 
     @unlink($source);
@@ -3088,8 +3162,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'loads final when succe
     $currentProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
 
     InterfaceDB::prepareExecute(
-        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_version, profile_signature, priority, status, completed_at)
-         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, 5, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
+        "INSERT INTO photo_conversion_jobs (photo_id, job_type, image_type, input_path, profile_path, output_path, profile_signature, priority, status, completed_at)
+         VALUES (:photo_id, 'image', 'final', :input_path, :profile_path, :output_path, :profile_signature, 10, 'succeeded', CURRENT_TIMESTAMP)",
         [
             'photo_id' => $photoId,
             'input_path' => $storage->imagePath($base, $sha256, 'source'),
@@ -3098,12 +3172,13 @@ $harness->check(SwallowtailPreviewProfileService::class, 'loads final when succe
             'profile_signature' => $currentProfileSignature,
         ]
     );
+    swallowtail_backend_record_asset($photoId, 'final', $finalPath, str_repeat('5', 64), $currentProfileSignature);
 
     $state = (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, 303);
 
     $harness->assertSame('loaded', (string)($state['final_status'] ?? ''));
     $harness->assertSame(true, (bool)($state['final_ready'] ?? false));
-    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=5'));
+    $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('5', 64)));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => $photoId,
         'image_type' => 'final',
@@ -3211,25 +3286,21 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     if (empty($queued['success'])) {
         throw new RuntimeException('Preview edit did not queue successfully: ' . json_encode($queued, JSON_UNESCAPED_SLASHES));
     }
-    $harness->assertSame(1, (int)($queued['profile_version'] ?? 0));
     if ((int)($queued['job_id'] ?? 0) <= 0) {
         throw new RuntimeException('Preview edit did not return a positive job id.');
     }
-    if (!str_contains((string)($queued['preview_url'] ?? ''), 'v=1')) {
-        throw new RuntimeException('Preview URL did not include profile version 1: ' . (string)($queued['preview_url'] ?? ''));
+    if ((string)($queued['preview_url'] ?? '') !== '') {
+        throw new RuntimeException('Preview URL was returned before metadata recorded an asset SHA: ' . (string)($queued['preview_url'] ?? ''));
     }
-    if (!str_contains((string)($queued['preview_url'] ?? ''), 'type=preview')) {
-        throw new RuntimeException('Preview URL did not target the preview image: ' . (string)($queued['preview_url'] ?? ''));
-    }
-    if (!str_contains((string)($queued['status_url'] ?? ''), 'profile_version=1')) {
-        throw new RuntimeException('Preview status URL did not include profile version 1: ' . (string)($queued['status_url'] ?? ''));
+    if (str_contains((string)($queued['status_url'] ?? ''), 'profile' . '_version=')) {
+        throw new RuntimeException('Preview status URL still included the removed version parameter: ' . (string)($queued['status_url'] ?? ''));
     }
     if (!str_contains((string)($queued['status_url'] ?? ''), '/api/photo-status.php?') || !str_contains((string)($queued['status_url'] ?? ''), 'image_type=preview')) {
         throw new RuntimeException('Preview status URL did not use the generic image status API: ' . (string)($queued['status_url'] ?? ''));
     }
 
     $job = InterfaceDB::fetchOne(
-        "SELECT profile_path, profile_version, profile_signature, requested_by_user_id, priority, output_width, output_height
+        "SELECT profile_path, profile_signature, requested_by_user_id, priority, output_width, output_height
          FROM photo_conversion_jobs
          WHERE id = :id",
         ['id' => (int)$queued['job_id']]
@@ -3239,7 +3310,6 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         throw new RuntimeException('Preview job row was not found.');
     }
     $profilePath = (string)($job['profile_path'] ?? '');
-    $harness->assertSame(1, (int)($job['profile_version'] ?? 0));
     $harness->assertSame(1, preg_match('/^[a-f0-9]{64}$/', (string)($job['profile_signature'] ?? '')));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
     $harness->assertSame(50, (int)($job['priority'] ?? 0));
@@ -3289,7 +3359,6 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     if (empty($second['success'])) {
         throw new RuntimeException('Second preview edit did not queue successfully: ' . json_encode($second, JSON_UNESCAPED_SLASHES));
     }
-    $harness->assertSame(2, (int)($second['profile_version'] ?? 0));
     $harness->assertSame(2, (int)InterfaceDB::fetchColumn("SELECT MAX(revision) FROM photo_profile_data WHERE photo_id = :photo_id AND type = 'Exposure' AND `key` = 'Contrast'", ['photo_id' => $photoId]));
     $harness->assertSame(2, (int)InterfaceDB::fetchColumn("SELECT MAX(revision) FROM photo_profile_data WHERE photo_id = :photo_id AND type = 'Crop' AND `key` = 'X'", ['photo_id' => $photoId]));
     $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT MAX(revision) FROM photo_profile_data WHERE photo_id = :photo_id AND type = 'White Balance' AND `key` = 'Temperature'", ['photo_id' => $photoId]));
@@ -3308,11 +3377,11 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
 
-    $queuedStatus = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'preview');
+    $queuedStatus = $service->imageStatus($photoId, (int)$second['job_id'], 303, 'preview');
     $harness->assertSame('queued', (string)($queuedStatus['status'] ?? ''));
     $harness->assertTrue(!array_key_exists('original_url', $queuedStatus));
     $harness->assertTrue(!array_key_exists('preview_url', $queuedStatus));
-    $invalidStatus = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'thumbnail');
+    $invalidStatus = $service->imageStatus($photoId, (int)$second['job_id'], 303, 'thumbnail');
     $harness->assertSame(false, (bool)($invalidStatus['success'] ?? true));
 
     InterfaceDB::prepareExecute(
@@ -3321,13 +3390,17 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
          WHERE id = :id",
         ['id' => (int)$second['job_id']]
     );
-    $status = $service->imageStatus($photoId, (int)$second['job_id'], 2, 303, 'preview');
+    swallowtail_backend_record_asset($photoId, 'preview', $previewPath, str_repeat('6', 64), (string)InterfaceDB::fetchColumn(
+        "SELECT profile_signature FROM photo_conversion_jobs WHERE id = :id LIMIT 1",
+        ['id' => (int)$second['job_id']]
+    ), (int)$second['job_id']);
+    $status = $service->imageStatus($photoId, (int)$second['job_id'], 303, 'preview');
     if (empty($status['success'])) {
         throw new RuntimeException('Preview status did not succeed: ' . json_encode($status, JSON_UNESCAPED_SLASHES));
     }
     $harness->assertSame('succeeded', (string)($status['status'] ?? ''));
-    if (!str_contains((string)($status['preview_url'] ?? ''), 'job_id=' . (string)$second['job_id'])) {
-        throw new RuntimeException('Preview status URL did not include the second job id: ' . (string)($status['preview_url'] ?? ''));
+    if (!str_contains((string)($status['preview_url'] ?? ''), 'v=' . str_repeat('6', 64))) {
+        throw new RuntimeException('Preview status URL did not include the asset SHA: ' . (string)($status['preview_url'] ?? ''));
     }
     $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'type=preview'));
 
@@ -4306,7 +4379,7 @@ $harness->check(SwallowtailProfileDataService::class, 'queues urgent profile not
     }
 });
 
-$harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jobs by photo type and profile version', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+$harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jobs by photo type and profile signature', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 
     $source = swallowtail_backend_test_temp_file('swallowtail-test-');
@@ -4324,14 +4397,15 @@ $harness->check(SwallowtailConversionQueueService::class, 'deduplicates image jo
     $queue = new SwallowtailConversionQueueService();
     $photoId = (int)$result['photo_id'];
     $profile = (new SwallowtailStorageService())->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'preview_profile');
-    $first = $queue->enqueuePreviewRefresh($photoId, $profile, 2, 12);
-    $second = $queue->enqueuePreviewRefresh($photoId, $profile, 2, 12);
+    $profileSignature = str_repeat('c', 64);
+    $first = $queue->enqueuePreviewRefresh($photoId, $profile, 2, $profileSignature);
+    $second = $queue->enqueuePreviewRefresh($photoId, $profile, 2, $profileSignature);
 
     $harness->assertSame($first, $second);
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => $photoId,
         'image_type' => 'preview',
-        'profile_version' => 2,
+        'profile_signature' => $profileSignature,
     ]));
 
     @unlink($source);
@@ -4363,7 +4437,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'sends Redis preempt s
     });
 
     $profile = (new SwallowtailStorageService())->imagePath((string)$result['storage_base_location'], (string)$result['sha256'], 'preview_profile');
-    $previewJobId = $queue->enqueuePreviewRefresh((int)$result['photo_id'], $profile, 2, 12);
+    $previewJobId = $queue->enqueuePreviewRefresh((int)$result['photo_id'], $profile, 2, str_repeat('d', 64));
 
     $harness->assertTrue((int)$previewJobId > 0);
     $previewJob = InterfaceDB::fetchOne(

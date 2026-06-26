@@ -27,6 +27,7 @@ class RedisConfig:
     normal_queue: str
     preempt_queue: str
     storage_wake_queue: str
+    metadata_asset_queue: str
     timeout_seconds: int
 
 
@@ -91,6 +92,7 @@ def default_config() -> AppConfig:
             normal_queue="swallowtail:conversion:normal",
             preempt_queue="swallowtail:conversion:preempt",
             storage_wake_queue="swallowtail:conversion:storage_wake",
+            metadata_asset_queue="swallowtail:metadata:asset_urgent",
             timeout_seconds=5,
         ),
         rawtherapee=RawTherapeeConfig(
@@ -148,6 +150,7 @@ def load_config(path: str | None = None) -> AppConfig:
             normal_queue=parser.get("redis", "normal_queue", fallback=defaults.redis.normal_queue),
             preempt_queue=parser.get("redis", "preempt_queue", fallback=defaults.redis.preempt_queue),
             storage_wake_queue=parser.get("redis", "storage_wake_queue", fallback=defaults.redis.storage_wake_queue),
+            metadata_asset_queue=parser.get("redis", "metadata_asset_queue", fallback=defaults.redis.metadata_asset_queue),
             timeout_seconds=parser.getint("redis", "timeout_seconds", fallback=defaults.redis.timeout_seconds),
         ),
         rawtherapee=RawTherapeeConfig(
@@ -331,6 +334,7 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             normal_queue=str(redis_config.get("normal_queue", config.redis.normal_queue)),
             preempt_queue=str(redis_config.get("preempt_queue", config.redis.preempt_queue)),
             storage_wake_queue=str(redis_config.get("storage_wake_queue", config.redis.storage_wake_queue)),
+            metadata_asset_queue=str(redis_config.get("metadata_asset_queue", config.redis.metadata_asset_queue)),
         ),
     )
 

@@ -61,6 +61,57 @@ function swallowtail_ui_test_temp_file(string $prefix): string
     return $path;
 }
 
+function swallowtail_ui_record_asset(
+    int $photoId,
+    string $imageType,
+    string $path,
+    string $sha256,
+    ?string $profileSignature = null,
+    ?int $conversionJobId = null
+): void {
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_image_assets (
+            photo_id,
+            image_type,
+            sha256,
+            bytes,
+            modified_at,
+            width,
+            height,
+            profile_signature,
+            conversion_job_id,
+            generated_at
+        ) VALUES (
+            :photo_id,
+            :image_type,
+            :sha256,
+            :bytes,
+            :modified_at,
+            1,
+            1,
+            :profile_signature,
+            :conversion_job_id,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(photo_id, image_type) DO UPDATE SET
+            sha256 = excluded.sha256,
+            bytes = excluded.bytes,
+            modified_at = excluded.modified_at,
+            profile_signature = excluded.profile_signature,
+            conversion_job_id = excluded.conversion_job_id,
+            updated_at = CURRENT_TIMESTAMP",
+        [
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+            'sha256' => $sha256,
+            'bytes' => max(1, (int)@filesize($path)),
+            'modified_at' => max(1, (int)@filemtime($path)),
+            'profile_signature' => $profileSignature,
+            'conversion_job_id' => $conversionJobId,
+        ]
+    );
+}
+
 register_shutdown_function(static function (): void {
     swallowtail_ui_remove_tree(swallowtail_ui_test_tmp_root());
     swallowtail_ui_remove_tree(swallowtail_ui_storage_tmp_root());
@@ -315,7 +366,6 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         output_path TEXT NULL,
         output_width INTEGER NULL,
         output_height INTEGER NULL,
-        profile_version INTEGER NOT NULL DEFAULT 1,
         requested_by_user_id INTEGER NULL,
         priority INTEGER NOT NULL DEFAULT 20,
         status TEXT NOT NULL DEFAULT 'queued',
@@ -329,6 +379,23 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         completed_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE photo_image_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        image_type TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        modified_at INTEGER NOT NULL,
+        width INTEGER NULL,
+        height INTEGER NULL,
+        profile_signature TEXT NULL,
+        conversion_job_id INTEGER NULL,
+        generated_at TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (photo_id, image_type)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_audit (
@@ -628,6 +695,11 @@ $harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery prev
             $absolute = $storage->imagePath($baseLocation, (string)$photo[1], (string)$imageType);
             $storage->ensureDirectoryForPath($absolute);
             file_put_contents($absolute, "\xff\xd8\xff\xd9", LOCK_EX);
+            $photoId = (int)InterfaceDB::fetchColumn(
+                "SELECT id FROM photos WHERE original_sha256 = :sha256 LIMIT 1",
+                ['sha256' => (string)$photo[1]]
+            );
+            swallowtail_ui_record_asset($photoId, (string)$imageType, $absolute, str_repeat($imageType === 'preview' ? 'a' : 'b', 64));
         }
     }
 
@@ -683,6 +755,9 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
         ]
     );
     $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'asset.CR2'");
+    swallowtail_ui_record_asset($photoId, 'preview', $absolute, str_repeat('c', 64));
+    swallowtail_ui_record_asset($photoId, 'thumbnail', $thumbnailAbsolute, str_repeat('d', 64));
+    swallowtail_ui_record_asset($photoId, 'final', $finalAbsolute, str_repeat('e', 64));
     $library = new SwallowtailPhotoLibraryService();
     $event = $library->createEvent('Private Asset Gallery');
     $eventId = (int)($event['id'] ?? 0);

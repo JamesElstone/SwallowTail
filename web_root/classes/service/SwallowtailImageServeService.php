@@ -13,8 +13,8 @@ final class SwallowtailImageServeService
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
-        private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
         private readonly SwallowtailPhotoUiService $photoUiService = new SwallowtailPhotoUiService(),
+        private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
     ) {
     }
 
@@ -38,7 +38,7 @@ final class SwallowtailImageServeService
             return null;
         }
 
-        $info = $this->storageService->imageInfo($photo, $imageType);
+        $info = $this->assetService->assetForPhoto($photo, $imageType);
         if ($info === null) {
             return null;
         }

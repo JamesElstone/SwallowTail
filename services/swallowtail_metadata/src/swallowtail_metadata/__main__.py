@@ -32,6 +32,7 @@ def main() -> int:
     parser.add_argument("--retry-delay-seconds", type=int, default=_env_int("RETRY_DELAY_SECONDS", defaults.worker.retry_delay_seconds))
     parser.add_argument("--max-attempts", type=int, default=_env_int("MAX_ATTEMPTS", defaults.worker.max_attempts))
     parser.add_argument("--redis-profile-queue", default=_env("REDIS_PROFILE_QUEUE", ""))
+    parser.add_argument("--redis-asset-queue", default=_env("REDIS_ASSET_QUEUE", ""))
     parser.add_argument("--log-file", default=_env("LOG_FILE", defaults.logging.file))
     parser.add_argument("--log-level", default=_env("LOG_LEVEL", defaults.logging.level))
     parser.add_argument("--once", action="store_true")
@@ -46,7 +47,11 @@ def main() -> int:
         config,
         project_root=args.project_root,
         metadata=replace(config.metadata, exiftool_binary=args.exiftool_binary, rawtherapee_binary=args.rawtherapee_binary),
-        redis=replace(config.redis, profile_queue=args.redis_profile_queue.strip()) if args.redis_profile_queue.strip() != "" else config.redis,
+        redis=replace(
+            config.redis,
+            profile_queue=args.redis_profile_queue.strip() or config.redis.profile_queue,
+            asset_queue=args.redis_asset_queue.strip() or config.redis.asset_queue,
+        ),
         worker=replace(
             config.worker,
             poll_min_seconds=max(1, args.poll_min_seconds),

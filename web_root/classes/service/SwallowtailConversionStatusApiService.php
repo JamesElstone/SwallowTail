@@ -14,6 +14,7 @@ final class SwallowtailConversionStatusApiService
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+        private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
     ) {
     }
 
@@ -121,7 +122,7 @@ final class SwallowtailConversionStatusApiService
     {
         $images = $this->emptyImageMap(['ready' => false]);
         foreach (self::IMAGE_TYPES as $type) {
-            $info = $this->storageService->imageInfo($photo, $type);
+            $info = $this->assetService->assetForPhoto($photo, $type);
             if ($info === null) {
                 continue;
             }

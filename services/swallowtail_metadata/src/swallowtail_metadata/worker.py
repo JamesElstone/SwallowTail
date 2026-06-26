@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import signal
 import threading
 import time
@@ -11,7 +12,7 @@ from .config import AppConfig
 from .db import MetadataDatabase
 from .exiftool import ExifToolRunner
 from .profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
-from .redis_heartbeat import RedisHeartbeat
+from .redis_heartbeat import AssetNotification, RedisHeartbeat
 
 
 class MetadataWorker:
@@ -51,6 +52,12 @@ class MetadataWorker:
             self.scan_rawtheapee_profiles("refresh")
             self._touch_status()
             return True
+        if hasattr(self.redis, "pop_asset_notification"):
+            asset_notification = self.redis.pop_asset_notification()
+            if asset_notification is not None:
+                self.process_asset_notification(asset_notification)
+                self._touch_status()
+                return True
         if time.time() - self.last_rawtheapee_profile_scan_at >= 86400:
             self.scan_rawtheapee_profiles("daily")
             self._touch_status()
@@ -71,8 +78,13 @@ class MetadataWorker:
         if profile_photo is None:
             profile_photo = self.db.next_unprofiled_photo()
             if profile_photo is None:
-                self.log.info("No metadata or profile records returned; worker idle")
-                return False
+                asset_job = self.db.next_unrecorded_image_asset_job() if hasattr(self.db, "next_unrecorded_image_asset_job") else None
+                if asset_job is None:
+                    self.log.info("No metadata, profile, or asset records returned; worker idle")
+                    return False
+                self.process_asset_job(asset_job)
+                self._touch_status()
+                return True
             self.log.info("Found uploaded photo without profile data; photo=%s", int(profile_photo.get("id") or 0))
         self.process_profile_photo(profile_photo)
         self._touch_status()
@@ -172,6 +184,46 @@ class MetadataWorker:
             )
             self.log.warning("Source profile generation %s for photo=%s: %s", status, photo_id, exc)
 
+    def process_asset_notification(self, notification: AssetNotification) -> None:
+        self.process_asset_job({
+            "job_id": notification.job_id,
+            "photo_id": notification.photo_id,
+            "image_type": notification.image_type,
+            "output_path": notification.output_path,
+            "profile_signature": notification.profile_signature,
+        })
+
+    def process_asset_job(self, job: dict[str, Any]) -> None:
+        photo_id = int(job.get("photo_id") or 0)
+        job_id = int(job.get("job_id") or 0)
+        image_type = str(job.get("image_type") or "").strip().lower()
+        output_path_text = str(job.get("output_path") or "").strip()
+        output_path = Path(output_path_text)
+        profile_signature = str(job.get("profile_signature") or "").strip().lower()
+        try:
+            if photo_id <= 0 or image_type == "" or output_path_text == "":
+                raise RuntimeError("Asset notification did not include a valid photo, image type, and output path.")
+            if not output_path.is_file():
+                raise RuntimeError(f"Asset output file was not found: {output_path}")
+            stat = output_path.stat()
+            if stat.st_size <= 0:
+                raise RuntimeError(f"Asset output file is empty: {output_path}")
+            width, height = self._jpeg_dimensions(output_path)
+            self.db.upsert_image_asset(
+                photo_id,
+                image_type,
+                self._sha256(output_path),
+                int(stat.st_size),
+                int(stat.st_mtime),
+                width,
+                height,
+                profile_signature,
+                job_id,
+            )
+            self.log.info("Recorded image asset photo=%s image_type=%s job=%s path=%s", photo_id, image_type, job_id, output_path)
+        except Exception as exc:
+            self.log.warning("Image asset recording failed for photo=%s image_type=%s job=%s: %s", photo_id, image_type, job_id, exc)
+
     def source_path(self, photo: dict[str, Any]) -> Path:
         return self.image_path(photo, "source")
 
@@ -183,6 +235,47 @@ class MetadataWorker:
         extension = {"source": ".cr2", "source_profile": ".pp3"}.get(image_type, ".jpg")
         suffix = {"source_profile": "source"}.get(image_type, image_type)
         return Path(base) / "swallowtail-data" / checksum[0:2] / checksum[2:4] / f"{checksum}_{suffix}{extension}"
+
+    def _sha256(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _jpeg_dimensions(self, path: Path) -> tuple[int | None, int | None]:
+        try:
+            with path.open("rb") as handle:
+                if handle.read(2) != b"\xff\xd8":
+                    return None, None
+                while True:
+                    marker_start = handle.read(1)
+                    if marker_start == b"":
+                        return None, None
+                    if marker_start != b"\xff":
+                        continue
+                    marker = handle.read(1)
+                    while marker == b"\xff":
+                        marker = handle.read(1)
+                    if marker in {b"\xc0", b"\xc1", b"\xc2", b"\xc3", b"\xc5", b"\xc6", b"\xc7", b"\xc9", b"\xca", b"\xcb", b"\xcd", b"\xce", b"\xcf"}:
+                        length = int.from_bytes(handle.read(2), "big")
+                        if length < 7:
+                            return None, None
+                        handle.read(1)
+                        height = int.from_bytes(handle.read(2), "big")
+                        width = int.from_bytes(handle.read(2), "big")
+                        return (width if width > 0 else None, height if height > 0 else None)
+                    if marker in {b"\xd8", b"\xd9"}:
+                        continue
+                    length_bytes = handle.read(2)
+                    if len(length_bytes) != 2:
+                        return None, None
+                    length = int.from_bytes(length_bytes, "big")
+                    if length < 2:
+                        return None, None
+                    handle.seek(length - 2, 1)
+        except OSError:
+            return None, None
 
     def status(self) -> dict[str, Any]:
         return {

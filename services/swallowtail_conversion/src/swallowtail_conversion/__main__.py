@@ -30,6 +30,7 @@ def main() -> int:
     parser.add_argument("--redis-normal-queue")
     parser.add_argument("--redis-preempt-queue")
     parser.add_argument("--redis-storage-wake-queue")
+    parser.add_argument("--redis-metadata-asset-queue")
     parser.add_argument("--redis-timeout-seconds", type=int)
     parser.add_argument("--rawtherapee-binary")
     parser.add_argument("--rawtherapee-maximum-threads", type=int)
@@ -113,6 +114,7 @@ def _apply_overrides(config, args):
             normal_queue=_setting(args, "redis_normal_queue", prefix + "REDIS_NORMAL_QUEUE", config.redis.normal_queue),
             preempt_queue=_setting(args, "redis_preempt_queue", prefix + "REDIS_PREEMPT_QUEUE", config.redis.preempt_queue),
             storage_wake_queue=_setting(args, "redis_storage_wake_queue", prefix + "REDIS_STORAGE_WAKE_QUEUE", config.redis.storage_wake_queue),
+            metadata_asset_queue=_setting(args, "redis_metadata_asset_queue", prefix + "REDIS_METADATA_ASSET_QUEUE", config.redis.metadata_asset_queue),
             timeout_seconds=max(1, _setting(
                 args,
                 "redis_timeout_seconds",

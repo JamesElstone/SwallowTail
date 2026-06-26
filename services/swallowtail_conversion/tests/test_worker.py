@@ -43,7 +43,7 @@ def job(root: Path, **overrides) -> ConversionJob:
         "input_path": str(input_path),
         "profile_path": None,
         "output_path": str(root / "final.jpg"),
-        "profile_version": 1,
+        "profile_signature": "",
         "attempts": 0,
         "output_width": None,
         "output_height": None,
@@ -70,6 +70,7 @@ def app_config(root: Path, rawtherapee_binary: str) -> AppConfig:
             normal_queue="normal",
             preempt_queue="preempt",
             storage_wake_queue="storage-wake",
+            metadata_asset_queue="metadata-asset",
             timeout_seconds=1,
         ),
         rawtherapee=RawTherapeeConfig(
@@ -306,7 +307,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         result = RawTherapeeRunner(
             RawTherapeeConfig(binary=str(self.fake), maximum_threads=1, home=str(self.root / "home"), stderr_chars=4000)
         ).render(
-            job(self.root, image_type="final", profile_path=str(pp3), profile_version=2, output_width=1600, output_height=1600),
+            job(self.root, image_type="final", profile_path=str(pp3), output_width=1600, output_height=1600),
             str(self.root / "work"),
         )
 
@@ -801,6 +802,14 @@ class WorkerBehaviourTest(unittest.TestCase):
             def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
                 raise AssertionError("completed job should not fail")
 
+        class FakeRedis:
+            def __init__(self) -> None:
+                self.payload = None
+
+            def push_asset_notification(self, payload: dict) -> bool:
+                self.payload = payload
+                return True
+
         class FakeRunner:
             def render(self, job, temp_dir: str, should_cancel=None):
                 output = Path(temp_dir) / "rendered.jpg"
@@ -821,11 +830,19 @@ class WorkerBehaviourTest(unittest.TestCase):
         worker.log = logging.getLogger("swallowtail_conversion.worker")
         worker.db = db
         worker.runner = FakeRunner()
+        worker.redis = FakeRedis()
 
         with self.assertLogs("swallowtail_conversion.worker", level="INFO") as logs:
-            worker.process_job(job(self.root))
+            worker.process_job(job(self.root, profile_signature="a" * 64))
 
         self.assertEqual(12.34567, db.duration)
+        self.assertIsNotNone(worker.redis.payload)
+        self.assertEqual(1, worker.redis.payload["job_id"])
+        self.assertEqual(2, worker.redis.payload["photo_id"])
+        self.assertEqual("preview", worker.redis.payload["image_type"])
+        self.assertEqual(str(self.root / "final.jpg"), worker.redis.payload["output_path"])
+        self.assertEqual("a" * 64, worker.redis.payload["profile_signature"])
+        self.assertEqual("conversion_completed", worker.redis.payload["reason"])
         self.assertTrue(any("Completed job=1" in line and "duration_seconds=12.346" in line for line in logs.output))
 
     def test_original_job_preserves_rawtherapee_pp3_as_source_profile(self) -> None:
@@ -1385,4 +1402,3 @@ class ConversionDatabaseOrderingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

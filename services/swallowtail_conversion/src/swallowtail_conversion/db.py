@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import threading
 from typing import Any
 
@@ -169,22 +167,7 @@ class ConversionDatabase:
         return ConversionJob.from_row(row) if row else None
 
     def is_stale_preview(self, job: ConversionJob) -> bool:
-        if job.image_type != "preview":
-            return False
-        row = self._fetchone(
-            """
-            SELECT 1 AS stale
-              FROM photo_conversion_jobs
-             WHERE photo_id = %s
-               AND image_type = 'preview'
-               AND profile_version > %s
-               AND status IN ('queued', 'processing', 'succeeded')
-             LIMIT 1
-            """,
-            (job.photo_id, job.profile_version),
-        )
-        self._rollback_read()
-        return row is not None
+        return False
 
     def is_obsolete_job(self, job: ConversionJob) -> bool:
         row = self._fetchone(
@@ -288,16 +271,14 @@ class ConversionDatabase:
         self.connection.commit()
 
     def complete_job(self, job: ConversionJob, output_path: str, command: list[str], stderr: str, duration: float) -> None:
-        sha256 = self._sha256(output_path)
-        size = os.path.getsize(output_path)
         details = {
             "job_id": job.id,
             "image_type": job.image_type,
             "command": command,
             "stderr": stderr,
             "duration_seconds": round(duration, 3),
-            "bytes": size,
-            "sha256": sha256,
+            "output_path": output_path,
+            "profile_signature": job.profile_signature,
         }
 
         self._execute(
@@ -566,10 +547,3 @@ class ConversionDatabase:
         if self.paramstyle == "%s":
             return sql
         return sql.replace("%s", "?")
-
-    def _sha256(self, path: str) -> str:
-        digest = hashlib.sha256()
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()

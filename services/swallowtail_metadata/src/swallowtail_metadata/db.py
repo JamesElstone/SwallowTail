@@ -305,6 +305,87 @@ class MetadataDatabase:
         self.connection.commit()
         return written
 
+    def upsert_image_asset(
+        self,
+        photo_id: int,
+        image_type: str,
+        sha256: str,
+        bytes_size: int,
+        modified_at: int,
+        width: int | None,
+        height: int | None,
+        profile_signature: str,
+        conversion_job_id: int | None,
+    ) -> None:
+        if not self._table_exists("photo_image_assets"):
+            return
+        conversion_job_id = conversion_job_id if conversion_job_id is not None and conversion_job_id > 0 else None
+        profile_signature = profile_signature if len(profile_signature) == 64 else None
+        self._execute(
+            """
+            INSERT INTO photo_image_assets (
+                photo_id,
+                image_type,
+                sha256,
+                bytes,
+                modified_at,
+                width,
+                height,
+                profile_signature,
+                conversion_job_id,
+                generated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+            )
+            ON DUPLICATE KEY UPDATE
+                sha256 = VALUES(sha256),
+                bytes = VALUES(bytes),
+                modified_at = VALUES(modified_at),
+                width = VALUES(width),
+                height = VALUES(height),
+                profile_signature = VALUES(profile_signature),
+                conversion_job_id = VALUES(conversion_job_id),
+                generated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                photo_id,
+                image_type,
+                sha256,
+                bytes_size,
+                modified_at,
+                width,
+                height,
+                profile_signature,
+                conversion_job_id,
+            ),
+        )
+        self.connection.commit()
+
+    def next_unrecorded_image_asset_job(self) -> dict[str, Any] | None:
+        if not self._table_exists("photo_image_assets"):
+            return None
+        row = self._fetchone(
+            """
+            SELECT job.id AS job_id,
+                   job.photo_id,
+                   job.image_type,
+                   job.output_path,
+                   job.profile_signature
+              FROM photo_conversion_jobs job
+              LEFT JOIN photo_image_assets asset
+                ON asset.photo_id = job.photo_id
+               AND asset.image_type = job.image_type
+             WHERE job.status = 'succeeded'
+               AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample')
+               AND asset.id IS NULL
+             ORDER BY job.completed_at DESC, job.id DESC
+             LIMIT 1
+            """
+        )
+        self._rollback_read()
+        return row
+
     def _insert_profile_properties_by_section(self, photo_id: int, properties: list[dict[str, Any]]) -> dict[str, int]:
         sections: dict[str, list[dict[str, Any]]] = {}
         largest_value_length = 0

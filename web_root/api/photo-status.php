@@ -36,7 +36,6 @@ if ($userId <= 0) {
 $result = (new SwallowtailPreviewProfileService())->imageStatus(
     max(0, (int)$request->query('photo_id', 0)),
     max(0, (int)$request->query('job_id', 0)),
-    max(0, (int)$request->query('profile_version', 0)),
     $userId,
     (string)$request->query('image_type', '')
 );

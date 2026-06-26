@@ -55,6 +55,22 @@ class RedisQueue:
         message = self._blocking_pop([self.config.storage_wake_queue], max(1, int(timeout_seconds)))
         return message is not None
 
+    def push_asset_notification(self, payload: dict) -> bool:
+        queue = self.config.metadata_asset_queue.strip()
+        if queue == "":
+            return False
+
+        data = json.dumps(payload, separators=(",", ":"))
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("LPUSH", queue, data))
+                response = self._read_resp(sock)
+        except OSError:
+            return False
+
+        return isinstance(response, int)
+
     def _blocking_pop(self, queues: list[str], timeout_seconds: int) -> RedisMessage | None:
         queues = [queue for queue in queues if queue != ""]
         if queues == []:

@@ -72,7 +72,6 @@ final class SwallowtailConversionQueueService
                     $sourcePath,
                     $outputPath,
                     $profilePath,
-                    1,
                     $jobPriority,
                     null
                 );
@@ -100,44 +99,40 @@ final class SwallowtailConversionQueueService
     public function enqueuePreviewRefresh(
         int $photoId,
         string $profilePath,
-        int $profileVersion,
         ?int $requestedByUserId = null,
         string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'preview', $profilePath, $profileVersion, self::PRIORITY_PREVIEW, $requestedByUserId, $profileSignature);
+        return $this->enqueueProfiledRefresh($photoId, 'preview', $profilePath, self::PRIORITY_PREVIEW, $requestedByUserId, $profileSignature);
     }
 
     public function enqueueFinalRefresh(
         int $photoId,
         string $profilePath,
-        int $profileVersion,
         ?int $requestedByUserId = null,
         string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_FINAL, $requestedByUserId, $profileSignature);
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, self::PRIORITY_FINAL, $requestedByUserId, $profileSignature);
     }
 
     public function enqueueViewedFinalRefresh(
         int $photoId,
         string $profilePath,
-        int $profileVersion,
         ?int $requestedByUserId = null,
         string $profileSignature = ''
     ): ?int {
-        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, $profileVersion, self::PRIORITY_VIEWED_FINAL, $requestedByUserId, $profileSignature);
+        return $this->enqueueProfiledRefresh($photoId, 'final', $profilePath, self::PRIORITY_VIEWED_FINAL, $requestedByUserId, $profileSignature);
     }
 
     private function enqueueProfiledRefresh(
         int $photoId,
         string $imageType,
         string $profilePath,
-        int $profileVersion,
         int $priority,
         ?int $requestedByUserId,
         string $profileSignature
     ): ?int {
         $notifyAfterCommit = !InterfaceDB::inTransaction();
-        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageType, $profilePath, $profileVersion, $priority, $requestedByUserId, $profileSignature): array {
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageType, $profilePath, $priority, $requestedByUserId, $profileSignature): array {
             $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
             if ($photo === null) {
                 return [];
@@ -155,7 +150,6 @@ final class SwallowtailConversionQueueService
                 $sourcePath,
                 $outputPath,
                 $profilePath,
-                $profileVersion,
                 $priority,
                 $requestedByUserId,
                 null,
@@ -190,7 +184,6 @@ final class SwallowtailConversionQueueService
         string $inputPath,
         string $outputPath,
         ?string $profilePath = null,
-        int $profileVersion = 1,
         string|int $priority = self::PRIORITY_ORIGINAL,
         ?int $requestedByUserId = null,
         ?int $outputWidth = null,
@@ -204,7 +197,6 @@ final class SwallowtailConversionQueueService
         $imageType = $this->normaliseImageType($imageType);
         $priority = $this->normalisePriority($priority);
         $profilePath = $this->normaliseOptionalPath($profilePath, 1000);
-        $profileVersion = max(1, $profileVersion);
         $outputWidth = $this->nullablePositiveInt($outputWidth);
         $outputHeight = $this->nullablePositiveInt($outputHeight);
         $inputPath = $this->normaliseRequiredPath($inputPath, 1000);
@@ -227,7 +219,6 @@ final class SwallowtailConversionQueueService
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
                AND image_type = :image_type
-               AND profile_version = :profile_version
                AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
                " . $profileSignatureSql . "
                AND status IN ('queued', 'processing')
@@ -236,7 +227,6 @@ final class SwallowtailConversionQueueService
             array_filter([
                 'photo_id' => $photoId,
                 'image_type' => $imageType,
-                'profile_version' => $profileVersion,
                 'profile_path' => $profilePath,
             ] + $profileSignatureParams, static fn(mixed $value): bool => $value !== null)
         );
@@ -274,7 +264,6 @@ final class SwallowtailConversionQueueService
             'output_path',
             'output_width',
             'output_height',
-            'profile_version',
             'requested_by_user_id',
             'priority',
             'status',
@@ -288,7 +277,6 @@ final class SwallowtailConversionQueueService
             ':output_path',
             ':output_width',
             ':output_height',
-            ':profile_version',
             ':requested_by_user_id',
             ':priority',
             "'queued'",
@@ -301,7 +289,6 @@ final class SwallowtailConversionQueueService
             'output_path' => $outputPath,
             'output_width' => $outputWidth,
             'output_height' => $outputHeight,
-            'profile_version' => $profileVersion,
             'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
             'priority' => $priority,
         ];
@@ -323,7 +310,6 @@ final class SwallowtailConversionQueueService
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
                AND image_type = :image_type
-               AND profile_version = :profile_version
                AND input_path = :input_path
                AND output_path = :output_path
                AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
@@ -334,7 +320,6 @@ final class SwallowtailConversionQueueService
             array_filter([
                 'photo_id' => $photoId,
                 'image_type' => $imageType,
-                'profile_version' => $profileVersion,
                 'input_path' => $inputPath,
                 'output_path' => $outputPath,
                 'profile_path' => $profilePath,
