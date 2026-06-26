@@ -292,6 +292,14 @@ class MetadataParserTest(unittest.TestCase):
         self.assertIn({"type": "Version", "key": "AppVersion", "value": "5.9", "value_type": "float"}, properties)
         self.assertGreater(len(properties), 100)
 
+    def test_pp3_parser_preserves_long_rawtherapee_section_names(self) -> None:
+        properties = parse_pp3_properties(
+            "[Common Properties for Transformations]\n"
+            "Method=log\n"
+        )
+
+        self.assertEqual("Common Properties for Transformations", properties[0]["type"])
+
 
 class MetadataDatabaseProfileDataTest(unittest.TestCase):
     class FakePyodbc:
@@ -327,21 +335,23 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         properties = parse_pp3_properties(
             "[Version]\nAppVersion=5.9\nVersion=349\n\n"
             "[Exposure]\nBlack=63\nCurve=4;0;0;0.050000000000000003;0.035148935901110998;\n"
+            "[Common Properties for Transformations]\nMethod=log\n"
         )
 
         stats = database.replace_profile_data(42, properties, "/photos/abc_source.pp3", "RawTherapee 5.12")
 
         section_inserts = self.section_insert_statements(connection)
-        self.assertEqual(2, len(section_inserts))
+        self.assertEqual(3, len(section_inserts))
         self.assertIn("revision", section_inserts[0][0])
         self.assertEqual(10, len(section_inserts[0][1]))
         self.assertEqual([42, "Version", "AppVersion", "5.9", "float"], list(section_inserts[0][1][0:5]))
         self.assertEqual([42, "Version", "Version", "349", "int"], list(section_inserts[0][1][5:10]))
         self.assertEqual("Exposure", section_inserts[1][1][1])
         self.assertIn("Curve", section_inserts[1][1])
-        self.assertEqual(4, stats["profile_rows_written"])
-        self.assertEqual(2, stats["profile_sections"])
-        self.assertEqual(2, stats["profile_insert_batches"])
+        self.assertEqual("Common Properties for Transformations", section_inserts[2][1][1])
+        self.assertEqual(5, stats["profile_rows_written"])
+        self.assertEqual(3, stats["profile_sections"])
+        self.assertEqual(3, stats["profile_insert_batches"])
         self.assertGreater(stats["profile_largest_value_length"], 40)
         self.assertEqual(1, connection.commits)
         self.assertTrue(connection.executed[0][0].strip().startswith("DELETE FROM photo_profile_data"))

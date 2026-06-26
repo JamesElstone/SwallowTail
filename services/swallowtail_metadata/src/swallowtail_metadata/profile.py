@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+PP3_SECTION_MAX_CHARS = 64
+PP3_KEY_MAX_CHARS = 191
+
 
 @dataclass(frozen=True)
 class BaselineResult:
@@ -117,8 +120,8 @@ def parse_pp3_properties(contents: str) -> list[dict[str, Any]]:
         key, value = line.split("=", 1)
         value = value.strip()
         rows.append({
-            "type": section[:32],
-            "key": key.strip()[:191],
+            "type": section[:PP3_SECTION_MAX_CHARS],
+            "key": key.strip()[:PP3_KEY_MAX_CHARS],
             "value": value,
             "value_type": _value_type(value),
         })

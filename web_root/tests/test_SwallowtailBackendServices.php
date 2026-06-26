@@ -2232,7 +2232,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
             'saturation' => -12.25,
         ],
     ], 600, 500);
-    $content = $service->pp3Content($settings);
+    $content = $service->pp3Content($settings, "[Common Properties for Transformations]\nMethod=log\n");
 
     $harness->assertSame(0, (int)$settings['crop']['x']);
     $harness->assertSame(490, (int)$settings['crop']['y']);
@@ -2242,6 +2242,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'normalises preview edi
     $harness->assertSame(100.0, (float)$settings['exposure']['contrast']);
     $harness->assertTrue(str_contains($content, "[Exposure]\nAuto=false\nBlack=-100\nBrightness=25.5\nContrast=100\nSaturation=-12.25"));
     $harness->assertTrue(str_contains($content, "[Crop]\nEnabled=true\nX=0\nY=490\nW=600\nH=10"));
+    $harness->assertTrue(str_contains($content, "[Common Properties for Transformations]"));
+    $harness->assertTrue(!str_contains($content, "[Common Properties for Transforma]"));
     $harness->assertTrue(!str_contains($content, "[Resize]"));
 });
 
@@ -2295,15 +2297,17 @@ $harness->check(SwallowtailProfileDataService::class, 'records only changed subm
     ]);
     $third = $service->recordChangedRows(8, [
         ['type' => 'Exposure', 'key' => 'Contrast', 'value' => '30', 'value_type' => 'int'],
+        ['type' => 'Common Properties for Transformations', 'key' => 'Method', 'value' => 'log', 'value_type' => 'string'],
     ]);
 
     $harness->assertSame(2, $first);
     $harness->assertSame(0, $second);
-    $harness->assertSame(1, $third);
+    $harness->assertSame(2, $third);
     $harness->assertSame(3, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 8 AND type = 'Exposure' AND `key` = 'Contrast'"));
     $harness->assertSame(2, (int)InterfaceDB::fetchColumn("SELECT MAX(revision) FROM photo_profile_data WHERE photo_id = 8 AND type = 'Exposure' AND `key` = 'Contrast'"));
     $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT MAX(revision) FROM photo_profile_data WHERE photo_id = 8 AND type = 'Crop' AND `key` = 'Y'"));
     $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 8 AND type = 'Crop' AND `key` = 'X'"));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_profile_data WHERE photo_id = 8 AND type = 'Common Properties for Transformations' AND `key` = 'Method'"));
 });
 
 $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profile rows with ordered internal overlays', function () use ($harness, $swallowtailCreateSqliteSchema): void {
@@ -2313,7 +2317,8 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
         (7, 0, 'swallowtail', 'status', 'processed', 'string'),
         (7, 0, 'Exposure', 'Brightness', '12', 'int'),
         (7, 0, 'RAW Bayer', 'Method', 'amaze', 'string'),
-        (7, 1, 'RAW Bayer', 'Method', 'igv', 'string')");
+        (7, 1, 'RAW Bayer', 'Method', 'igv', 'string'),
+        (7, 0, 'Common Properties for Transformations', 'Method', 'log', 'string')");
     InterfaceDB::execute("INSERT INTO internal_profile_data (image_type, profile_name, `order`, type, `key`, value, value_type) VALUES
         ('preview', 'first', 1, 'RAW Bayer', 'Method', 'amaze', 'string'),
         ('preview', 'second', 2, 'RAW Bayer', 'Method', 'fast', 'string'),
@@ -2328,6 +2333,8 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
 
     $harness->assertTrue(str_contains($base, "[Exposure]\nBrightness=12"));
     $harness->assertTrue(str_contains($base, "[RAW Bayer]\nMethod=igv"));
+    $harness->assertTrue(str_contains($base, "[Common Properties for Transformations]\nMethod=log"));
+    $harness->assertTrue(!str_contains($base, "[Common Properties for Transforma]"));
     $harness->assertTrue(str_contains($preview, "[RAW Bayer]\nMethod=fast"));
     $harness->assertSame($preview, $combined);
     $harness->assertTrue(str_contains($preview, "[Resize]"));
@@ -3428,6 +3435,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $thumbnailImageTypePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_25_004_thumbnail_image_type.sql';
     $reassertPreviewFinalPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_001_reassert_preview_final_conversion_types.sql';
     $fixPreviewProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_002_fix_preview_internal_profile_data.sql';
+    $widenProfileSectionsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_003_widen_profile_section_names.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -3445,12 +3453,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $thumbnailImageTypeSql = file_get_contents($thumbnailImageTypePath);
     $reassertPreviewFinalSql = file_get_contents($reassertPreviewFinalPath);
     $fixPreviewProfileDataSql = file_get_contents($fixPreviewProfileDataPath);
+    $widenProfileSectionsSql = file_get_contents($widenProfileSectionsPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -3507,6 +3516,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'DROP TABLE IF EXISTS photo_metadata_property',
         'DROP TABLE IF EXISTS photo_metadata',
         "`key` varchar(191) NOT NULL",
+        "MODIFY type varchar(64) NOT NULL",
         "value_type enum('null','bool','int','float','string') NOT NULL",
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {

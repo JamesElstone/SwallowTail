@@ -12,6 +12,8 @@ final class SwallowtailProfileDataService
     private const TABLE = 'photo_profile_data';
     private const STATUS_TYPE = 'swallowtail';
     private const DEFAULT_PROFILE_QUEUE = 'swallowtail:metadata:profile_urgent';
+    private const PROFILE_SECTION_MAX_LENGTH = 64;
+    private const PROFILE_KEY_MAX_LENGTH = 191;
 
     private object $redis;
 
@@ -172,8 +174,8 @@ final class SwallowtailProfileDataService
             }
 
             $changed[] = [
-                'type' => substr($section, 0, 32),
-                'key' => substr($key, 0, 191),
+                'type' => substr($section, 0, self::PROFILE_SECTION_MAX_LENGTH),
+                'key' => substr($key, 0, self::PROFILE_KEY_MAX_LENGTH),
                 'value' => $value === null ? null : (string)$value,
                 'value_type' => $valueType,
             ];
@@ -333,8 +335,8 @@ final class SwallowtailProfileDataService
             )",
             [
                 'photo_id' => $photoId,
-                'type' => substr($type, 0, 32),
-                'key' => substr($key, 0, 191),
+                'type' => substr($type, 0, self::PROFILE_SECTION_MAX_LENGTH),
+                'key' => substr($key, 0, self::PROFILE_KEY_MAX_LENGTH),
                 'value' => $storedValue,
                 'value_type' => $valueType,
             ]

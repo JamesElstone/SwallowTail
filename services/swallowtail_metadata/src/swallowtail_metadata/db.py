@@ -10,6 +10,8 @@ from .config import DatabaseConfig
 class MetadataDatabase:
     PROFILE_INSERT_BATCH_ROWS = 500
     ODBC_VALUE_CHUNK_CHARS = 100
+    PROFILE_SECTION_MAX_CHARS = 64
+    PROFILE_KEY_MAX_CHARS = 191
 
     FIELD_NAMES = [
         "captured_at_local",
@@ -260,8 +262,8 @@ class MetadataDatabase:
         sections: dict[str, list[dict[str, Any]]] = {}
         largest_value_length = 0
         for row in properties:
-            type_name = str(row.get("type") or "")[:32]
-            key = str(row.get("key") or "")[:191]
+            type_name = str(row.get("type") or "")[:self.PROFILE_SECTION_MAX_CHARS]
+            key = str(row.get("key") or "")[:self.PROFILE_KEY_MAX_CHARS]
             value = row.get("value")
             value_type = str(row.get("value_type") or "string")
             value_type = value_type if value_type in {"null", "bool", "int", "float", "string"} else "string"
@@ -406,7 +408,7 @@ class MetadataDatabase:
                 %s, 0, %s, %s, %s, %s
             )
             """,
-            (photo_id, type_name[:32], key[:191], stored_value, value_type),
+            (photo_id, type_name[:self.PROFILE_SECTION_MAX_CHARS], key[:self.PROFILE_KEY_MAX_CHARS], stored_value, value_type),
         )
 
     def _table_exists(self, table_name: str) -> bool:
