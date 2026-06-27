@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailEventManagementService;
+
 final class _event_permissionsCard extends CardBaseFramework
 {
     private const PERMISSIONS = [

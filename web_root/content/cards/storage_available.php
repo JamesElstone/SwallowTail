@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailStorageService;
+
 final class _storage_availableCard extends CardBaseFramework
 {
     public function key(): string
@@ -249,10 +251,10 @@ final class _storage_availableCard extends CardBaseFramework
     private function settingsForm(array $context): string
     {
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $storeOnRoot = (bool)AppConfigurationStore::get('swallowtail.storage.store_on_root_partition', false);
-        $roundRobin = (bool)AppConfigurationStore::get('swallowtail.storage.round_robin_locations', false);
-        $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
-        $blockedPollInterval = (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds', 3600);
+        $storeOnRoot = (bool)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.store_on_root_partition', false);
+        $roundRobin = (bool)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.round_robin_locations', false);
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 5);
+        $blockedPollInterval = (int)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.storage_blocked_poll_interval_seconds', 3600);
 
         return '<form method="post" action="?page=settings" data-ajax="true" class="storage-settings-form">
             ' . $this->hiddenFields($context) . '
@@ -293,7 +295,7 @@ final class _storage_availableCard extends CardBaseFramework
         $included = 0;
         $writable = 0;
         $belowThreshold = 0;
-        $threshold = (float)AppConfigurationStore::get('swallowtail.storage.full_threshold_percent', 5);
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 5);
 
         foreach ($locations as $location) {
             if (!is_array($location) || !empty($location['is_excluded'])) {
@@ -316,7 +318,7 @@ final class _storage_availableCard extends CardBaseFramework
             return '';
         }
 
-        $blockedPollInterval = (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds', 3600);
+        $blockedPollInterval = (int)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.storage_blocked_poll_interval_seconds', 3600);
 
         return '<div class="panel-soft warn storage-exhausted-warning">Storage is exhausted for new writes. All included locations are below the configured free-space threshold of '
             . HelperFramework::escape(number_format($threshold, 1) . '%')

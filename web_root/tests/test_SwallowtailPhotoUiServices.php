@@ -7,6 +7,11 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailPhotoLibraryService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailStorageService;
+use Swallowtail\Service\SwallowtailWebRawUploadService;
+
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARATOR . 'ServiceClassTestHarness.php';
 
 $harness = new GeneratedServiceClassTestHarness();
@@ -138,9 +143,9 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
                     throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
                 }
 
-                AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
-                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-                AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $storageRoot);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
                 $checksums = [
                     hash('sha256', "II*\0\x10\x00\x00\x00CR\2\0" . str_repeat('A', 128)),
@@ -171,10 +176,10 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
             } catch (Throwable) {
             }
 
-            AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-            AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
-            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 5);
-            AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', false);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 5);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', '');
         });
     }
 
@@ -183,10 +188,10 @@ $swallowtailUiEnableRootStorageForTests = static function (): void {
         throw new RuntimeException('Unable to create SwallowTail UI storage test directory.');
     }
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
-    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-    AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
-    AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $storageRoot);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', false);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
 };
 
 $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootStorageForTests): void {

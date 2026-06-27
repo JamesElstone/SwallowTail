@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Store\SwallowtailConfigurationStore;
+
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARATOR . 'ServiceClassTestHarness.php';
 
 $harness = new GeneratedServiceClassTestHarness();
@@ -18,8 +20,8 @@ $harness->check(AppConfigurationStore::class, 'loads configuration from the test
     $harness->assertSame([], AppConfigurationStore::get('navigation.topbar_disabled_pages'));
     $harness->assertSame(true, AppConfigurationStore::get('user_defaults.new_user_otp_required'));
     $harness->assertSame('Test strapline', AppConfigurationStore::appStrapline());
-    $harness->assertSame(3600, (int)AppConfigurationStore::get('swallowtail.storage.storage_blocked_poll_interval_seconds'));
-    $harness->assertSame('Europe/London', AppConfigurationStore::get('swallowtail.timezone.server'));
+    $harness->assertSame(3600, (int)SwallowtailConfigurationStore::get('storage.storage_blocked_poll_interval_seconds'));
+    $harness->assertSame('Europe/London', SwallowtailConfigurationStore::get('timezone.server'));
 });
 
 $harness->check(AppConfigurationStore::class, 'centralises the default application strapline', function () use ($harness): void {
@@ -66,22 +68,20 @@ $harness->check(AppConfigurationStore::class, 'does not generate a default datab
     $harness->assertSame('', $defaults['db']['dsn'] ?? null);
 });
 
-$harness->check(AppConfigurationStore::class, 'defaults storage-blocked conversion polling to one hour', function () use ($harness): void {
-    $method = new ReflectionMethod(AppConfigurationStore::class, 'defaults');
-    $defaults = $method->invoke(null);
+$harness->check(SwallowtailConfigurationStore::class, 'defaults storage-blocked conversion polling to one hour', function () use ($harness): void {
+    $defaults = SwallowtailConfigurationStore::defaults();
 
-    $harness->assertSame(3600, (int)($defaults['swallowtail']['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
+    $harness->assertSame(3600, (int)($defaults['storage']['storage_blocked_poll_interval_seconds'] ?? 0));
 });
 
-$harness->check(AppConfigurationStore::class, 'defaults metadata fallback timezone to London', function () use ($harness): void {
-    $method = new ReflectionMethod(AppConfigurationStore::class, 'defaults');
-    $defaults = $method->invoke(null);
+$harness->check(SwallowtailConfigurationStore::class, 'defaults metadata fallback timezone to London', function () use ($harness): void {
+    $defaults = SwallowtailConfigurationStore::defaults();
 
-    $harness->assertSame('Europe/London', $defaults['swallowtail']['timezone']['server'] ?? null);
-    $harness->assertSame(false, $defaults['swallowtail']['timezone']['daylight_saving']['enabled'] ?? null);
-    $harness->assertSame('03-31', $defaults['swallowtail']['timezone']['daylight_saving']['start'] ?? null);
-    $harness->assertSame('10-31', $defaults['swallowtail']['timezone']['daylight_saving']['end'] ?? null);
-    $harness->assertSame(60, $defaults['swallowtail']['timezone']['daylight_saving']['offset_minutes'] ?? null);
+    $harness->assertSame('Europe/London', $defaults['timezone']['server'] ?? null);
+    $harness->assertSame(false, $defaults['timezone']['daylight_saving']['enabled'] ?? null);
+    $harness->assertSame('03-31', $defaults['timezone']['daylight_saving']['start'] ?? null);
+    $harness->assertSame('10-31', $defaults['timezone']['daylight_saving']['end'] ?? null);
+    $harness->assertSame(60, $defaults['timezone']['daylight_saving']['offset_minutes'] ?? null);
 });
 
 $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled by default', function () use ($harness): void {
@@ -89,6 +89,12 @@ $harness->check(AppConfigurationStore::class, 'keeps function tracing disabled b
     $defaults = $method->invoke(null);
 
     $harness->assertSame('', $defaults['trace']['log_path'] ?? null);
+    $harness->assertSame(null, $defaults['trace']['raw_upload_timing'] ?? null);
+});
+
+$harness->check(SwallowtailConfigurationStore::class, 'keeps raw upload timing disabled by default', function () use ($harness): void {
+    $defaults = SwallowtailConfigurationStore::defaults();
+
     $harness->assertSame(false, $defaults['trace']['raw_upload_timing'] ?? null);
 });
 
@@ -174,7 +180,7 @@ $harness->check(AppConfigurationStore::class, 'updates editable application sett
     }
 });
 
-$harness->check(AppConfigurationStore::class, 'updates timezone settings without dropping other SwallowTail config', function () use ($harness): void {
+$harness->check(SwallowtailConfigurationStore::class, 'updates timezone settings without dropping other SwallowTail config', function () use ($harness): void {
     $path = AppConfigurationStore::configPath();
     $original = file_get_contents($path);
 
@@ -183,7 +189,7 @@ $harness->check(AppConfigurationStore::class, 'updates timezone settings without
     }
 
     try {
-        $updated = AppConfigurationStore::setTimezoneSettings([
+        $updated = SwallowtailConfigurationStore::setTimezoneSettings([
             'server' => 'UTC',
             'daylight_saving' => [
                 'enabled' => true,

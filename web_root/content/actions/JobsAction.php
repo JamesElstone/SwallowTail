@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailJobStatisticsService;
+
 final class JobsAction implements ActionInterfaceFramework
 {
     public function handle(RequestFramework $request, PageServiceFramework $services): ActionResultFramework

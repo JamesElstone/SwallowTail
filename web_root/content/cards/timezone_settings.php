@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Store\SwallowtailConfigurationStore;
+
 final class _timezone_settingsCard extends CardBaseFramework
 {
     public function key(): string
@@ -22,11 +24,11 @@ final class _timezone_settingsCard extends CardBaseFramework
     public function render(array $context): string
     {
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $current = trim((string)AppConfigurationStore::get('swallowtail.timezone.server', 'Europe/London'));
+        $current = trim((string)SwallowtailConfigurationStore::get('timezone.server', 'Europe/London'));
         if ($current === '') {
             $current = 'Europe/London';
         }
-        $daylightSaving = (array)AppConfigurationStore::get('swallowtail.timezone.daylight_saving', []);
+        $daylightSaving = (array)SwallowtailConfigurationStore::get('timezone.daylight_saving', []);
         $dstEnabled = (bool)($daylightSaving['enabled'] ?? false);
         $dstStart = $this->monthDayForDateInput((string)($daylightSaving['start'] ?? '03-31'));
         $dstEnd = $this->monthDayForDateInput((string)($daylightSaving['end'] ?? '10-31'));

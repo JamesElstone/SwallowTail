@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailPhotoUiService;
+
 final class _recent_uploadsCard extends CardBaseFramework
 {
     public function key(): string

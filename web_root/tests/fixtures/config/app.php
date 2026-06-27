@@ -23,7 +23,6 @@ return array (
   'trace' => 
   array (
     'log_path' => '',
-    'raw_upload_timing' => false,
   ),
   'navigation' => 
   array (
@@ -61,6 +60,10 @@ return array (
     array (
       'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
       'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
+    ),
+    'trace' => 
+    array (
+      'raw_upload_timing' => false,
     ),
   ),
 );

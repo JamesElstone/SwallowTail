@@ -170,61 +170,6 @@ final class AppConfigurationStore
         return self::config(true);
     }
 
-    public static function setTimezoneSettings(array $settings): array
-    {
-        $timezone = trim((string)($settings['server'] ?? ''));
-        if ($timezone === '' || !in_array($timezone, DateTimeZone::listIdentifiers(), true)) {
-            throw new RuntimeException('Choose a valid server timezone.');
-        }
-
-        $daylightSaving = self::normaliseDaylightSavingSettings($settings['daylight_saving'] ?? []);
-        $config = self::readStoredConfig();
-        $swallowtail = is_array($config['swallowtail'] ?? null) ? $config['swallowtail'] : [];
-        $current = is_array($swallowtail['timezone'] ?? null) ? $swallowtail['timezone'] : [];
-        $swallowtail['timezone'] = array_replace($current, [
-            'server' => $timezone,
-            'daylight_saving' => $daylightSaving,
-        ]);
-        $config['swallowtail'] = $swallowtail;
-        self::writeStoredConfig($config);
-
-        return self::config(true);
-    }
-
-    private static function normaliseDaylightSavingSettings(mixed $settings): array
-    {
-        $settings = is_array($settings) ? $settings : [];
-        $enabled = filter_var($settings['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN);
-        $start = self::normaliseMonthDayDate((string)($settings['start'] ?? ''));
-        $end = self::normaliseMonthDayDate((string)($settings['end'] ?? ''));
-        $offset = (int)($settings['offset_minutes'] ?? 60);
-        if (!in_array($offset, [60, 30, 0, -30, -60], true)) {
-            throw new RuntimeException('Choose a valid daylight saving offset.');
-        }
-
-        return [
-            'enabled' => $enabled,
-            'start' => $start,
-            'end' => $end,
-            'offset_minutes' => $offset,
-        ];
-    }
-
-    private static function normaliseMonthDayDate(string $date): string
-    {
-        $date = trim($date);
-        if ($date === '') {
-            throw new RuntimeException('Choose valid daylight saving start and end dates.');
-        }
-
-        $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
-        if (!$parsed instanceof DateTimeImmutable || $parsed->format('Y-m-d') !== $date) {
-            throw new RuntimeException('Choose valid daylight saving start and end dates.');
-        }
-
-        return $parsed->format('m-d');
-    }
-
     public static function set(string $path, mixed $value): array
     {
         $segments = self::configPathSegments($path);
@@ -249,25 +194,6 @@ final class AppConfigurationStore
         self::writeStoredConfig($config);
 
         return self::config(true);
-    }
-
-    public static function ensureUploadExportKey(int $length = 32): string
-    {
-        $config = self::readStoredConfig();
-        $uploads = is_array($config['uploads'] ?? null) ? $config['uploads'] : [];
-        $existing = trim((string)($uploads['export_key'] ?? ''));
-
-        if ($existing !== '') {
-            return $existing;
-        }
-
-        $key = self::randomAsciiString(max(16, $length));
-        $config['uploads'] = $uploads;
-        $config['uploads']['export_key'] = $key;
-        self::writeStoredConfig($config);
-        self::config(true);
-
-        return $key;
     }
 
     public static function get(string $path, mixed $default = null, bool $reload = false): mixed
@@ -316,7 +242,6 @@ final class AppConfigurationStore
             ],
             'trace' => [
                 'log_path' => '',
-                'raw_upload_timing' => false,
             ],
             'navigation' => [
                 'default_order' => [],
@@ -348,38 +273,6 @@ final class AppConfigurationStore
             'session' => [
                 'cookie_secure' => 'auto',
                 'cookie_samesite' => 'Strict',
-            ],
-            'swallowtail' => [
-                'timezone' => [
-                    'server' => 'Europe/London',
-                    'daylight_saving' => [
-                        'enabled' => false,
-                        'start' => '03-31',
-                        'end' => '10-31',
-                        'offset_minutes' => 60,
-                    ],
-                ],
-                'storage' => [
-                    'store_on_root_partition' => false,
-                    'round_robin_locations' => false,
-                    'full_threshold_percent' => 5,
-                    'storage_blocked_poll_interval_seconds' => 3600,
-                ],
-                'redis' => [
-                    'host' => '127.0.0.1',
-                    'port' => 6379,
-                    'urgent_queue' => 'swallowtail:conversion:urgent',
-                    'normal_queue' => 'swallowtail:conversion:normal',
-                    'preempt_queue' => 'swallowtail:conversion:preempt',
-                    'storage_wake_queue' => 'swallowtail:conversion:storage_wake',
-                    'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
-                    'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
-                    'metadata_data_integrity_queue' => 'swallowtail:metadata:data_integrity',
-                    'rawtheapee_profile_refresh_queue' => 'swallowtail:metadata:rawtheapee_profiles',
-                ],
-                'rawtheapee' => [
-                    'profile_root' => '/usr/local/share/rawtherapee/profiles',
-                ],
             ],
             'user_defaults' => [
                 'new_user_otp_required' => true,
@@ -516,16 +409,4 @@ final class AppConfigurationStore
         return APP_CONFIG . 'app.php';
     }
 
-    private static function randomAsciiString(int $length): string
-    {
-        $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        $max = strlen($alphabet) - 1;
-        $value = '';
-
-        for ($index = 0; $index < $length; $index++) {
-            $value .= $alphabet[random_int(0, $max)];
-        }
-
-        return $value;
-    }
 }

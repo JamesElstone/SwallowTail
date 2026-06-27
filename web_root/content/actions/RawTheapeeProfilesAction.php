@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
+
 final class RawTheapeeProfilesAction implements ActionInterfaceFramework
 {
     public function handle(RequestFramework $request, PageServiceFramework $services): ActionResultFramework

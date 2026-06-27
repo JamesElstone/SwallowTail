@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Store\SwallowtailConfigurationStore;
+
 final class TimezoneSettingsAction implements ActionInterfaceFramework
 {
     public function handle(RequestFramework $request, PageServiceFramework $services): ActionResultFramework
@@ -23,7 +25,7 @@ final class TimezoneSettingsAction implements ActionInterfaceFramework
 
         $timezone = trim((string)$request->input('server_timezone', ''));
         try {
-            AppConfigurationStore::setTimezoneSettings([
+            SwallowtailConfigurationStore::setTimezoneSettings([
                 'server' => $timezone,
                 'daylight_saving' => [
                     'enabled' => $request->input('daylight_saving_enabled', '') === '1',

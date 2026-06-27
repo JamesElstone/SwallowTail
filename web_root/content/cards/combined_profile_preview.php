@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailCombinedProfilePreviewService;
+
 final class _combined_profile_previewCard extends CardBaseFramework
 {
     public function key(): string

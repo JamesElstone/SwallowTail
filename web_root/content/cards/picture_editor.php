@@ -7,6 +7,10 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailPreviewProfileService;
+
 final class _picture_editorCard extends CardBaseFramework
 {
     public function title(): string

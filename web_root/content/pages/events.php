@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailEventManagementService;
+
 final class _events extends PageContextFramework
 {
     public function id(): string

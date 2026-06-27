@@ -7,6 +7,10 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailCombinedProfilePreviewService;
+use Swallowtail\Service\SwallowtailPhotoAssetService;
+use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
+
 final class _rawtheapee_profilesCard extends CardBaseFramework
 {
     public function key(): string

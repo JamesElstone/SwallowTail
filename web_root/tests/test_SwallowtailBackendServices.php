@@ -7,6 +7,27 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailCombinedProfileService;
+use Swallowtail\Service\SwallowtailConversionQueueService;
+use Swallowtail\Service\SwallowtailConversionStatusApiService;
+use Swallowtail\Service\SwallowtailEventAccessService;
+use Swallowtail\Service\SwallowtailEventManagementService;
+use Swallowtail\Service\SwallowtailImageServeService;
+use Swallowtail\Service\SwallowtailInternalProfilesService;
+use Swallowtail\Service\SwallowtailPhotoIngestService;
+use Swallowtail\Service\SwallowtailPhotoLibraryService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailPingApiService;
+use Swallowtail\Service\SwallowtailPreviewProfileService;
+use Swallowtail\Service\SwallowtailProfileDataService;
+use Swallowtail\Service\SwallowtailQuickChecksumApiService;
+use Swallowtail\Service\SwallowtailRawUploadApiService;
+use Swallowtail\Service\SwallowtailSpiceBushRegistrationApiService;
+use Swallowtail\Service\SwallowtailStorageCacheService;
+use Swallowtail\Service\SwallowtailStorageLocationService;
+use Swallowtail\Service\SwallowtailStorageMigrationService;
+use Swallowtail\Service\SwallowtailStorageService;
+
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARATOR . 'ServiceClassTestHarness.php';
 
 $harness = new GeneratedServiceClassTestHarness();
@@ -151,9 +172,9 @@ $swallowtailEnableRootStorageForTests = static function (): void {
                     throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
                 }
 
-                AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
-                AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-                AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $storageRoot);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+                \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
                 $storage = new SwallowtailStorageService();
                 $checksums = [
                     hash('sha256', "II*\0\x10\x00\x00\x00CR\2\0" . str_repeat('A', 128)),
@@ -184,10 +205,10 @@ $swallowtailEnableRootStorageForTests = static function (): void {
             } catch (Throwable) {
             }
 
-            AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-            AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
-            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 5);
-            AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', false);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 5);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', '');
         });
     }
 
@@ -196,10 +217,10 @@ $swallowtailEnableRootStorageForTests = static function (): void {
         throw new RuntimeException('Unable to create SwallowTail backend storage test directory.');
     }
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', $storageRoot);
-    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-    AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
-    AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $storageRoot);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', false);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
 };
 
 $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootStorageForTests): void {
@@ -488,9 +509,9 @@ $swallowtailWithRootStorage = static function (callable $callback) use ($harness
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', true);
-        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', false);
-        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', true);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
 
         $storage = new SwallowtailStorageService();
         $locations = $storage->storageLocations();
@@ -691,9 +712,9 @@ $harness->check(SwallowtailStorageService::class, 'marks invalid storage bases u
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.test_base_location', $blockedBase);
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $blockedBase);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
         (new SwallowtailStorageCacheService())->clear();
 
         $matching = array_values(array_filter(
@@ -732,10 +753,10 @@ $harness->check(SwallowtailStorageService::class, 'fails storage refresh when Re
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.test_base_location', $base);
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
-        AppConfigurationStore::set('swallowtail.redis.port', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $base);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.port', 0);
 
         try {
             (new SwallowtailStorageService())->refreshStorageSnapshot();
@@ -774,9 +795,9 @@ $harness->check(SwallowtailStorageService::class, 'verifies active live storage 
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', '');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
         (new SwallowtailStorageCacheService())->clear();
 
         $locations = (new SwallowtailStorageService())->liveStorageLocations();
@@ -914,8 +935,8 @@ $harness->check(SwallowtailStorageService::class, 'reports storage file write fa
 
         $storage = new SwallowtailStorageService();
         $baseLocation = swallowtail_backend_storage_tmp_root();
-        AppConfigurationStore::set('swallowtail.storage.test_base_location', $baseLocation);
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $baseLocation);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
         (new SwallowtailStorageCacheService())->clear();
 
         $destinationPath = $storage->imagePath($baseLocation, $checksum, 'source');
@@ -943,7 +964,7 @@ $harness->check(SwallowtailStorageService::class, 'reports storage file write fa
             }
         }
     } finally {
-        AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', '');
         (new SwallowtailStorageCacheService())->clear();
         @unlink($source);
         swallowtail_backend_remove_tree(swallowtail_backend_storage_tmp_root());
@@ -2776,7 +2797,7 @@ $harness->check(SwallowtailCombinedProfileService::class, 'requests metadata pro
     };
 
     try {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_combiner_test');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_combiner_test');
         $service = new SwallowtailCombinedProfileService(new SwallowtailProfileDataService($redis));
         $content = $service->combinedProfileContent(91, 'final');
 
@@ -2789,7 +2810,7 @@ $harness->check(SwallowtailCombinedProfileService::class, 'requests metadata pro
         $harness->assertSame(91, (int)$redis->pushes[0]['payload']['photo_id']);
         $harness->assertSame('combined_profile_final', (string)$redis->pushes[0]['payload']['reason']);
     } finally {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
     }
 });
 
@@ -3278,7 +3299,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'keeps polling while fi
     };
 
     try {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_viewer_pending_test');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_viewer_pending_test');
         $service = new SwallowtailPreviewProfileService(
             profileDataService: new SwallowtailProfileDataService($redis)
         );
@@ -3295,7 +3316,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'keeps polling while fi
         $harness->assertSame($photoId, (int)$redis->pushes[0]['payload']['photo_id']);
         $harness->assertSame('picture_viewer_final', (string)$redis->pushes[0]['payload']['reason']);
     } finally {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
         @unlink($source);
     }
 });
@@ -3606,8 +3627,8 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
         throw new RuntimeException('Unable to create blocked storage destination fixture.');
     }
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', $blockedBase);
-    AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $blockedBase);
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
     (new SwallowtailStorageCacheService())->clear();
 
     $response = $swallowtailInvokeRawUploadApi([
@@ -3662,7 +3683,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $harness->assertSame('Token Account', (string)($logsRows[0]['user_display_name'] ?? ''));
     $harness->assertSame('No writable storage locations available.', (string)($logsRows[0]['message_text'] ?? ''));
 
-    AppConfigurationStore::set('swallowtail.storage.test_base_location', '');
+    \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', '');
     (new SwallowtailStorageCacheService())->clear();
     @unlink($source);
     swallowtail_backend_remove_tree($blockedBase);
@@ -3845,7 +3866,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'keeps raw upload timing 
     }
 
     try {
-        AppConfigurationStore::set('trace.raw_upload_timing', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('trace.raw_upload_timing', false);
         ini_set('log_errors', '1');
         ini_set('error_log', $logFile);
 
@@ -3874,7 +3895,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'writes raw upload timing
     }
 
     try {
-        AppConfigurationStore::set('trace.raw_upload_timing', true);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('trace.raw_upload_timing', true);
         ini_set('log_errors', '1');
         ini_set('error_log', $logFile);
 
@@ -4141,8 +4162,8 @@ $harness->check(SwallowtailStorageLocationService::class, 'filters discovered st
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', false);
-        AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
         $withoutRoot = (new SwallowtailStorageService())->storageLocations();
         foreach ($withoutRoot as $location) {
             $harness->assertTrue(empty($location['is_root_partition']));
@@ -4163,7 +4184,7 @@ $harness->check(SwallowtailStorageLocationService::class, 'filters discovered st
             $harness->assertTrue(str_ends_with((string)$writableLocations[0]['data_root'], DIRECTORY_SEPARATOR . 'swallowtail-data' . DIRECTORY_SEPARATOR));
             $harness->assertTrue(!empty($writableLocations[0]['permission_can_write']));
 
-            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 100);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 100);
             $thresholdLocations = $storage->storageLocations();
             $thresholdLocation = null;
             foreach ($thresholdLocations as $location) {
@@ -4175,7 +4196,7 @@ $harness->check(SwallowtailStorageLocationService::class, 'filters discovered st
             $harness->assertTrue(is_array($thresholdLocation));
             $harness->assertTrue(empty($thresholdLocation['can_write']));
 
-            AppConfigurationStore::set('swallowtail.storage.full_threshold_percent', 0);
+            \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
             (new SwallowtailStorageLocationService($storage))->setExcluded($baseLocation, true);
             $excludedLocations = $storage->storageLocations();
             $excludedLocation = null;
@@ -4199,7 +4220,7 @@ $harness->check(SwallowtailStorageService::class, 'selects writable locations by
     $swallowtailCreateSqliteSchema();
 
     $swallowtailWithRootStorage(static function (SwallowtailStorageService $storage) use ($harness): void {
-        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', true);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', true);
         $locations = array_values(array_filter(
             $storage->storageLocations(),
             static fn(array $location): bool => !empty($location['can_write'])
@@ -4224,7 +4245,7 @@ $harness->check(SwallowtailStorageService::class, 'keeps fallback writable locat
     }
 
     try {
-        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', true);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', true);
 
         $storage = new SwallowtailStorageService();
         $method = new ReflectionMethod($storage, 'writableLocationsForChecksum');
@@ -4415,7 +4436,7 @@ $harness->check(SwallowtailProfileDataService::class, 'queues urgent profile not
     };
 
     try {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent_test');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent_test');
         $ingest = new SwallowtailPhotoIngestService(
             new SwallowtailStorageService(),
             new SwallowtailPhotoLibraryService(),
@@ -4437,7 +4458,7 @@ $harness->check(SwallowtailProfileDataService::class, 'queues urgent profile not
         $harness->assertSame($photoId, (int)$redis->pushes[0]['payload']['photo_id']);
         $harness->assertSame('picture_viewer', (string)$redis->pushes[0]['payload']['reason']);
     } finally {
-        AppConfigurationStore::set('swallowtail.redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
         @unlink($source);
     }
 });

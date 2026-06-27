@@ -7,6 +7,13 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailStorageCacheService;
+use Swallowtail\Service\SwallowtailStorageLocationService;
+use Swallowtail\Service\SwallowtailStorageMigrationService;
+use Swallowtail\Service\SwallowtailStoragePermissionRepairService;
+use Swallowtail\Service\SwallowtailStorageService;
+use Swallowtail\Service\SwallowtailStorageWakeService;
+
 final class StorageSettingsAction implements ActionInterfaceFramework
 {
     public function __construct(
@@ -62,14 +69,14 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             return $this->fixPermissions($request);
         }
 
-        AppConfigurationStore::set('swallowtail.storage.store_on_root_partition', $this->checkboxValue($request, 'store_on_root_partition'));
-        AppConfigurationStore::set('swallowtail.storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
-        AppConfigurationStore::set(
-            'swallowtail.storage.full_threshold_percent',
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', $this->checkboxValue($request, 'store_on_root_partition'));
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
+        \Swallowtail\Store\SwallowtailConfigurationStore::set(
+            'storage.full_threshold_percent',
             max(0.0, min(100.0, (float)$request->input('full_threshold_percent', 5)))
         );
-        AppConfigurationStore::set(
-            'swallowtail.storage.storage_blocked_poll_interval_seconds',
+        \Swallowtail\Store\SwallowtailConfigurationStore::set(
+            'storage.storage_blocked_poll_interval_seconds',
             $this->clampedPollIntervalSeconds($request->input('storage_blocked_poll_interval_seconds', 3600))
         );
         (new SwallowtailStorageCacheService())->clear();

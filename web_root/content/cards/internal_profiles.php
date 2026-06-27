@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailInternalProfilesService;
+
 final class _internal_profilesCard extends CardBaseFramework
 {
     public function key(): string

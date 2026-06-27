@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailWebRawUploadService;
+
 final class _upload extends PageContextFramework
 {
     public function id(): string

@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailDataIntegrityCheckService;
+
 final class _data_integrity_checkCard extends CardBaseFramework
 {
     public function key(): string

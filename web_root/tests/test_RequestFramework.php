@@ -9,6 +9,13 @@ declare(strict_types=1);
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARATOR . 'ServiceClassTestHarness.php';
 
+if (!function_exists('getallheaders')) {
+    function getallheaders(): array
+    {
+        return (array)($GLOBALS['__request_framework_test_headers'] ?? []);
+    }
+}
+
 $harness = new GeneratedServiceClassTestHarness();
 $harness->run(RequestFramework::class, function (GeneratedServiceClassTestHarness $harness, object $instance): void {
     $harness->check(RequestFramework::class, 'reads JSON body values from input and post accessors', function () use ($harness): void {
@@ -158,6 +165,64 @@ $harness->run(RequestFramework::class, function (GeneratedServiceClassTestHarnes
         );
 
         $harness->assertSame('Bearer explicit-token', $request->header('Authorization'));
+    });
+
+    $harness->check(RequestFramework::class, 'keeps getallheaders precedence while filling missing CGI authorization', function () use ($harness): void {
+        $originalGet = $_GET;
+        $originalPost = $_POST;
+        $originalServer = $_SERVER;
+        $originalFiles = $_FILES;
+        $originalCookie = $_COOKIE;
+        $originalHeaders = $GLOBALS['__request_framework_test_headers'] ?? null;
+        $originalRawBody = $GLOBALS['__request_framework_raw_body'] ?? null;
+        $hadHeaders = array_key_exists('__request_framework_test_headers', $GLOBALS);
+        $hadRawBody = array_key_exists('__request_framework_raw_body', $GLOBALS);
+
+        try {
+            $_GET = [];
+            $_POST = [];
+            $_FILES = [];
+            $_COOKIE = [];
+            $_SERVER = [
+                'HTTP_AUTHORIZATION' => 'Bearer server-token',
+                'HTTP_X_REQUESTED_WITH' => 'server-requested-with',
+            ];
+            $GLOBALS['__request_framework_raw_body'] = '';
+            $GLOBALS['__request_framework_test_headers'] = [
+                'Authorization' => 'Bearer header-token',
+                'X-Requested-With' => 'header-requested-with',
+            ];
+
+            $request = RequestFramework::fromGlobals();
+
+            $harness->assertSame('Bearer header-token', $request->header('Authorization'));
+            $harness->assertSame('header-requested-with', $request->header('X-Requested-With'));
+
+            $GLOBALS['__request_framework_test_headers'] = [
+                'X-Requested-With' => 'header-requested-with',
+            ];
+
+            $request = RequestFramework::fromGlobals();
+
+            $harness->assertSame('Bearer server-token', $request->header('Authorization'));
+            $harness->assertSame('header-requested-with', $request->header('X-Requested-With'));
+        } finally {
+            $_GET = $originalGet;
+            $_POST = $originalPost;
+            $_SERVER = $originalServer;
+            $_FILES = $originalFiles;
+            $_COOKIE = $originalCookie;
+            if ($hadHeaders) {
+                $GLOBALS['__request_framework_test_headers'] = $originalHeaders;
+            } else {
+                unset($GLOBALS['__request_framework_test_headers']);
+            }
+            if ($hadRawBody) {
+                $GLOBALS['__request_framework_raw_body'] = $originalRawBody;
+            } else {
+                unset($GLOBALS['__request_framework_raw_body']);
+            }
+        }
     });
 
     $harness->check(RequestFramework::class, 'uses the submitted card action when duplicate card action fields are posted', function () use ($harness): void {

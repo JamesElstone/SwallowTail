@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailStorageLocationService;
+
 final class _storage_summaryCard extends CardBaseFramework
 {
     public function key(): string

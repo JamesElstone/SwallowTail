@@ -7,6 +7,10 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailEventManagementService;
+use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
+
 final class _browse_galleryCard extends CardBaseFramework
 {
     private const DEFAULT_PER_PAGE = 24;
@@ -67,7 +71,9 @@ final class _browse_galleryCard extends CardBaseFramework
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
         $canAssignEvents = $this->canManageEvents() && $this->hasEditablePhotos($rows);
 
-        $html = '<div class="gallery-grid"
+        $html = '<div class="gallery-events-layout">';
+        $html .= $canAssignEvents ? $this->eventAssignmentPane($context) : '';
+        $html .= '<div class="gallery-grid"
             data-gallery-auto-refresh="true"
             data-gallery-events-grid
             data-gallery-pending="' . ($hasPendingPreviews ? '1' : '0') . '"
@@ -75,11 +81,10 @@ final class _browse_galleryCard extends CardBaseFramework
             data-gallery-page-field="' . HelperFramework::escape($pageField) . '"
             data-gallery-per-page="' . HelperFramework::escape((string)$perPage) . '"
             data-gallery-per-page-field="' . HelperFramework::escape($perPageField) . '">';
-        $html .= $canAssignEvents ? $this->eventAssignmentPane($context) : '';
         foreach ($rows as $photo) {
             $html .= $this->photoTile((array)$photo, $canAssignEvents);
         }
-        $html .= '</div>';
+        $html .= '</div></div>';
 
         $html .= $this->paginationControls(
             $context,

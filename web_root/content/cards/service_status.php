@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailServiceStatusService;
+
 final class _service_statusCard extends CardBaseFramework
 {
     public function key(): string

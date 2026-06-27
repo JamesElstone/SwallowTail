@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailPhotoLibraryService;
+
 final class UploadTokensAction implements ActionInterfaceFramework
 {
     public function __construct(

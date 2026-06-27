@@ -7,6 +7,10 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailCombinedProfileService;
+use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
+
 final class _picture_viewerCard extends CardBaseFramework
 {
     public function key(): string

@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailEventManagementService;
+
 final class EventPermissionsAction implements ActionInterfaceFramework
 {
     public function __construct(

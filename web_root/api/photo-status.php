@@ -7,6 +7,9 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\ApiSecurityService;
+use Swallowtail\Service\SwallowtailPreviewProfileService;
+
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 
 $request = RequestFramework::fromGlobals();

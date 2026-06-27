@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailPhotoLibraryService;
+
 final class _upload_tokensCard extends CardBaseFramework
 {
     private const PAGE_SIZE = 10;

@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Repository\PhotoAuditRepository;
+
 final class _photo_audit_logCard extends CardBaseFramework
 {
     private const PAGE_SIZE = 5;
@@ -21,7 +23,7 @@ final class _photo_audit_logCard extends CardBaseFramework
         return [
             [
                 'key' => 'photo_audit_rows',
-                'service' => LogsRepository::class,
+                'service' => PhotoAuditRepository::class,
                 'method' => 'fetchRecentPhotoAudit',
                 'params' => [
                     'limit' => 200,

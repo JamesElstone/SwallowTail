@@ -7,6 +7,11 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailServiceStatusService;
+use Swallowtail\Service\SwallowtailStorageCacheService;
+use Swallowtail\Service\SwallowtailStorageMigrationService;
+use Swallowtail\Service\SwallowtailStorageService;
+
 require_once dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'web_root' . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 
 $command = (string)($argv[1] ?? 'status');

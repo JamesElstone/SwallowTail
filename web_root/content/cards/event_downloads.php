@@ -7,6 +7,8 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailDownloadService;
+
 final class _event_downloadsCard extends CardBaseFramework
 {
     public function key(): string

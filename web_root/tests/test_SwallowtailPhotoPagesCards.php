@@ -7,6 +7,16 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailEventManagementService;
+use Swallowtail\Service\SwallowtailJobStatisticsService;
+use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
+use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
+use Swallowtail\Service\SwallowtailServiceStatusService;
+use Swallowtail\Service\SwallowtailStatisticsService;
+use Swallowtail\Service\SwallowtailStoragePermissionRepairService;
+use Swallowtail\Service\SwallowtailStorageService;
+use Swallowtail\Service\SwallowtailStorageWakeService;
+
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARATOR . 'ServiceClassTestHarness.php';
 
 $harness = new GeneratedServiceClassTestHarness();
@@ -1305,7 +1315,7 @@ $harness->check(SwallowtailPhotoAssetNotificationService::class, 'queues metadat
     };
 
     try {
-        AppConfigurationStore::set('swallowtail.redis.metadata_asset_queue', 'swallowtail:metadata:asset_gallery_test');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_asset_queue', 'swallowtail:metadata:asset_gallery_test');
         $storage = new SwallowtailStorageService();
         $path = $storage->imagePath($root, $sha256, 'thumbnail');
         $storage->ensureDirectoryForPath($path);
@@ -1328,7 +1338,7 @@ $harness->check(SwallowtailPhotoAssetNotificationService::class, 'queues metadat
         $harness->assertSame($path, (string)$redis->pushes[0]['payload']['output_path']);
         $harness->assertSame('browse_gallery_auto_refresh', (string)$redis->pushes[0]['payload']['reason']);
     } finally {
-        AppConfigurationStore::set('swallowtail.redis.metadata_asset_queue', 'swallowtail:metadata:asset_urgent');
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_asset_queue', 'swallowtail:metadata:asset_urgent');
         if (isset($path) && is_file($path)) {
             @unlink($path);
         }
@@ -1602,7 +1612,7 @@ $harness->check(_edit::class, 'picture editor exposes revert control', function 
 
 $harness->check(_event_permissionsCard::class, 'event permissions card uses searchable user picker', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'event_permissions.php');
-    $serviceSource = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'service' . DIRECTORY_SEPARATOR . 'SwallowtailEventManagementService.php');
+    $serviceSource = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'swallowtail' . DIRECTORY_SEPARATOR . 'service' . DIRECTORY_SEPARATOR . 'SwallowtailEventManagementService.php');
 
     if (!is_string($source) || !is_string($serviceSource)) {
         throw new RuntimeException('Unable to read event permission source.');
