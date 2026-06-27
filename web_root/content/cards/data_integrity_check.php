@@ -55,7 +55,6 @@ final class _data_integrity_checkCard extends CardBaseFramework
         return $message . '
             <div class="settings-action-row">
                 ' . $this->actionForm($context, 'prevent_lazy_loading', 'Prevent Lazy Loading', !$canRun) . '
-                ' . $this->actionForm($context, 'repair_safe_issues', 'Repair Safe Issues', !$canRun) . '
                 ' . $this->actionForm($context, 'run_checks', 'Run Integrity Checks', !$canRun) . '
             </div>
             <dl class="storage-summary-metrics">
@@ -91,6 +90,8 @@ final class _data_integrity_checkCard extends CardBaseFramework
             return '<div class="panel-soft warn">No data integrity checks are available.</div>';
         }
 
+        $repairableIssues = $this->repairableIssueCount($checks);
+        $repairDisabled = !$canRun || $repairableIssues <= 0;
         $rows = '';
         foreach ($checks as $check) {
             $status = (string)($check['status'] ?? '');
@@ -106,7 +107,26 @@ final class _data_integrity_checkCard extends CardBaseFramework
         return '<div class="table-responsive"><table class="data-table">
             <thead><tr><th>Check</th><th>Status</th><th>Count</th><th>Detail</th><th>Actions</th></tr></thead>
             <tbody>' . $rows . '</tbody>
+            <tfoot><tr><td colspan="5">
+                <div class="settings-action-row">
+                    ' . $this->actionForm($context, 'repair_safe_issues', 'Repair Safe Issues', $repairDisabled) . '
+                </div>
+            </td></tr></tfoot>
         </table></div>';
+    }
+
+    private function repairableIssueCount(array $checks): int
+    {
+        $count = 0;
+        foreach ($checks as $check) {
+            if ((string)($check['repair_action'] ?? '') === '') {
+                continue;
+            }
+
+            $count += max(0, (int)($check['count'] ?? 0));
+        }
+
+        return $count;
     }
 
     private function checkActions(array $context, array $check, bool $canRun): string
