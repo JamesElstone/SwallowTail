@@ -10,16 +10,12 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
 
 $request = RequestFramework::fromGlobals();
-AntiFraudService::instance($request);
-
-$sessionAuthenticationService = new SessionAuthenticationService(request: $request);
-$sessionAuthenticationService->startSession();
-
-$currentDeviceId = trim((string)AntiFraudService::instance()->requestValue('Client-Device-ID'));
-$userId = $sessionAuthenticationService->authenticatedUserId($currentDeviceId);
-
-if ($userId <= 0) {
-    swallowtail_download_error(401, 'Authentication is required.');
+$security = new ApiSecurityService($request);
+$error = $security->requireBrowserApi('Photo download API', ['GET']);
+if ($error instanceof ResponseFramework) {
+    http_response_code($error->statusCode());
+    header('Content-Type: text/plain; charset=utf-8');
+    echo implode(' ', json_decode($error->body(), true, 512, JSON_THROW_ON_ERROR)['errors'] ?? ['Download was not allowed.']);
     return;
 }
 
@@ -29,10 +25,10 @@ $temporaryPath = null;
 try {
     $kind = strtolower(trim((string)$request->query('kind', 'event')));
     if ($kind === 'photo') {
-        $asset = $download->singleJpeg($userId, max(0, (int)$request->query('photo_id', 0)));
+        $asset = $download->singleJpeg($security->userId(), max(0, (int)$request->query('photo_id', 0)));
     } else {
         $asset = $download->eventZip(
-            $userId,
+            $security->userId(),
             max(0, (int)$request->query('event_id', 0)),
             (string)$request->query('type', 'preview')
         );

@@ -110,7 +110,7 @@ $harness->run(ActivityStore::class, function (GeneratedServiceClassTestHarness $
             ],
             'SpiceBush desktop',
             'POST',
-            '/api/raw-upload.php'
+            '/api/upload-raw.php'
         );
 
         $row = InterfaceDB::fetchOne('SELECT * FROM application_activity_flash_history LIMIT 1');
@@ -125,7 +125,7 @@ $harness->run(ActivityStore::class, function (GeneratedServiceClassTestHarness $
         $harness->assertSame('POST', (string)($row['request_method'] ?? ''));
         $harness->assertSame('DESKTOP-C6R0CCD', (string)($row['device_id'] ?? ''));
         $harness->assertSame(1000, mb_strlen((string)($row['user_agent'] ?? '')));
-        $harness->assertSame('/api/raw-upload.php', (string)($row['request_uri'] ?? ''));
+        $harness->assertSame('/api/upload-raw.php', (string)($row['request_uri'] ?? ''));
 
         InterfaceDB::execute('DROP TABLE IF EXISTS application_activity_flash_history');
     });

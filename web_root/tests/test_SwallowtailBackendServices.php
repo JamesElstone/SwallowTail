@@ -616,15 +616,15 @@ $swallowtailInvokeRawUploadApi = static function (array $server, array $files): 
     $_SERVER = array_merge([
         'REQUEST_METHOD' => 'POST',
         'REMOTE_ADDR' => '203.0.113.15',
-        'REQUEST_URI' => '/api/raw-upload.php',
-        'SCRIPT_NAME' => '/api/raw-upload.php',
+        'REQUEST_URI' => '/api/upload-raw.php',
+        'SCRIPT_NAME' => '/api/upload-raw.php',
     ], $server);
 
     http_response_code(200);
     ob_start();
 
     try {
-        require APP_ROOT . 'api' . DIRECTORY_SEPARATOR . 'raw-upload.php';
+        require APP_ROOT . 'api' . DIRECTORY_SEPARATOR . 'upload-raw.php';
         $body = (string)ob_get_clean();
         $status = (int)http_response_code();
     } finally {
@@ -3372,10 +3372,20 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $sha256 = (string)($photo['original_sha256'] ?? '');
     $base = (string)($photo['storage_base_location'] ?? '');
     $previewPath = $storage->imagePath($base, $sha256, 'preview');
+    $thumbnailPath = $storage->imagePath($base, $sha256, 'thumbnail');
     $originalPath = $storage->imagePath($base, $sha256, 'original');
     $storage->ensureDirectoryForPath($previewPath);
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    file_put_contents($thumbnailPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'thumbnail', $thumbnailPath, str_repeat('7', 64));
+
+    $thumbnailStatus = $service->imageStatus($photoId, 0, 303, 'thumbnail');
+    $harness->assertSame(true, (bool)($thumbnailStatus['success'] ?? false));
+    $harness->assertSame('succeeded', (string)($thumbnailStatus['status'] ?? ''));
+    $harness->assertSame(true, (bool)($thumbnailStatus['ready'] ?? false));
+    $harness->assertTrue(str_contains((string)($thumbnailStatus['thumbnail_url'] ?? ''), 'type=thumbnail'));
+    $harness->assertTrue(str_contains((string)($thumbnailStatus['thumbnail_url'] ?? ''), 'v=' . str_repeat('7', 64)));
 
     $queuedStatus = $service->imageStatus($photoId, (int)$second['job_id'], 303, 'preview');
     $harness->assertSame('queued', (string)($queuedStatus['status'] ?? ''));
@@ -3593,7 +3603,7 @@ $harness->check(SwallowtailRawUploadApiService::class, 'records authenticated RA
     $harness->assertSame('error', (string)($activityRows[0]['message_type'] ?? ''));
     $harness->assertSame('No writable storage locations available.', (string)($activityRows[0]['message_text'] ?? ''));
     $harness->assertSame('POST', (string)($activityRows[0]['request_method'] ?? ''));
-    $harness->assertSame('/api/raw-upload.php', (string)($activityRows[0]['request_uri'] ?? ''));
+    $harness->assertSame('/api/upload-raw.php', (string)($activityRows[0]['request_uri'] ?? ''));
     $harness->assertSame('DESKTOP-C6R0CCD', (string)($activityRows[0]['device_id'] ?? ''));
     $harness->assertCount(1, $logsRows);
     $harness->assertSame('Token Account', (string)($logsRows[0]['user_display_name'] ?? ''));

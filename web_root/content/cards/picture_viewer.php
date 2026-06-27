@@ -44,7 +44,7 @@ final class _picture_viewerCard extends CardBaseFramework
             'display_type' => '',
             'display_url' => '',
             'final_status' => 'queued',
-            'state_url' => '/api/photo-viewer-state.php?photo_id=' . rawurlencode((string)$photoId),
+            'state_url' => '/api/photo-info.php?view=viewer&photo_id=' . rawurlencode((string)$photoId),
         ];
         $metadata = $this->metadataForPhoto($photoId);
 
@@ -236,7 +236,8 @@ final class _picture_viewerCard extends CardBaseFramework
 
     private function detailsTabLoadUrl(int $photoId, string $tab): string
     {
-        return '/api/photo-details-tab.php?' . http_build_query([
+        return '/api/photo-info.php?' . http_build_query([
+            'view' => 'details',
             'photo_id' => $photoId,
             'tab' => $tab,
         ]);

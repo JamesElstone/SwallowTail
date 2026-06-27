@@ -763,11 +763,11 @@ void sb_build_register_endpoint(const char *site_url, char *endpoint, size_t end
     }
     sb_trim_trailing_slashes(endpoint);
     if (sb_ends_with_nocase(endpoint, "/api")) {
-        if (strlen(endpoint) + strlen("/register-for-token.php") + 1 < endpoint_size) {
-            strcat(endpoint, "/register-for-token.php");
+        if (strlen(endpoint) + strlen("/upload-register.php") + 1 < endpoint_size) {
+            strcat(endpoint, "/upload-register.php");
         }
-    } else if (strlen(endpoint) + strlen("/api/register-for-token.php") + 1 < endpoint_size) {
-        strcat(endpoint, "/api/register-for-token.php");
+    } else if (strlen(endpoint) + strlen("/api/upload-register.php") + 1 < endpoint_size) {
+        strcat(endpoint, "/api/upload-register.php");
     }
 }
 

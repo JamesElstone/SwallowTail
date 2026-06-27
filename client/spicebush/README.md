@@ -17,7 +17,7 @@ FreeBSD base systems without bundling a runtime. It uses:
 - `~/.spicebush/uploaded/xx.tsv` bucket files on FreeBSD.
 - WinINet/SChannel for Windows HTTP/HTTPS.
 - FreeBSD base OpenSSL for FreeBSD HTTP/HTTPS. No ports are required.
-- Portable SHA-256 checksums to match `GET /api/quick-checksum.php`.
+- Portable SHA-256 checksums to match `GET /api/upload-checksum.php`.
 
 ## Layout
 
@@ -105,11 +105,11 @@ enabled. The OTP field may be left empty for accounts without OTP. The client
 calls:
 
 ```text
-POST /api/register-for-token.php
+POST /api/upload-register.php
 ```
 
 The server returns a bearer upload token and API URL. SpiceBush stores those in
-the INI file and uses them for quick-checksum and raw-upload API calls.
+the INI file and uses them for upload-checksum and upload-raw API calls.
 The client sends both the bearer token and the legacy upload-token header for
 compatibility with older SwallowTail API builds.
 

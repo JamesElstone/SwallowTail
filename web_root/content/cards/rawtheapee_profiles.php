@@ -116,7 +116,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
 
         return '<div class="full gallery-grid">
             <span class="gallery-tile">
-                <span class="gallery-thumb"><img src="/api/photo-image.php?' . HelperFramework::escape(http_build_query([
+                <span class="gallery-thumb"><img src="/api/photo-imaging.php?' . HelperFramework::escape(http_build_query([
                     'photo_id' => $photoId,
                     'type' => $type,
                     'v' => $version,

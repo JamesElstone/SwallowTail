@@ -70,7 +70,7 @@ final class _event_downloadsCard extends CardBaseFramework
                 continue;
             }
 
-            $url = '/api/download.php?kind=event&event_id='
+            $url = '/api/photo-download.php?kind=event&event_id='
                 . rawurlencode((string)$eventId)
                 . '&type='
                 . rawurlencode($type);

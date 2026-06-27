@@ -883,12 +883,12 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
     $harness->assertTrue(str_contains($html, '?page=edit&amp;photo_id=42'));
     $harness->assertTrue(str_contains($html, 'aria-label="Edit IMG_0042.CR2"'));
-    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=42&amp;type=preview'));
+    $harness->assertTrue(str_contains($html, '/api/photo-imaging.php?photo_id=42&amp;type=preview'));
     $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
     $harness->assertTrue(str_contains($html, 'gallery-edit-link'));
     $harness->assertTrue(str_contains($html, 'gallery-download-link'));
     $harness->assertTrue(str_contains($html, 'gallery-event-select'));
-    $harness->assertTrue(str_contains($html, '/api/download.php?kind=photo&amp;photo_id=42'));
+    $harness->assertTrue(str_contains($html, '/api/photo-download.php?kind=photo&amp;photo_id=42'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
 
@@ -1038,7 +1038,7 @@ $harness->check(_gallery::class, 'browse gallery auto refresh defaults to enable
     $harness->assertTrue(str_contains($js, "return stored === null ? true : stored === '1';"));
 });
 
-$harness->check(_gallery::class, 'browse gallery sends asset hints between card refreshes', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery polls photo status between card refreshes', function () use ($harness): void {
     $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
 
     if (!is_string($js)) {
@@ -1046,8 +1046,9 @@ $harness->check(_gallery::class, 'browse gallery sends asset hints between card 
     }
 
     $harness->assertTrue(str_contains($js, 'const galleryCardRefreshIntervalMs = 30000;'));
-    $harness->assertTrue(str_contains($js, 'function galleryAssetHintPayload(target)'));
-    $harness->assertTrue(str_contains($js, "'/api/gallery-asset-hints.php'"));
+    $harness->assertTrue(str_contains($js, 'function galleryPendingStatusUrls(target)'));
+    $harness->assertTrue(str_contains($js, 'function pollGalleryPhotoStatuses(target)'));
+    $harness->assertFalse(str_contains($js, 'function galleryAssetHintPayload(target)'));
 });
 
 $harness->check(_gallery::class, 'browse gallery renders auto scroll control', function () use ($harness): void {
@@ -1079,6 +1080,23 @@ $harness->check(_gallery::class, 'browse gallery chooses thumbnail then preview 
         'preview_ready' => true,
         'thumbnail_ready' => true,
     ]));
+});
+
+$harness->check(_gallery::class, 'browse gallery pending tiles expose photo status url', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 42,
+        'original_filename' => 'pending.CR2',
+        'conversion_state' => 'ready',
+        'preview_ready' => false,
+        'thumbnail_ready' => false,
+    ], false);
+
+    $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-photo-status-url="/api/photo-status.php?photo_id=42&amp;image_type=thumbnail"'));
 });
 
 $harness->check(SwallowtailPhotoAssetNotificationService::class, 'queues metadata asset scan hints for existing files', function () use ($harness): void {
@@ -1213,7 +1231,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=43'));
     $harness->assertTrue(str_contains($html, '?page=edit&amp;photo_id=43'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-id="43"'));
-    $harness->assertTrue(str_contains($html, '/api/photo-asset.php?photo_id=43&amp;type=thumbnail'));
+    $harness->assertTrue(str_contains($html, '/api/photo-imaging.php?photo_id=43&amp;type=thumbnail'));
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(str_contains($html, 'data-gallery-photo-pending="1"'));
     $harness->assertTrue(!str_contains($html, 'Preview pending'));

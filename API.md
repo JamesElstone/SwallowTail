@@ -50,7 +50,7 @@ valid for the caller's network.
 Endpoint:
 
 ```http
-GET /api/ping.php
+GET /api/remote-ping.php
 Authorization: Bearer <upload-token>
 ```
 
@@ -74,7 +74,7 @@ caller uploads the full file.
 Endpoint:
 
 ```http
-GET /api/quick-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>
+GET /api/upload-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>
 Authorization: Bearer <upload-token>
 ```
 
@@ -87,7 +87,7 @@ hexadecimal characters. Older `fnv1a64` quick-check requests are rejected.
 Example with `curl`:
 
 ```sh
-curl "https://swallowtail.example.test/api/quick-checksum.php?algorithm=sha256&hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&size_bytes=31457280" \
+curl "https://swallowtail.example.test/api/upload-checksum.php?algorithm=sha256&hash=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&size_bytes=31457280" \
   -H "Authorization: Bearer stup_example"
 ```
 
@@ -134,7 +134,7 @@ photo, and queues conversion jobs for:
 Endpoint:
 
 ```http
-POST /api/raw-upload.php
+POST /api/upload-raw.php
 ```
 
 ### Raw Body Upload
@@ -142,7 +142,7 @@ POST /api/raw-upload.php
 This is the simplest shape for hardware clients.
 
 ```http
-POST /api/raw-upload.php
+POST /api/upload-raw.php
 Authorization: Bearer <upload-token>
 Content-Type: application/octet-stream
 X-Swallowtail-Filename: IMG_0001.CR2
@@ -155,7 +155,7 @@ X-Swallowtail-Checksum-SHA256: <required lowercase sha256 for raw body uploads>
 Example with `curl`:
 
 ```sh
-curl -X POST "https://swallowtail.example.test/api/raw-upload.php" \
+curl -X POST "https://swallowtail.example.test/api/upload-raw.php" \
   -H "Authorization: Bearer stup_example" \
   -H "Content-Type: application/octet-stream" \
   -H "X-Swallowtail-Filename: IMG_0001.CR2" \
@@ -170,7 +170,7 @@ Use this from desktop tools, test scripts, or HTTP clients that already support
 multipart form data.
 
 ```http
-POST /api/raw-upload.php
+POST /api/upload-raw.php
 Authorization: Bearer <upload-token>
 Content-Type: multipart/form-data
 
@@ -180,7 +180,7 @@ raw_file=@IMG_0001.CR2
 Example with `curl`:
 
 ```sh
-curl -X POST "https://swallowtail.example.test/api/raw-upload.php" \
+curl -X POST "https://swallowtail.example.test/api/upload-raw.php" \
   -H "Authorization: Bearer stup_example" \
   -H "X-Swallowtail-Device-ID: esp32-bridge-001" \
   -F "raw_file=@IMG_0001.CR2"
@@ -230,14 +230,14 @@ Returns conversion job state and filesystem-derived image readiness for a photo.
 Endpoint:
 
 ```http
-GET /api/conversion-status.php?photo_id=<photo_id>
+GET /api/upload-status.php?photo_id=<photo_id>
 Authorization: Bearer <upload-token>
 ```
 
 Example with `curl`:
 
 ```sh
-curl "https://swallowtail.example.test/api/conversion-status.php?photo_id=123" \
+curl "https://swallowtail.example.test/api/upload-status.php?photo_id=123" \
   -H "Authorization: Bearer stup_example"
 ```
 
@@ -356,16 +356,16 @@ For a small hardware bridge, prefer raw body upload:
 
 1. Download the `.CR2` file from the camera.
 2. Compute the SHA-256 checksum and record the file size.
-3. Call `GET /api/quick-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>`.
+3. Call `GET /api/upload-checksum.php?algorithm=sha256&hash=<sha256>&size_bytes=<bytes>`.
 4. If the response has `exists: true`, skip the upload and keep the returned
    `photo_id` if needed.
 5. If the response has `exists: false`, keep the SHA-256 for the upload header.
-6. Open `POST /api/raw-upload.php`.
+6. Open `POST /api/upload-raw.php`.
 7. Send `Authorization`, `X-Swallowtail-Filename`, and
    `X-Swallowtail-Checksum-SHA256`.
 8. Stream the CR2 bytes as the request body.
 9. Store the returned `photo_id`.
-10. Poll `GET /api/conversion-status.php?photo_id=<photo_id>` until the needed
+10. Poll `GET /api/upload-status.php?photo_id=<photo_id>` until the needed
    derivatives are ready.
 
 Make sure the bridge's source IP, as seen by PHP, falls inside one of the
@@ -380,7 +380,7 @@ The account must have access to the `upload_tokens` settings card.
 Endpoint:
 
 ```http
-POST /api/register-for-token.php
+POST /api/upload-register.php
 Content-Type: application/json
 ```
 
@@ -415,9 +415,9 @@ Successful response:
   "token": "stup_example",
   "token_id": 123,
   "api_url": "https://swallowtail.example.test/api",
-  "ping_url": "https://swallowtail.example.test/api/ping.php",
-  "raw_upload_url": "https://swallowtail.example.test/api/raw-upload.php",
-  "quick_checksum_url": "https://swallowtail.example.test/api/quick-checksum.php",
+  "ping_url": "https://swallowtail.example.test/api/remote-ping.php",
+  "raw_upload_url": "https://swallowtail.example.test/api/upload-raw.php",
+  "quick_checksum_url": "https://swallowtail.example.test/api/upload-checksum.php",
   "quick_checksum_algorithm": "sha256",
   "cidrs": ["203.0.113.15/32"]
 }
@@ -425,4 +425,4 @@ Successful response:
 
 The token is shown only in this response. SpiceBush stores it in
 `%APPDATA%\SpiceBush\spicebush.ini` and then uses it as the bearer token for the
-quick-checksum and raw-upload calls.
+upload-checksum and upload-raw calls.

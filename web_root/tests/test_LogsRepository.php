@@ -75,7 +75,7 @@ $harness->run(LogsRepository::class, function (GeneratedServiceClassTestHarness 
                 'device_id' => 'DESKTOP-C6R0CCD',
                 'ip_address' => '203.0.113.15',
                 'user_agent' => 'spicebush-test',
-                'request_uri' => '/api/raw-upload.php',
+                'request_uri' => '/api/upload-raw.php',
                 'occurred_at' => '2026-06-18 16:19:03',
             ]
         );
@@ -89,7 +89,7 @@ $harness->run(LogsRepository::class, function (GeneratedServiceClassTestHarness 
         $harness->assertSame('raw upload failed', (string)($rows[0]['action_name'] ?? ''));
         $harness->assertSame('SpiceBush desktop', (string)($rows[0]['card_action_name'] ?? ''));
         $harness->assertSame('error', (string)($rows[0]['message_type'] ?? ''));
-        $harness->assertSame('/api/raw-upload.php', (string)($rows[0]['request_uri'] ?? ''));
+        $harness->assertSame('/api/upload-raw.php', (string)($rows[0]['request_uri'] ?? ''));
 
         $filteredRows = (new LogsRepository())->fetchRecentFlashActivity(10, 444044, 'api');
         $harness->assertCount(1, $filteredRows);

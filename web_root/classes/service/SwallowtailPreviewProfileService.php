@@ -11,7 +11,7 @@ final class SwallowtailPreviewProfileService
 {
     private const DEFAULT_SOURCE_WIDTH = 6000;
     private const DEFAULT_SOURCE_HEIGHT = 4000;
-    private const STATUS_IMAGE_TYPES = ['preview', 'final', 'rawtheapee_sample'];
+    private const STATUS_IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -277,7 +277,55 @@ final class SwallowtailPreviewProfileService
             ];
         }
 
+        if ($jobId <= 0) {
+            return $this->assetStatus($photoId, $userId, $imageType);
+        }
+
         return $this->renderStatus($photoId, $jobId, $userId, $imageType);
+    }
+
+    private function assetStatus(int $photoId, int $userId, string $imageType): array
+    {
+        if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $asset = $this->assetService->assetForPhoto($photo, $imageType);
+        if ($asset === null) {
+            (new SwallowtailPhotoAssetNotificationService())->notifyPhotoAsset(
+                $photo,
+                $imageType,
+                'photo_status_poll'
+            );
+
+            return [
+                'success' => true,
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+                'ready' => false,
+                'status' => 'pending',
+            ];
+        }
+
+        return [
+            'success' => true,
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+            'ready' => true,
+            'status' => 'succeeded',
+            $imageType . '_url' => $this->previewUrl($photoId, $asset),
+        ];
     }
 
     private function renderStatus(int $photoId, int $jobId, int $userId, string $imageType): array
@@ -770,7 +818,7 @@ final class SwallowtailPreviewProfileService
     {
         $imageType = (string)($asset['image_type'] ?? 'preview');
 
-        return '/api/photo-image.php?' . http_build_query([
+        return '/api/photo-imaging.php?' . http_build_query([
             'photo_id' => $photoId,
             'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original', 'rawtheapee_sample'], true) ? $imageType : 'preview',
             'v' => (string)($asset['sha256'] ?? ''),
@@ -788,7 +836,8 @@ final class SwallowtailPreviewProfileService
 
     private function pictureViewerStateUrl(int $photoId): string
     {
-        return '/api/photo-viewer-state.php?' . http_build_query([
+        return '/api/photo-info.php?' . http_build_query([
+            'view' => 'viewer',
             'photo_id' => $photoId,
         ]);
     }

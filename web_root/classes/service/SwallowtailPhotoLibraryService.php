@@ -637,16 +637,16 @@ final class SwallowtailPhotoLibraryService
     private function uploadTokenActivityUri(string $actionType): string
     {
         if (str_contains($actionType, 'raw_upload')) {
-            return '/api/raw-upload.php';
+            return '/api/upload-raw.php';
         }
         if (str_contains($actionType, 'quick_checksum')) {
-            return '/api/quick-checksum.php';
+            return '/api/upload-checksum.php';
         }
         if (str_contains($actionType, 'conversion_status')) {
-            return '/api/conversion-status.php';
+            return '/api/upload-status.php';
         }
         if (str_contains($actionType, 'ping')) {
-            return '/api/ping.php';
+            return '/api/remote-ping.php';
         }
 
         return '/api';

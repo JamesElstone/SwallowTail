@@ -163,7 +163,7 @@ static int ping_server(SpiceBushCli *cli, int quiet)
         return 0;
     }
 
-    snprintf(url, sizeof(url), "%s/ping.php", cli->config.api_url);
+    snprintf(url, sizeof(url), "%s/remote-ping.php", cli->config.api_url);
     snprintf(
         headers,
         sizeof(headers),
@@ -308,7 +308,7 @@ static int server_knows_file(const SpiceBushConfig *config, const char *hash, sb
     snprintf(
         url,
         sizeof(url),
-        "%s/quick-checksum.php?algorithm=sha256&hash=%s&size_bytes=%llu",
+        "%s/upload-checksum.php?algorithm=sha256&hash=%s&size_bytes=%llu",
         config->api_url,
         encoded_hash,
         (unsigned long long)size_bytes
@@ -334,7 +334,7 @@ static int upload_file(const SpiceBushConfig *config, const char *path, const ch
     unsigned long photo_id = 0;
     int duplicate = 0;
 
-    snprintf(url, sizeof(url), "%s/raw-upload.php", config->api_url);
+    snprintf(url, sizeof(url), "%s/upload-raw.php", config->api_url);
     snprintf(
         headers,
         sizeof(headers),

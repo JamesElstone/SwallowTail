@@ -8,26 +8,28 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'bootstrap.php';
+require_once dirname(__DIR__) . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'picture_viewer.php';
 
 $request = RequestFramework::fromGlobals();
 $security = new ApiSecurityService($request);
-$error = $security->requireBrowserApi('Photo status API', ['GET']);
+$error = $security->requireBrowserApi('Photo info API', ['GET']);
 if ($error instanceof ResponseFramework) {
     $error->send();
     return;
 }
 
 $photoId = max(0, (int)$request->query('photo_id', 0));
-$imageType = strtolower(trim((string)$request->query('image_type', '')));
+$view = strtolower(trim((string)$request->query('view', 'viewer')));
 $userId = $security->userId();
 
-$result = $imageType === 'profile'
-    ? (new SwallowtailPreviewProfileService())->baselineStatus($photoId, $userId)
-    : (new SwallowtailPreviewProfileService())->imageStatus(
+$result = match ($view) {
+    'details' => (new _picture_viewerCard())->lazyDetailsTabContent(
         $photoId,
-        max(0, (int)$request->query('job_id', 0)),
         $userId,
-        $imageType
-    );
+        (string)$request->query('tab', '')
+    ),
+    'profile' => (new SwallowtailPreviewProfileService())->baselineStatus($photoId, $userId),
+    default => (new SwallowtailPreviewProfileService())->pictureViewerState($photoId, $userId),
+};
 
 ResponseFramework::json($result, !empty($result['success']) ? 200 : 404)->send();

@@ -1665,9 +1665,9 @@ static void BuildRegisterEndpoint(const char *siteUrl, char *endpoint, DWORD end
     }
     TrimTrailingSlashes(endpoint);
     if (EndsWithNoCase(endpoint, "/api")) {
-        lstrcatA(endpoint, "/register-for-token.php");
+        lstrcatA(endpoint, "/upload-register.php");
     } else {
-        lstrcatA(endpoint, "/api/register-for-token.php");
+        lstrcatA(endpoint, "/api/upload-register.php");
     }
 }
 
@@ -1679,7 +1679,7 @@ static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
     if (photoId) *photoId = 0;
     if (g_app.apiUrl[0] == '\0' || g_app.uploadToken[0] == '\0') return 0;
     UrlEncode(hash, encodedHash, sizeof(encodedHash));
-    SbSnprintf(url, sizeof(url) - 1, "%s/quick-checksum.php?algorithm=sha256&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
+    SbSnprintf(url, sizeof(url) - 1, "%s/upload-checksum.php?algorithm=sha256&hash=%s&size_bytes=%I64u", g_app.apiUrl, encodedHash, sizeBytes);
     url[sizeof(url) - 1] = '\0';
     SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
@@ -1720,7 +1720,7 @@ static int PerformPingCheck(U64 *maxRawUploadBytesOut, char *errorMessage, DWORD
         return 0;
     }
 
-    SbSnprintf(url, sizeof(url) - 1, "%s/ping.php", g_app.apiUrl);
+    SbSnprintf(url, sizeof(url) - 1, "%s/remote-ping.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
     SbSnprintf(headers, sizeof(headers) - 1,
         "Authorization: Bearer %s\r\n"
@@ -1828,7 +1828,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     U64 throughputMbpsX10 = 0;
     const char *slash = strrchr(path, '\\');
     SafeCopy(filename, sizeof(filename), slash ? slash + 1 : path);
-    SbSnprintf(url, sizeof(url) - 1, "%s/raw-upload.php", g_app.apiUrl);
+    SbSnprintf(url, sizeof(url) - 1, "%s/upload-raw.php", g_app.apiUrl);
     url[sizeof(url) - 1] = '\0';
     if (!ParseUrl(url, &parsed)) {
         LogMessage("Raw upload failed before send: could not parse url=%s", url);

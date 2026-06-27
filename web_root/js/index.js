@@ -3286,27 +3286,6 @@
         return payload;
     }
 
-    function galleryAssetHintPayload(target) {
-        const pageField = String(target.dataset.galleryPageField || '').trim();
-        const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
-        const perPageField = String(target.dataset.galleryPerPageField || '').trim();
-        const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
-        const payload = {
-            _ajax: '1',
-            reason: 'browse_gallery_auto_refresh',
-        };
-
-        if (pageField !== '') {
-            payload[pageField] = String(pageValue);
-        }
-
-        if (perPageField !== '') {
-            payload[perPageField] = String(perPageValue);
-        }
-
-        return payload;
-    }
-
     function galleryResponseCard(response, card) {
         const html = String((response.cards || {})[card.id] || '').trim();
         if (html === '') {
@@ -3348,6 +3327,35 @@
         });
 
         target.dataset.galleryPending = galleryHasPendingPreviewTiles(target) ? '1' : '0';
+    }
+
+    function galleryPendingStatusUrls(target) {
+        if (!(target instanceof HTMLElement)) {
+            return [];
+        }
+
+        const urls = [];
+        target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-status-url]').forEach((node) => {
+            if (!(node instanceof HTMLElement)) {
+                return;
+            }
+
+            const statusUrl = String(node.dataset.galleryPhotoStatusUrl || '').trim();
+            if (statusUrl !== '' && !urls.includes(statusUrl)) {
+                urls.push(statusUrl);
+            }
+        });
+
+        return urls;
+    }
+
+    async function pollGalleryPhotoStatuses(target) {
+        const urls = galleryPendingStatusUrls(target);
+        if (urls.length === 0) {
+            return;
+        }
+
+        await Promise.allSettled(urls.map((url) => sendAjax(url)));
     }
 
     function initialiseGalleryAutoRefresh(root = document) {
@@ -3419,21 +3427,14 @@
                 const shouldAutoScroll = scrollControl.checked;
                 const shouldRefreshCard = shouldAutoScroll
                     || Date.now() - state.lastCardRefreshAt >= galleryCardRefreshIntervalMs;
-                const payload = shouldRefreshCard
-                    ? galleryCardRefreshPayload(card, target)
-                    : galleryAssetHintPayload(target);
-                const refreshUrl = shouldRefreshCard
-                    ? window.location.href
-                    : '/api/gallery-asset-hints.php';
 
                 try {
-                    const response = await sendAjax(refreshUrl, {
-                        method: 'POST',
-                        body: JSON.stringify(payload),
-                        headers: { 'Content-Type': 'application/json' },
-                    });
-
                     if (shouldRefreshCard) {
+                        const response = await sendAjax(window.location.href, {
+                            method: 'POST',
+                            body: JSON.stringify(galleryCardRefreshPayload(card, target)),
+                            headers: { 'Content-Type': 'application/json' },
+                        });
                         state.lastCardRefreshAt = Date.now();
                         applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
                         if (shouldAutoScroll) {
@@ -3443,6 +3444,8 @@
                                 replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
                             });
                         }
+                    } else {
+                        await pollGalleryPhotoStatuses(target);
                     }
                 } catch (error) {
                     console.error('Failed to auto refresh gallery.', error);

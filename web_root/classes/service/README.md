@@ -100,7 +100,7 @@ Implements the backend API workflow for RAW uploads.
 - Passes upload metadata such as device ID, IP address, and user agent into audit logging.
 - Returns JSON responses suitable for future ESP32 or Windows uploader clients.
 
-The public entrypoint is `web_root/api/raw-upload.php`.
+The public entrypoint is `web_root/api/upload-raw.php`.
 
 ### `SwallowtailEventAccessService`
 
@@ -127,7 +127,7 @@ The RAW-to-JPEG worker lives under `services/swallowtail_conversion/src/swallowt
 
 ## Upload Flow
 
-1. A device or application posts a RAW file to `web_root/api/raw-upload.php`.
+1. A device or application posts a RAW file to `web_root/api/upload-raw.php`.
 2. `SwallowtailRawUploadApiService` authenticates the upload token.
 3. `SwallowtailPhotoIngestService` validates the RAW file and computes its checksum.
 4. If the checksum already exists, the duplicate is audited and no second original is stored.

@@ -106,10 +106,15 @@ final class _browse_galleryCard extends CardBaseFramework
         $filename = (string)($photo['original_filename'] ?? 'Photo');
         $viewerUrl = '?page=view&photo_id=' . rawurlencode((string)$photoId);
         $editorUrl = '?page=edit&photo_id=' . rawurlencode((string)$photoId);
-        $downloadUrl = '/api/download.php?kind=photo&photo_id=' . rawurlencode((string)$photoId);
+        $downloadUrl = '/api/photo-download.php?kind=photo&photo_id=' . rawurlencode((string)$photoId);
         $previewType = $this->galleryPreviewType($photo);
         $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
-        $pendingAttribute = $this->photoNeedsRefresh($photo) ? ' data-gallery-photo-pending="1"' : '';
+        $needsRefresh = $this->photoNeedsRefresh($photo);
+        $pendingAttribute = $needsRefresh ? ' data-gallery-photo-pending="1"' : '';
+        $statusType = $needsRefresh ? $this->galleryAssetScanType($photo) : null;
+        $statusUrlAttribute = $statusType !== null
+            ? ' data-gallery-photo-status-url="' . HelperFramework::escape($this->photoStatusUrl($photoId, $statusType)) . '"'
+            : '';
         $preview = $previewType !== null
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
@@ -131,7 +136,7 @@ final class _browse_galleryCard extends CardBaseFramework
             </a>'
             : '';
 
-        return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . '>
+        return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . $statusUrlAttribute . '>
             <div class="gallery-thumb-shell">
                 <a class="gallery-view-link gallery-thumb-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
                     <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
@@ -355,7 +360,12 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function photoAssetUrl(int $photoId, string $type): string
     {
-        return '/api/photo-asset.php?photo_id=' . rawurlencode((string)$photoId) . '&type=' . rawurlencode($type);
+        return '/api/photo-imaging.php?photo_id=' . rawurlencode((string)$photoId) . '&type=' . rawurlencode($type);
+    }
+
+    private function photoStatusUrl(int $photoId, string $type): string
+    {
+        return '/api/photo-status.php?photo_id=' . rawurlencode((string)$photoId) . '&image_type=' . rawurlencode($type);
     }
 
     private function statusIndicator(string $state): string
