@@ -18,6 +18,7 @@ final class SwallowtailDataIntegrityCheckService
 {
     private const LAZY_SCAN_CURSOR_KEY = 'data_integrity.lazy_scan_after_photo_id';
     private const LAZY_SCAN_REQUESTED_KEY = 'data_integrity.lazy_loading_prevention_requested';
+    private const PROFILED_DERIVATIVE_SCAN_CURSOR_KEY = 'data_integrity.profiled_derivative_scan_after_photo_id';
     private const DATA_INTEGRITY_QUEUE_DEFAULT = 'swallowtail:metadata:data_integrity';
     private const MAX_LAZY_SCAN_PHOTOS = 150;
     private const MAX_LAZY_SCAN_SECONDS = 240;
@@ -174,6 +175,159 @@ final class SwallowtailDataIntegrityCheckService
         } else {
             $this->setLazyScanCursor(0);
             $this->setLazyLoadingPreventionRequested(false);
+            $result['complete_pass'] = true;
+        }
+
+        return $result;
+    }
+
+    public function queueProfiledDerivativesForPhoto(int $photoId): array
+    {
+        if ($photoId <= 0) {
+            return [
+                'success' => false,
+                'message' => 'Photo id is required.',
+            ];
+        }
+
+        if (!$this->profiledDerivativeTablesAvailable()) {
+            return [
+                'success' => false,
+                'message' => 'Profiled derivative queueing requires photos, photo profile data, conversion jobs, and image assets tables.',
+            ];
+        }
+
+        $photo = InterfaceDB::fetchOne(
+            "SELECT p.*
+             FROM photos p
+             INNER JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+               AND status.value = 'processed'
+             WHERE p.id = :photo_id
+               AND p.upload_state = 'uploaded'
+               AND LOWER(COALESCE(p.original_extension, '')) = 'cr2'
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
+        if (!is_array($photo)) {
+            return [
+                'success' => true,
+                'photo_id' => $photoId,
+                'queued_preview' => 0,
+                'queued_final' => 0,
+                'already_fresh' => 0,
+                'active_jobs' => 0,
+                'skipped' => 1,
+                'message' => 'Photo is not ready for profiled derivative queueing.',
+            ];
+        }
+
+        $result = [
+            'success' => true,
+            'photo_id' => $photoId,
+            'queued_preview' => 0,
+            'queued_final' => 0,
+            'already_fresh' => 0,
+            'active_jobs' => 0,
+            'skipped' => 0,
+        ];
+
+        foreach (['preview', 'final'] as $imageType) {
+            $queued = $this->queueProfiledDerivativeIfNeeded($photo, $imageType);
+            if ($queued === 'queued_preview') {
+                $result['queued_preview']++;
+            } elseif ($queued === 'queued_final') {
+                $result['queued_final']++;
+            } elseif ($queued === 'already_fresh') {
+                $result['already_fresh']++;
+            } elseif ($queued === 'active_job') {
+                $result['active_jobs']++;
+            } else {
+                $result['skipped']++;
+            }
+        }
+
+        $result['message'] = 'Profiled derivative queueing completed for photo ' . (string)$photoId . '.';
+
+        return $result;
+    }
+
+    public function processProfiledDerivativeQueueBatch(int $limit = self::MAX_LAZY_SCAN_PHOTOS): array
+    {
+        if (!$this->profiledDerivativeTablesAvailable()) {
+            return [
+                'success' => false,
+                'message' => 'Profiled derivative queueing requires photos, photo profile data, conversion jobs, and image assets tables.',
+            ];
+        }
+
+        $limit = max(1, min(self::MAX_LAZY_SCAN_PHOTOS, $limit));
+        $startedAt = time();
+        $cursor = $this->profiledDerivativeScanCursor();
+        $rows = $this->readyUploadedPhotosAfter($cursor, $limit);
+        $wrapped = false;
+        if ($rows === [] && $cursor > 0) {
+            $cursor = 0;
+            $rows = $this->readyUploadedPhotosAfter(0, $limit);
+            $wrapped = true;
+        }
+
+        $result = [
+            'success' => true,
+            'scanned' => 0,
+            'queued_preview' => 0,
+            'queued_final' => 0,
+            'already_fresh' => 0,
+            'active_jobs' => 0,
+            'skipped' => 0,
+            'last_photo_id' => $cursor,
+            'complete_pass' => false,
+            'wrapped' => $wrapped,
+            'message' => 'Profiled derivative queue batch completed.',
+        ];
+
+        foreach ($rows as $photo) {
+            if (time() - $startedAt >= self::MAX_LAZY_SCAN_SECONDS) {
+                break;
+            }
+
+            $photoId = max(0, (int)($photo['id'] ?? 0));
+            if ($photoId <= 0) {
+                continue;
+            }
+
+            $result['scanned']++;
+            $result['last_photo_id'] = $photoId;
+
+            foreach (['preview', 'final'] as $imageType) {
+                $queued = $this->queueProfiledDerivativeIfNeeded($photo, $imageType);
+                if ($queued === 'queued_preview') {
+                    $result['queued_preview']++;
+                } elseif ($queued === 'queued_final') {
+                    $result['queued_final']++;
+                } elseif ($queued === 'already_fresh') {
+                    $result['already_fresh']++;
+                } elseif ($queued === 'active_job') {
+                    $result['active_jobs']++;
+                } else {
+                    $result['skipped']++;
+                }
+            }
+        }
+
+        if ((int)$result['scanned'] <= 0 || (int)$result['last_photo_id'] <= 0) {
+            $this->setProfiledDerivativeScanCursor(0);
+            $result['complete_pass'] = true;
+            return $result;
+        }
+
+        $hasMore = $this->readyUploadedPhotoCountAfter((int)$result['last_photo_id']) > 0;
+        if ($hasMore) {
+            $this->setProfiledDerivativeScanCursor((int)$result['last_photo_id']);
+        } else {
+            $this->setProfiledDerivativeScanCursor(0);
             $result['complete_pass'] = true;
         }
 
@@ -471,6 +625,16 @@ final class SwallowtailDataIntegrityCheckService
     private function setLazyScanCursor(int $photoId): void
     {
         \Swallowtail\Store\SwallowtailConfigurationStore::set(self::LAZY_SCAN_CURSOR_KEY, max(0, $photoId));
+    }
+
+    private function profiledDerivativeScanCursor(): int
+    {
+        return max(0, (int)\Swallowtail\Store\SwallowtailConfigurationStore::get(self::PROFILED_DERIVATIVE_SCAN_CURSOR_KEY, 0));
+    }
+
+    private function setProfiledDerivativeScanCursor(int $photoId): void
+    {
+        \Swallowtail\Store\SwallowtailConfigurationStore::set(self::PROFILED_DERIVATIVE_SCAN_CURSOR_KEY, max(0, $photoId));
     }
 
     private function lazyLoadingPreventionRequested(): bool

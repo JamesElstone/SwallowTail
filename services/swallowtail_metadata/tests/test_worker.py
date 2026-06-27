@@ -830,6 +830,79 @@ class MetadataWorkerTest(unittest.TestCase):
             for message in worker.log.infos
         ))
 
+    def test_run_once_queues_profiled_derivatives_after_source_profile_is_stored(self) -> None:
+        checksum = "abcdef" + ("0" * 58)
+        source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"II*\0CR2")
+        script = self.root / "tools" / "php" / "dataIntegrityCheck.php"
+        script.parent.mkdir(parents=True)
+        script.write_text("<?php\n", encoding="utf-8")
+        db = FakeDatabase()
+        db.profile_photos.append({"id": 21, "storage_base_location": str(self.root), "original_sha256": checksum})
+        worker = self.worker(db)
+
+        with patch("swallowtail_metadata.worker.subprocess.run") as run:
+            run.return_value = type("Result", (), {
+                "returncode": 0,
+                "stdout": '{"success":true,"queued_preview":1,"queued_final":1,"active_jobs":0,"already_fresh":0,"skipped":0}',
+                "stderr": "",
+            })()
+
+            self.assertTrue(worker.run_once())
+
+        run.assert_called_once_with(
+            [
+                worker.config.php_binary,
+                str(script),
+                "--queue-profiled-derivatives",
+                "--photo-id=21",
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(21, db.profile_ready[0][0])
+        self.assertIn(
+            "Profiled derivative queueing completed for photo=21 queued=2 active=0 fresh=0 skipped=0",
+            worker.log.infos,
+        )
+
+    def test_run_once_queues_profiled_derivative_batch_when_idle(self) -> None:
+        script = self.root / "tools" / "php" / "dataIntegrityCheck.php"
+        script.parent.mkdir(parents=True)
+        script.write_text("<?php\n", encoding="utf-8")
+        worker = self.worker(FakeDatabase())
+
+        with patch("swallowtail_metadata.worker.subprocess.run") as run:
+            run.return_value = type("Result", (), {
+                "returncode": 0,
+                "stdout": '{"success":true,"scanned":150,"queued_preview":2,"queued_final":2,"active_jobs":0,"already_fresh":0,"skipped":0,"complete_pass":false}',
+                "stderr": "",
+            })()
+
+            self.assertTrue(worker.run_once())
+
+        run.assert_called_once_with(
+            [
+                worker.config.php_binary,
+                str(script),
+                "--queue-profiled-derivatives-batch",
+                "--json",
+                "--limit=150",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=270,
+        )
+        self.assertIn(
+            "Profiled derivative batch queueing completed; scanned=150 queued=4 active=0 fresh=0 skipped=0 complete=False",
+            worker.log.infos,
+        )
+
     def test_run_once_uses_existing_source_profile_without_regenerating(self) -> None:
         checksum = "abcdef" + ("0" * 58)
         source = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_source.cr2"

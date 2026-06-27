@@ -18,14 +18,18 @@ use Throwable;
 final class SwallowtailConversionQueueService
 {
     private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
-    private const PRIORITY_FINAL = 10;
+    private const PRIORITY_FINAL = 55;
     private const PRIORITY_ORIGINAL = 20;
-    private const PRIORITY_THUMBNAIL = 45;
-    private const PRIORITY_EMBEDDED = 40;
-    private const PRIORITY_VIEWED_OTHER = 50;
-    private const PRIORITY_VIEWED_ORIGINAL = 51;
-    private const PRIORITY_VIEWED_FINAL = 65;
-    private const PRIORITY_PREVIEW = 50;
+    private const PRIORITY_THUMBNAIL = 80;
+    private const PRIORITY_EMBEDDED = 75;
+    private const PRIORITY_PREVIEW = 70;
+    private const PRIORITY_VIEWED_PREVIEW = 95;
+    private const PRIORITY_VIEWED_EMBEDDED = 90;
+    private const PRIORITY_VIEWED_FINAL = 85;
+    private const PRIORITY_VIEWED_THUMBNAIL = 80;
+    private const PRIORITY_VIEWED_ORIGINAL = 30;
+    private const PRIORITY_VIEWED_OTHER = 80;
+    private const PRIORITY_URGENT_QUEUE_THRESHOLD = 40;
     private const PRIORITY_PREEMPT_THRESHOLD = 50;
     private const ENQUEUE_ATTEMPTS = 3;
 
@@ -460,7 +464,7 @@ final class SwallowtailConversionQueueService
             return;
         }
 
-        $queue = $priority >= self::PRIORITY_EMBEDDED ? $urgentQueue : $normalQueue;
+        $queue = $priority >= self::PRIORITY_URGENT_QUEUE_THRESHOLD ? $urgentQueue : $normalQueue;
         if ($queue === '') {
             return;
         }
@@ -494,8 +498,10 @@ final class SwallowtailConversionQueueService
     {
         return match (strtolower(trim($imageType))) {
             'final' => self::PRIORITY_VIEWED_FINAL,
+            'embedded' => self::PRIORITY_VIEWED_EMBEDDED,
+            'thumbnail' => self::PRIORITY_VIEWED_THUMBNAIL,
             'original' => self::PRIORITY_VIEWED_ORIGINAL,
-            'preview' => self::PRIORITY_PREVIEW,
+            'preview' => self::PRIORITY_VIEWED_PREVIEW,
             default => self::PRIORITY_VIEWED_OTHER,
         };
     }

@@ -21,6 +21,7 @@ final class SwallowtailPhotoIngestService
         private readonly SwallowtailConversionQueueService $conversionQueueService = new SwallowtailConversionQueueService(),
         private readonly int $appMaxRawBytes = self::MAX_RAW_BYTES,
         private readonly ?array $phpUploadLimits = null,
+        private readonly SwallowtailProfileDataService $profileDataService = new SwallowtailProfileDataService(),
     ) {
     }
 
@@ -172,6 +173,7 @@ final class SwallowtailPhotoIngestService
                 break;
             }
         }
+        $this->profileDataService->requestUrgentProfile((array)($recorded['photo'] ?? []), 'raw_upload');
 
         return [
             'success' => true,

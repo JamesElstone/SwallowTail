@@ -30,6 +30,7 @@ class MetadataWorker:
         self.idle_delay_seconds = config.worker.poll_min_seconds
         self.last_rawtheapee_profile_scan_at = time.time()
         self.data_integrity_requested = True
+        self.profiled_derivative_queue_requested = True
 
     def request_shutdown(self) -> None:
         self.shutdown_requested.set()
@@ -92,6 +93,9 @@ class MetadataWorker:
             if profile_photo is None:
                 asset_job = self.db.next_unrecorded_image_asset_job() if hasattr(self.db, "next_unrecorded_image_asset_job") else None
                 if asset_job is None:
+                    if getattr(self, "profiled_derivative_queue_requested", True) and self.process_profiled_derivative_queue_batch():
+                        self._touch_status()
+                        return True
                     if getattr(self, "data_integrity_requested", False) and self.process_data_integrity_maintenance():
                         self._touch_status()
                         return True
@@ -173,6 +177,61 @@ class MetadataWorker:
         )
         return scanned > 0 or queued > 0 or complete
 
+    def process_profiled_derivative_queue_batch(self) -> bool:
+        script = Path(self.config.project_root) / "tools" / "php" / "dataIntegrityCheck.php"
+        if not script.is_file():
+            self.log.warning("Profiled derivative batch queue script was not found: %s", script)
+            return False
+
+        try:
+            result = subprocess.run(
+                [
+                    self.config.php_binary,
+                    str(script),
+                    "--queue-profiled-derivatives-batch",
+                    "--json",
+                    "--limit=150",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=270,
+            )
+        except Exception as exc:
+            self.log.warning("Profiled derivative batch queueing failed to start: %s", exc)
+            return False
+
+        output = (result.stdout or "").strip()
+        if result.returncode != 0:
+            detail = (result.stderr or output).strip()
+            self.log.warning("Profiled derivative batch queueing failed: %s", detail)
+            return False
+
+        try:
+            payload = json.loads(output) if output != "" else {}
+        except json.JSONDecodeError:
+            self.log.warning("Profiled derivative batch queueing returned invalid JSON: %s", output[:400])
+            return False
+
+        queued = int(payload.get("queued_preview", 0) or 0) + int(payload.get("queued_final", 0) or 0)
+        scanned = int(payload.get("scanned", 0) or 0)
+        active = int(payload.get("active_jobs", 0) or 0)
+        fresh = int(payload.get("already_fresh", 0) or 0)
+        skipped = int(payload.get("skipped", 0) or 0)
+        complete = bool(payload.get("complete_pass", False))
+        self.profiled_derivative_queue_requested = not complete
+        self.log.info(
+            "Profiled derivative batch queueing completed; scanned=%s queued=%s active=%s fresh=%s skipped=%s complete=%s",
+            scanned,
+            queued,
+            active,
+            fresh,
+            skipped,
+            complete,
+        )
+
+        return (scanned > 0 and not complete) or queued > 0
+
     def _urgent_profile_photo(self) -> dict[str, Any] | None:
         notification = self.redis.pop_profile_notification()
         if notification is None:
@@ -246,6 +305,8 @@ class MetadataWorker:
                 int(store_stats.get("profile_largest_value_length", 0) if store_stats else 0),
                 int(store_stats.get("profile_max_value_chunks", 0) if store_stats else 0),
             )
+            self.queue_profiled_derivatives(photo_id)
+            self.profiled_derivative_queue_requested = True
         except Exception as exc:
             status = self.db.defer_profile(
                 photo_id,
@@ -254,6 +315,60 @@ class MetadataWorker:
                 self.config.worker.retry_delay_seconds,
             )
             self.log.warning("Source profile generation %s for photo=%s: %s", status, photo_id, exc)
+
+    def queue_profiled_derivatives(self, photo_id: int) -> bool:
+        if photo_id <= 0:
+            return False
+
+        script = Path(self.config.project_root) / "tools" / "php" / "dataIntegrityCheck.php"
+        if not script.is_file():
+            self.log.warning("Profiled derivative queue script was not found: %s", script)
+            return False
+
+        try:
+            result = subprocess.run(
+                [
+                    self.config.php_binary,
+                    str(script),
+                    "--queue-profiled-derivatives",
+                    f"--photo-id={photo_id}",
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except Exception as exc:
+            self.log.warning("Profiled derivative queueing failed to start for photo=%s: %s", photo_id, exc)
+            return False
+
+        output = (result.stdout or "").strip()
+        if result.returncode != 0:
+            detail = (result.stderr or output).strip()
+            self.log.warning("Profiled derivative queueing failed for photo=%s: %s", photo_id, detail)
+            return False
+
+        try:
+            payload = json.loads(output) if output != "" else {}
+        except json.JSONDecodeError:
+            self.log.warning("Profiled derivative queueing returned invalid JSON for photo=%s: %s", photo_id, output[:400])
+            return False
+
+        queued = int(payload.get("queued_preview", 0) or 0) + int(payload.get("queued_final", 0) or 0)
+        active = int(payload.get("active_jobs", 0) or 0)
+        fresh = int(payload.get("already_fresh", 0) or 0)
+        skipped = int(payload.get("skipped", 0) or 0)
+        self.log.info(
+            "Profiled derivative queueing completed for photo=%s queued=%s active=%s fresh=%s skipped=%s",
+            photo_id,
+            queued,
+            active,
+            fresh,
+            skipped,
+        )
+
+        return bool(payload.get("success", False))
 
     def process_asset_notification(self, notification: AssetNotification) -> None:
         self.log.info(

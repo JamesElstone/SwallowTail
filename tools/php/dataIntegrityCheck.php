@@ -21,21 +21,35 @@ function swallowtail_data_integrity_cli(array $argv): int
     }
 
     $processLazy = in_array('--process-lazy-loading', $argv, true);
+    $queueProfiledDerivatives = in_array('--queue-profiled-derivatives', $argv, true);
+    $queueProfiledDerivativesBatch = in_array('--queue-profiled-derivatives-batch', $argv, true);
     $json = in_array('--json', $argv, true);
     $limit = 150;
+    $photoId = 0;
     foreach ($argv as $arg) {
         if (str_starts_with($arg, '--limit=')) {
             $limit = max(1, min(150, (int)substr($arg, 8)));
+        } elseif (str_starts_with($arg, '--photo-id=')) {
+            $photoId = max(0, (int)substr($arg, 11));
         }
     }
 
-    if (!$processLazy) {
+    if (!$processLazy && !$queueProfiledDerivatives && !$queueProfiledDerivativesBatch) {
         fwrite(STDERR, "Usage: php tools/php/dataIntegrityCheck.php --process-lazy-loading [--json] [--limit=150]\n");
+        fwrite(STDERR, "   or: php tools/php/dataIntegrityCheck.php --queue-profiled-derivatives --photo-id=123 [--json]\n");
+        fwrite(STDERR, "   or: php tools/php/dataIntegrityCheck.php --queue-profiled-derivatives-batch [--json] [--limit=150]\n");
         return 1;
     }
 
     try {
-        $result = (new SwallowtailDataIntegrityCheckService())->processLazyLoadingPreventionBatch($limit);
+        $service = new SwallowtailDataIntegrityCheckService();
+        if ($queueProfiledDerivatives) {
+            $result = $service->queueProfiledDerivativesForPhoto($photoId);
+        } elseif ($queueProfiledDerivativesBatch) {
+            $result = $service->processProfiledDerivativeQueueBatch($limit);
+        } else {
+            $result = $service->processLazyLoadingPreventionBatch($limit);
+        }
         if ($json) {
             echo json_encode($result, JSON_UNESCAPED_SLASHES) . "\n";
         } else {

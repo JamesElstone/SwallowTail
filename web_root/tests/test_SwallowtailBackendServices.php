@@ -1312,6 +1312,61 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     @unlink($source);
 });
 
+$harness->check(SwallowtailPhotoIngestService::class, 'requests profile generation after upload ingest', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+
+    $redis = new class {
+        public array $pushes = [];
+
+        public function listPushJson(string $key, array $payload, int $maxLength = 0): bool
+        {
+            $this->pushes[] = [
+                'key' => $key,
+                'payload' => $payload,
+                'max_length' => $maxLength,
+            ];
+
+            return true;
+        }
+    };
+
+    try {
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_upload_test');
+        $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+        if (!is_string($source)) {
+            throw new RuntimeException('Unable to create RAW fixture.');
+        }
+
+        $swallowtailWriteRawFixture($source, 'cr2');
+        $ingest = new SwallowtailPhotoIngestService(
+            profileDataService: new SwallowtailProfileDataService($redis)
+        );
+        $result = $ingest->ingestLocalRawFile($source, 'IMG_0010.CR2', ['uploaded_via' => 'api']);
+        $photoId = (int)($result['photo_id'] ?? 0);
+        $status = InterfaceDB::fetchColumn(
+            "SELECT value
+             FROM photo_profile_data
+             WHERE photo_id = :photo_id
+               AND type = 'swallowtail'
+               AND `key` = 'status'
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
+
+        $harness->assertTrue(!empty($result['success']));
+        $harness->assertSame('queued', (string)$status);
+        $harness->assertCount(1, $redis->pushes);
+        $harness->assertSame('swallowtail:metadata:profile_upload_test', $redis->pushes[0]['key']);
+        $harness->assertSame($photoId, (int)$redis->pushes[0]['payload']['photo_id']);
+        $harness->assertSame('raw_upload', (string)$redis->pushes[0]['payload']['reason']);
+        $harness->assertSame(512, (int)$redis->pushes[0]['max_length']);
+
+        @unlink($source);
+    } finally {
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
+    }
+});
+
 $harness->check(SwallowtailConversionQueueService::class, 'lists queued jobs in numeric priority order', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 
@@ -1383,18 +1438,18 @@ $harness->check(SwallowtailConversionQueueService::class, 'boosts queued viewed-
     ));
 
     $harness->assertSame([9101, 9102, 9103, 9104], array_map(static fn(array $row): int => (int)$row['job_id'], $boosted));
-    $harness->assertSame(50, $priorities[9101] ?? 0);
-    $harness->assertSame(51, $priorities[9102] ?? 0);
-    $harness->assertSame(50, $priorities[9103] ?? 0);
-    $harness->assertSame(65, $priorities[9104] ?? 0);
+    $harness->assertSame(95, $priorities[9101] ?? 0);
+    $harness->assertSame(30, $priorities[9102] ?? 0);
+    $harness->assertSame(90, $priorities[9103] ?? 0);
+    $harness->assertSame(85, $priorities[9104] ?? 0);
     $harness->assertSame(20, $priorities[9105] ?? 0);
     $harness->assertSame(20, $priorities[9106] ?? 0);
-    $harness->assertCount(4, $preempts);
-    $harness->assertSame(['preview', 'original', 'embedded', 'final'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
-    $harness->assertSame([50, 51, 50, 65], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+    $harness->assertCount(3, $preempts);
+    $harness->assertSame(['preview', 'embedded', 'final'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
+    $harness->assertSame([95, 90, 85], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
 });
 
-$harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue bumps existing queued final to priority 65', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue bumps existing queued final to priority 85', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 
     InterfaceDB::prepareExecute(
@@ -1460,9 +1515,9 @@ $harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue 
     ));
 
     $harness->assertSame(9201, $jobId);
-    $harness->assertSame(65, $priority);
+    $harness->assertSame(85, $priority);
     $harness->assertCount(1, $preempts);
-    $harness->assertSame(65, (int)($preempts[0]['priority'] ?? 0));
+    $harness->assertSame(85, (int)($preempts[0]['priority'] ?? 0));
 });
 
 $harness->check(SwallowtailDataIntegrityCheckService::class, 'reports retired state and missing base conversion issues', function () use ($harness, $swallowtailCreateSqliteSchema): void {
@@ -1728,6 +1783,70 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs unsigned p
     $harness->assertSame(0, (int)($result['queued_profile_jobs'] ?? -1));
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)$jobSignature) === 1);
     $harness->assertSame((string)$jobSignature, (string)$assetSignature);
+});
+
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled preview and final jobs from processed profile data', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $baseLocation = swallowtail_backend_storage_tmp_root();
+    $sha256 = str_repeat('9', 64);
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            432,
+            'IMG_0432.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            'uploaded',
+            'ready'
+        )",
+        [
+            'sha256' => $sha256,
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+    InterfaceDB::execute(
+        "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+            (432, 0, 'swallowtail', 'status', 'processed', 'string'),
+            (432, 0, 'Version', 'AppVersion', '5.12', 'float'),
+            (432, 0, 'Exposure', 'Brightness', '1', 'int')"
+    );
+
+    $result = (new SwallowtailDataIntegrityCheckService())->processProfiledDerivativeQueueBatch(10);
+    $jobs = InterfaceDB::fetchAll(
+        "SELECT image_type, priority, status, profile_path, profile_signature
+         FROM photo_conversion_jobs
+         WHERE photo_id = 432
+           AND image_type IN ('preview', 'final')
+         ORDER BY image_type"
+    );
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(1, (int)($result['queued_preview'] ?? 0));
+    $harness->assertSame(1, (int)($result['queued_final'] ?? 0));
+    $harness->assertSame(1, (int)($result['scanned'] ?? 0));
+    $harness->assertSame(true, !empty($result['complete_pass']));
+    $harness->assertCount(2, $jobs);
+    $harness->assertSame('final', (string)($jobs[0]['image_type'] ?? ''));
+    $harness->assertSame(55, (int)($jobs[0]['priority'] ?? 0));
+    $harness->assertSame('queued', (string)($jobs[0]['status'] ?? ''));
+    $harness->assertTrue(is_file((string)($jobs[0]['profile_path'] ?? '')));
+    $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($jobs[0]['profile_signature'] ?? '')) === 1);
+    $harness->assertSame('preview', (string)($jobs[1]['image_type'] ?? ''));
+    $harness->assertSame(70, (int)($jobs[1]['priority'] ?? 0));
+    $harness->assertSame('queued', (string)($jobs[1]['status'] ?? ''));
+    $harness->assertTrue(is_file((string)($jobs[1]['profile_path'] ?? '')));
+    $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($jobs[1]['profile_signature'] ?? '')) === 1);
 });
 
 $harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
@@ -3548,7 +3667,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job
     $harness->assertSame($activeJobId, (int)($state['job_id'] ?? 0));
     $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'type=final'));
     $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('1', 64)));
-    $harness->assertSame(65, (int)InterfaceDB::fetchColumn(
+    $harness->assertSame(85, (int)InterfaceDB::fetchColumn(
         "SELECT priority FROM photo_conversion_jobs WHERE id = :id LIMIT 1",
         ['id' => $activeJobId]
     ));
@@ -3648,7 +3767,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'obsoletes stale active
     $harness->assertTrue(str_contains((string)($state['display_url'] ?? ''), 'v=' . str_repeat('1', 64)));
     $harness->assertTrue(is_array($newJob));
     $harness->assertSame($currentProfileSignature, (string)($newJob['profile_signature'] ?? ''));
-    $harness->assertSame(65, (int)($newJob['priority'] ?? 0));
+    $harness->assertSame(85, (int)($newJob['priority'] ?? 0));
     $harness->assertSame('obsolete', (string)InterfaceDB::fetchColumn(
         "SELECT status FROM photo_conversion_jobs WHERE photo_id = :photo_id AND image_type = 'final' AND profile_signature = :profile_signature AND status = 'obsolete' LIMIT 1",
         ['photo_id' => $photoId, 'profile_signature' => $staleProfileSignature]
@@ -3917,7 +4036,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $profilePath = (string)($job['profile_path'] ?? '');
     $harness->assertSame(1, preg_match('/^[a-f0-9]{64}$/', (string)($job['profile_signature'] ?? '')));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
-    $harness->assertSame(50, (int)($job['priority'] ?? 0));
+    $harness->assertSame(70, (int)($job['priority'] ?? 0));
     $harness->assertSame(0, (int)($job['output_width'] ?? 0));
     $harness->assertSame(0, (int)($job['output_height'] ?? 0));
     if ($profilePath === '') {
@@ -5071,7 +5190,7 @@ $harness->check(SwallowtailConversionQueueService::class, 'sends Redis preempt s
     ));
     $harness->assertCount(1, $preempts);
     $harness->assertSame(['preview'], array_map(static fn(array $notification): string => (string)$notification['image_type'], $preempts));
-    $harness->assertSame([50], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
+    $harness->assertSame([70], array_map(static fn(array $notification): int => (int)$notification['priority'], $preempts));
     $harness->assertSame($previewJobId, (int)$preempts[0]['job_id']);
 
     @unlink($source);
