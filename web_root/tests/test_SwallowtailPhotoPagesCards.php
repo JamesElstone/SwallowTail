@@ -74,6 +74,21 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $harness->assertTrue(!str_contains($html, 'profile-editor-row'));
 });
 
+$harness->check(_internal_profilesCard::class, 'internal profile adjustment action names selected image and profile', function () use ($harness): void {
+    $card = new _internal_profilesCard();
+    $method = new ReflectionMethod($card, 'adjustmentEntryForm');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, 'preview', 'default', 'test-csrf');
+
+    $harness->assertTrue(str_contains($html, 'data-internal-profile-adjustment-form="true"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_image_type" value="preview"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_profile_name" value="default"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_new_profile_name" value="default"'));
+    $harness->assertTrue(str_contains($html, 'Add adjustment entry for preview : default'));
+    $harness->assertTrue(!str_contains($html, 'Add Row For Image Type'));
+});
+
 $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form always submits an action', function () use ($harness): void {
     $card = new _rawtheapee_profilesCard();
     $method = new ReflectionMethod($card, 'controlForm');

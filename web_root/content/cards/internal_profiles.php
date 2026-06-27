@@ -63,6 +63,7 @@ final class _internal_profilesCard extends CardBaseFramework
         return '<div class="settings-fieldset">
             ' . $this->filterForms($service, $imageType, $profileName, $profileNames, $csrfToken) . '
             ' . $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === [])->render($context) . '
+            ' . $this->adjustmentEntryForm($imageType, $profileName, $csrfToken) . '
         </div>';
     }
 
@@ -84,7 +85,7 @@ final class _internal_profilesCard extends CardBaseFramework
                 <input type="hidden" name="_card_refresh" value="1">
                 <input type="hidden" name="_invalidate_fact" value="internal.profiles">
                 <label for="internal-profiles-image-type">Image type</label>
-                <select id="internal-profiles-image-type" name="internal_profiles_image_type">' . $imageOptions . '</select>
+                <select class="select" id="internal-profiles-image-type" name="internal_profiles_image_type">' . $imageOptions . '</select>
             </form>
             <form method="post" action="?page=profiles" data-ajax="true" class="form-row half">
                 <input type="hidden" name="cards[]" value="internal_profiles">
@@ -92,7 +93,7 @@ final class _internal_profilesCard extends CardBaseFramework
                 <input type="hidden" name="_invalidate_fact" value="internal.profiles">
                 <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '">
                 <label for="internal-profiles-profile-name">Profile name</label>
-                <select id="internal-profiles-profile-name" name="internal_profiles_profile_name">' . $nameOptions . '</select>
+                <select class="select" id="internal-profiles-profile-name" name="internal_profiles_profile_name">' . $nameOptions . '</select>
             </form>
             <div class="form-row half" aria-hidden="true"></div>
             <form method="post" action="?page=profiles" data-ajax="true" class="form-row half">
@@ -107,16 +108,28 @@ final class _internal_profilesCard extends CardBaseFramework
                     <button class="button button-inline" type="submit">Add</button>
                 </div>
             </form>
-            <form method="post" action="?page=profiles" data-ajax="true" class="form-row full">
-                <input type="hidden" name="cards[]" value="internal_profiles">
-                <input type="hidden" name="card_action" value="InternalProfiles">
-                <input type="hidden" name="internal_profiles_action" value="add_profile">
-                <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
-                <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '">
-                <input type="hidden" name="internal_profiles_new_profile_name" value="' . HelperFramework::escape($profileName) . '">
-                <button class="button button-inline" type="submit">Add Row For Image Type</button>
-            </form>
         </div>';
+    }
+
+    private function adjustmentEntryForm(string $imageType, string $profileName, string $csrfToken): string
+    {
+        return '<form method="post" action="?page=profiles" data-ajax="true" class="card-toolbar internal-profile-adjustment-action" data-internal-profile-adjustment-form="true">
+            <input type="hidden" name="cards[]" value="internal_profiles">
+            <input type="hidden" name="card_action" value="InternalProfiles">
+            <input type="hidden" name="internal_profiles_action" value="add_profile">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+            <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '" data-internal-profile-image-field="true">
+            <input type="hidden" name="internal_profiles_profile_name" value="' . HelperFramework::escape($profileName) . '" data-internal-profile-name-field="true">
+            <input type="hidden" name="internal_profiles_new_profile_name" value="' . HelperFramework::escape($profileName) . '" data-internal-profile-new-name-field="true">
+            <div class="actions-row">
+                <button class="button button-inline" type="submit" data-internal-profile-adjustment-label="true">' . HelperFramework::escape($this->adjustmentEntryButtonLabel($imageType, $profileName)) . '</button>
+            </div>
+        </form>';
+    }
+
+    private function adjustmentEntryButtonLabel(string $imageType, string $profileName): string
+    {
+        return 'Add adjustment entry for ' . $imageType . ' : ' . $profileName;
     }
 
     private function profileTable(array $rows, string $imageType, string $profileName, string $csrfToken, bool $includeDraft): TableFramework
@@ -225,7 +238,7 @@ final class _internal_profilesCard extends CardBaseFramework
             $options .= '<option value="' . HelperFramework::escape($type) . '"' . ($type === $current ? ' selected' : '') . '>' . HelperFramework::escape($type) . '</option>';
         }
 
-        return '<select name="internal_profile_value_type"'
+        return '<select class="select" name="internal_profile_value_type"'
             . ($formId !== '' ? ' form="' . HelperFramework::escape($formId) . '"' : '')
             . ($submitOnChange ? ' data-submit-on-change="true"' : '')
             . '>' . $options . '</select>';

@@ -1188,6 +1188,60 @@
         });
     }
 
+    function selectedValueById(id) {
+        const field = document.getElementById(id);
+
+        return field instanceof HTMLSelectElement ? field.value : '';
+    }
+
+    function syncInternalProfileAdjustmentForms(root = document) {
+        const forms = [];
+
+        if (root instanceof HTMLElement && root.matches('[data-internal-profile-adjustment-form="true"]')) {
+            forms.push(root);
+        }
+
+        if (root && typeof root.querySelectorAll === 'function') {
+            forms.push(...root.querySelectorAll('[data-internal-profile-adjustment-form="true"]'));
+        }
+
+        if (forms.length === 0) {
+            return;
+        }
+
+        const selectedImageType = selectedValueById('internal-profiles-image-type');
+        const selectedProfileName = selectedValueById('internal-profiles-profile-name');
+
+        forms.forEach((form) => {
+            if (!(form instanceof HTMLFormElement)) {
+                return;
+            }
+
+            const imageField = form.querySelector('[data-internal-profile-image-field="true"]');
+            const nameField = form.querySelector('[data-internal-profile-name-field="true"]');
+            const newNameField = form.querySelector('[data-internal-profile-new-name-field="true"]');
+            const label = form.querySelector('[data-internal-profile-adjustment-label="true"]');
+            const imageType = selectedImageType || (imageField instanceof HTMLInputElement ? imageField.value : '');
+            const profileName = selectedProfileName || (nameField instanceof HTMLInputElement ? nameField.value : '');
+
+            if (imageField instanceof HTMLInputElement) {
+                imageField.value = imageType;
+            }
+
+            if (nameField instanceof HTMLInputElement) {
+                nameField.value = profileName;
+            }
+
+            if (newNameField instanceof HTMLInputElement) {
+                newNameField.value = profileName;
+            }
+
+            if (label instanceof HTMLElement && imageType !== '' && profileName !== '') {
+                label.textContent = `Add adjustment entry for ${imageType} : ${profileName}`;
+            }
+        });
+    }
+
     function isFormControl(node) {
         return node instanceof HTMLInputElement
             || node instanceof HTMLSelectElement
@@ -3055,6 +3109,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    syncInternalProfileAdjustmentForms(replacement);
                     initialisePictureViewers(replacement);
                     initialisePictureEditors(replacement);
                     initialiseGalleryAutoRefresh(replacement);
@@ -3080,6 +3135,7 @@
                     initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
+                    syncInternalProfileAdjustmentForms(replacement);
                     initialisePictureViewers(replacement);
                     initialisePictureEditors(replacement);
                     initialiseGalleryAutoRefresh(replacement);
@@ -4473,6 +4529,10 @@
             return;
         }
 
+        if (select.id === 'internal-profiles-image-type' || select.id === 'internal-profiles-profile-name') {
+            syncInternalProfileAdjustmentForms(document);
+        }
+
         if (select.dataset.noSubmitOnChange === 'true') {
             return;
         }
@@ -4531,6 +4591,7 @@
     initialiseRawUploadForms(document);
     initialisePasswordRequirementPanels(document);
     initialiseTableCondensedControls(document);
+    syncInternalProfileAdjustmentForms(document);
     initialisePictureViewers(document);
     initialisePictureEditors(document);
     initialiseGalleryAutoRefresh(document);
