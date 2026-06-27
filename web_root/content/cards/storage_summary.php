@@ -77,6 +77,14 @@ final class _storage_summaryCard extends CardBaseFramework
                     <dt>Below threshold</dt>
                     <dd>' . HelperFramework::escape((string)$summary['below_threshold_locations']) . '</dd>
                 </div>
+                <div>
+                    <dt>Photos</dt>
+                    <dd>' . HelperFramework::escape(number_format((int)$summary['photo_count'])) . '</dd>
+                </div>
+                <div>
+                    <dt>Size per Photo</dt>
+                    <dd>' . HelperFramework::escape($this->formatBytes($summary['size_per_photo_bytes'])) . '</dd>
+                </div>
             </dl>
             <div class="storage-summary-chart">' . $this->capacityChart($summary) . '</div>
         </div>';
@@ -94,6 +102,7 @@ final class _storage_summaryCard extends CardBaseFramework
         $totalBytes = 0;
         $availableBytes = 0;
         $hasCapacityData = false;
+        $photoCount = $this->photoCount();
 
         foreach ($locations as $location) {
             if (!is_array($location) || !empty($location['is_excluded'])) {
@@ -136,7 +145,18 @@ final class _storage_summaryCard extends CardBaseFramework
             'available_bytes' => $hasCapacityData ? $availableBytes : null,
             'used_bytes' => $hasCapacityData ? $usedBytes : null,
             'free_percent' => $hasCapacityData && $totalBytes > 0 ? ($availableBytes / $totalBytes) * 100 : null,
+            'photo_count' => $photoCount,
+            'size_per_photo_bytes' => $hasCapacityData && $photoCount > 0 ? $usedBytes / $photoCount : null,
         ];
+    }
+
+    private function photoCount(): int
+    {
+        if (!InterfaceDB::tableExists('photos')) {
+            return 0;
+        }
+
+        return max(0, InterfaceDB::tableRowCount('photos'));
     }
 
     /**
