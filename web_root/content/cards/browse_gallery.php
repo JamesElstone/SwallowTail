@@ -130,7 +130,7 @@ final class _browse_galleryCard extends CardBaseFramework
                 ' . $this->editIconSvg() . '
             </a>'
             : '';
-        $downloadLink = !empty($photo['effective_can_download_single_jpeg'])
+        $downloadLink = $this->canShowDownloadLink($photo, $status)
             ? '<a class="gallery-download-link" href="' . HelperFramework::escape($downloadUrl) . '" aria-label="Download ' . HelperFramework::escape($filename) . '">
                 ' . $this->downloadIconSvg() . '
             </a>'
@@ -229,6 +229,11 @@ final class _browse_galleryCard extends CardBaseFramework
 
         return $status === 'processing'
             || ($status !== 'failed' && $this->galleryPreviewType($photo) === null);
+    }
+
+    private function canShowDownloadLink(array $photo, string $status): bool
+    {
+        return !empty($photo['effective_can_download_single_jpeg']) && $status === 'ready';
     }
 
     private function autoRefreshControl(): string
@@ -385,7 +390,7 @@ final class _browse_galleryCard extends CardBaseFramework
     private function statusIndicatorState(string $state): string
     {
         $state = strtolower(trim($state));
-        if ($state === 'ready' || $state === 'not_required') {
+        if (in_array($state, ['ready', 'complete', 'completed', 'succeeded', 'not_required'], true)) {
             return 'ready';
         }
         if ($state === 'failed') {

@@ -23,7 +23,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview', 'event_downloads', 'event_permissions'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtheapee_profiles', 'combined_profile_preview', 'event_downloads', 'event_permissions', 'photo_audit_log'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -37,6 +37,57 @@ $harness->check(_profiles::class, 'profiles page exposes profile management card
         'rawtheapee_profiles',
         'combined_profile_preview',
     ], $profiles->cards());
+});
+
+$harness->check(_internal_profilesCard::class, 'internal profile editor renders with table builder without pagination', function () use ($harness): void {
+    $card = new _internal_profilesCard();
+    $method = new ReflectionMethod($card, 'profileTable');
+    $method->setAccessible(true);
+
+    $table = $method->invoke($card, [[
+        'id' => 42,
+        'image_type' => 'preview',
+        'profile_name' => 'default',
+        'type' => 'Resize',
+        'key' => 'Enabled',
+        'value' => 'true',
+        'value_type' => 'bool',
+    ]], 'preview', 'default', 'test-csrf', true);
+
+    $harness->assertTrue($table instanceof TableFramework);
+
+    $html = $table->render([
+        'page' => [
+            'page_id' => 'profiles',
+            'page_cards' => ['internal_profiles'],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, '<table class="profile-editor-table">'));
+    $harness->assertTrue(str_contains($html, '<th>Type</th>'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profile_type"'));
+    $harness->assertTrue(str_contains($html, 'form="internal-profile-row-42-'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_action" value="save_row"'));
+    $harness->assertTrue(str_contains($html, 'data-submit-on-change="true"'));
+    $harness->assertTrue(!str_contains($html, 'table-footer'));
+    $harness->assertTrue(!str_contains($html, '_table_export_prepare'));
+    $harness->assertTrue(!str_contains($html, 'profile-editor-row'));
+});
+
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form always submits an action', function () use ($harness): void {
+    $card = new _rawtheapee_profilesCard();
+    $method = new ReflectionMethod($card, 'controlForm');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [[
+        'id' => 7,
+        'display_label' => 'Portrait.pp3',
+    ]], 7, 42, 'test-csrf');
+
+    $harness->assertTrue(str_contains($html, 'name="rawtheapee_profiles_action" value="test"'));
+    $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="test"'));
+    $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh"'));
+    $harness->assertTrue(!str_contains($html, 'type="submit" name="rawtheapee_profiles_action"'));
 });
 
 $harness->check(_view::class, 'view page exposes picture viewer card', function () use ($harness): void {
@@ -79,6 +130,13 @@ $harness->check(_download::class, 'download page exposes event download card', f
 
 $harness->check(_events::class, 'events page exposes event permissions card', function () use ($harness): void {
     $harness->assertSame(['event_permissions'], (new _events())->cards());
+});
+
+$harness->check(_logs::class, 'logs page exposes photo audit log card', function () use ($harness): void {
+    $cards = (new _logs())->cards();
+
+    $harness->assertTrue(in_array('photo_audit_log', $cards, true));
+    $harness->assertTrue(in_array('user_account_audit_log', $cards, true));
 });
 
 $harness->check(_dashboard::class, 'shows storage and operations cards first on dashboard', function () use ($harness): void {
@@ -514,6 +572,11 @@ $harness->check(_storage_availableCard::class, 'renders zpool dataset select and
             'csrf_token' => 'test-csrf',
             'page_cards' => ['storage_available'],
         ],
+        'services' => [
+            'current_user' => [
+                'role_id' => RoleAssignmentService::ADMIN_ROLE_ID,
+            ],
+        ],
     ];
 
     $zpoolCard = new ReflectionMethod($card, 'zpoolCard');
@@ -715,6 +778,11 @@ $harness->check(_storage_availableCard::class, 'renders ajax settings and per-lo
             'csrf_token' => 'test-csrf',
             'page_cards' => ['storage_available'],
         ],
+        'services' => [
+            'current_user' => [
+                'role_id' => RoleAssignmentService::ADMIN_ROLE_ID,
+            ],
+        ],
     ];
 
     $settingsForm = new ReflectionMethod($card, 'settingsForm');
@@ -747,6 +815,41 @@ $harness->check(_storage_availableCard::class, 'renders ajax settings and per-lo
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_base_location" value="/storage/1"'));
     $harness->assertTrue(str_contains($locationHtml, 'name="is_excluded" value="1" checked'));
     $harness->assertTrue(str_contains($locationHtml, 'Exclude from new writes'));
+});
+
+$harness->check(_storage_availableCard::class, 'hides location exclusion and migration controls for non-admin roles', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+        'services' => [
+            'current_user' => [
+                'role_id' => 1,
+            ],
+        ],
+    ];
+
+    $locationCard = new ReflectionMethod($card, 'locationCard');
+    $locationCard->setAccessible(true);
+    $locationHtml = (string)$locationCard->invoke($card, [
+        'storage_base_location' => '/storage/1',
+        'label' => '/storage/1',
+        'root_path' => '/storage/1/swallowtail-data/',
+        'available_bytes' => 1024,
+        'total_bytes' => 2048,
+        'free_percent' => 50,
+        'full_threshold_percent' => 5,
+        'is_excluded' => false,
+        'is_full' => false,
+        'can_write' => true,
+    ], $context);
+
+    $harness->assertTrue(!str_contains($locationHtml, 'name="storage_settings_action" value="set_location_excluded"'));
+    $harness->assertTrue(!str_contains($locationHtml, 'Exclude from new writes'));
+    $harness->assertTrue(!str_contains($locationHtml, 'name="storage_settings_action" value="request_migrate_location"'));
+    $harness->assertTrue(!str_contains($locationHtml, 'Migrate Files from this Location'));
 });
 
 $harness->check(_storage_availableCard::class, 'shows storage exhaustion and below-threshold warnings', function () use ($harness): void {
@@ -905,6 +1008,23 @@ $harness->check(_gallery::class, 'browse gallery hides download link without sin
         'effective_can_download_single_jpeg' => false,
     ]);
 
+    $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
+});
+
+$harness->check(_gallery::class, 'browse gallery hides download link until conversion is complete', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 42,
+        'original_filename' => 'IMG_0042.CR2',
+        'conversion_state' => 'processing',
+        'preview_ready' => true,
+        'effective_can_download_single_jpeg' => true,
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
 });
 
@@ -1313,6 +1433,44 @@ $harness->check(_gallery::class, 'browse gallery shows failed status overlay', f
     $harness->assertTrue(!str_contains($html, '>Conversion failed<'));
 });
 
+$harness->check(_photo_audit_logCard::class, 'renders photo audit rows with eelKit table builder', function () use ($harness): void {
+    $card = new _photo_audit_logCard();
+    $html = $card->render([
+        'page' => [
+            'page_id' => 'logs',
+            'page_cards' => ['photo_audit_log'],
+            'photo_audit_log_page' => 1,
+        ],
+        'services' => [
+            'photo_audit_rows' => [[
+                'id' => 9,
+                'photo_id' => 42,
+                'event_id' => 7,
+                'actor_user_id' => 3,
+                'upload_token_id' => 5,
+                'action_type' => 'raw_uploaded',
+                'details_json' => '{"source":"api"}',
+                'device_id' => 'device-a',
+                'ip_address' => '127.0.0.1',
+                'user_agent' => 'Test Agent',
+                'occurred_at' => '2026-06-27 10:00:00',
+                'original_filename' => 'IMG_0042.CR2',
+                'event_name' => 'Family',
+                'actor_user_display_name' => 'Admin User',
+                'upload_token_label' => 'Bridge Upload',
+            ]],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'photo-audit-table'));
+    $harness->assertTrue(str_contains($html, 'IMG_0042.CR2'));
+    $harness->assertTrue(str_contains($html, 'Family'));
+    $harness->assertTrue(str_contains($html, 'Admin User'));
+    $harness->assertTrue(str_contains($html, 'Upload token: Bridge Upload'));
+    $harness->assertTrue(str_contains($html, '<span class="badge info">Raw Uploaded</span>'));
+    $harness->assertTrue(str_contains($html, 'source: api'));
+});
+
 $harness->check(SwallowtailPhotoMetadataSummaryService::class, 'formats photo metadata in helper text', function () use ($harness): void {
     $service = new SwallowtailPhotoMetadataSummaryService();
 
@@ -1350,6 +1508,20 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     $harness->assertTrue(str_contains($source, 'data-picture-editor-save disabled'));
 });
 
+$harness->check(_picture_editorCard::class, 'picture editor matches viewer empty photo message', function () use ($harness): void {
+    $context = [
+        'page' => [
+            'photo_id' => 0,
+        ],
+    ];
+
+    $viewerHtml = (new _picture_viewerCard())->render($context);
+    $editorHtml = (new _picture_editorCard())->render($context);
+
+    $harness->assertSame($viewerHtml, $editorHtml);
+    $harness->assertSame('<p class="helper">Select a photo from the gallery to view it here.</p>', $editorHtml);
+});
+
 $harness->check(_edit::class, 'picture editor exposes revert control', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'picture_editor.php');
 
@@ -1376,6 +1548,24 @@ $harness->check(_event_permissionsCard::class, 'event permissions card uses sear
     $harness->assertTrue(str_contains($source, 'userPermissionRows'));
     $harness->assertTrue(str_contains($serviceSource, 'searchUsers'));
     $harness->assertTrue(str_contains($serviceSource, 'LIMIT " . (string)$limit'));
+});
+
+$harness->check(_event_permissionsCard::class, 'event role permissions explain when no roles exist', function () use ($harness): void {
+    $card = new _event_permissionsCard();
+    $method = new ReflectionMethod($card, 'rolePermissions');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'selected_event_id' => 7,
+        ],
+    ], [], 7, 'test-csrf');
+
+    $harness->assertTrue(str_contains($html, 'Role Permissions'));
+    $harness->assertTrue(str_contains($html, '<div class="panel-soft">'));
+    $harness->assertTrue(str_contains($html, 'No roles are available yet.'));
+    $harness->assertTrue(str_contains($html, 'Create a role before assigning role-based event permissions.'));
 });
 
 $harness->check('SwallowTail SVG', 'events icon matches user and role icon style', function () use ($harness): void {

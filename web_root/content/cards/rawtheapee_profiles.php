@@ -81,11 +81,12 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             <input type="hidden" name="card_action" value="RawTheapeeProfiles">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
             <input type="hidden" name="rawtheapee_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
+            <input type="hidden" name="rawtheapee_profiles_action" value="test">
             <label for="rawtheapee-profile-id">Profile</label>
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
-                <button class="button button-inline primary" type="submit" name="rawtheapee_profiles_action" value="test" data-processing-text="Queueing" data-processing-state="disabled">Test</button>
-                <button class="button button-inline" type="submit" name="rawtheapee_profiles_action" value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh</button>
+                <button class="button button-inline primary" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Queueing" data-processing-state="disabled">Test</button>
+                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh</button>
             </div>
         </form>';
     }

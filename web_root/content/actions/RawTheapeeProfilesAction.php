@@ -29,7 +29,8 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
             'photo_id' => $photoId,
         ];
 
-        $action = (string)$request->input('rawtheapee_profiles_action', '');
+        $action = (string)$request->input('rawtheapee_profiles_action', 'test');
+        $action = trim($action) !== '' ? trim($action) : 'test';
         if ($action === 'refresh') {
             $ok = $service->requestRefresh();
             return ActionResultFramework::success(['rawtheapee.profiles'], [[

@@ -92,6 +92,7 @@ final class _storage_availableCard extends CardBaseFramework
                 . ' threshold. This location is not eligible for new writes.</p>'
             : '';
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        $canManageLocationActions = $this->canManageStorageLocationActions($context);
         $fixPermissionAction = $baseLocation === '' || $permissionCanWrite !== false ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
@@ -101,7 +102,7 @@ final class _storage_availableCard extends CardBaseFramework
                 <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
                 <button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Fix storage permissions" data-chicken-message="Run the SwallowTail storage permission repair helper for this location. It only creates or modifies the swallowtail-data directory below the selected storage base." data-chicken-confirm-text="Fix Permissions">Fix Permission Issues</button>
             </form>';
-        $excludeAction = $isZfs ? '' : '
+        $excludeAction = !$canManageLocationActions || $isZfs ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
                 <input type="hidden" name="card_action" value="StorageSettings">
@@ -114,7 +115,7 @@ final class _storage_availableCard extends CardBaseFramework
                     <span>Exclude from new writes</span>
                 </label>
             </form>';
-        $migrateAction = $baseLocation === '' ? '' : '
+        $migrateAction = !$canManageLocationActions || $baseLocation === '' ? '' : '
             <form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions">
                 ' . $this->hiddenFields($context) . '
                 <input type="hidden" name="card_action" value="StorageSettings">
@@ -370,6 +371,35 @@ final class _storage_availableCard extends CardBaseFramework
         }
 
         return $html;
+    }
+
+    private function canManageStorageLocationActions(array $context): bool
+    {
+        return $this->currentUserRoleId($context) === RoleAssignmentService::ADMIN_ROLE_ID;
+    }
+
+    private function currentUserRoleId(array $context): int
+    {
+        foreach ([
+            ($context['services'] ?? [])['current_user'] ?? null,
+            $context['current_user'] ?? null,
+            ($context['page'] ?? [])['current_user'] ?? null,
+        ] as $currentUser) {
+            if (is_array($currentUser) && array_key_exists('role_id', $currentUser)) {
+                return (int)$currentUser['role_id'];
+            }
+        }
+
+        try {
+            $session = new SessionAuthenticationService();
+            $session->startSession();
+            $deviceId = trim((string)AntiFraudService::instance()->requestValue('Client-Device-ID'));
+            $userId = $session->authenticatedUserId($deviceId);
+
+            return $userId > 0 ? (new RoleRepository())->userRoleId($userId) : 0;
+        } catch (Throwable) {
+            return 0;
+        }
     }
 
     private function formatBytes(mixed $bytes): string

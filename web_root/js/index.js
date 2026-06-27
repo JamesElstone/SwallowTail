@@ -4448,7 +4448,13 @@
             : null;
 
         if (submitOnChangeControl instanceof HTMLElement) {
-            const form = submitOnChangeControl.closest('form[data-ajax="true"]');
+            const associatedForm = submitOnChangeControl instanceof HTMLInputElement
+                || submitOnChangeControl instanceof HTMLSelectElement
+                || submitOnChangeControl instanceof HTMLTextAreaElement
+                ? submitOnChangeControl.form
+                : null;
+            const form = submitOnChangeControl.closest('form[data-ajax="true"]')
+                ?? (associatedForm instanceof HTMLFormElement && associatedForm.matches('form[data-ajax="true"]') ? associatedForm : null);
             if (form instanceof HTMLFormElement) {
                 form.requestSubmit();
                 return;

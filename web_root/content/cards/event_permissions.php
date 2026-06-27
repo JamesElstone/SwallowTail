@@ -110,6 +110,10 @@ final class _event_permissionsCard extends CardBaseFramework
             </div>
             <div class="event-permission-grid">';
 
+        if ($rows === []) {
+            return $html . '<div class="panel-soft">No roles are available yet. Create a role before assigning role-based event permissions.</div></div></section>';
+        }
+
         foreach ($rows as $row) {
             $html .= $this->permissionRow(
                 $context,

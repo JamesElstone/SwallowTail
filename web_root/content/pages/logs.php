@@ -35,6 +35,7 @@ final class _logs extends PageContextFramework
             'activity',
             'signup_token_lockouts',
             'signup_verification_lockouts',
+            'photo_audit_log',
             'user_account_audit_log',
             'user_logon_history_log',
         ];

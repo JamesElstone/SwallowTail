@@ -26,7 +26,7 @@ final class _picture_editorCard extends CardBaseFramework
     {
         $photoId = max(0, (int)($context['page']['photo_id'] ?? 0));
         if ($photoId <= 0) {
-            return '<div class="panel-soft warn full">No photo selected.</div>';
+            return '<p class="helper">Select a photo from the gallery to view it here.</p>';
         }
 
         $userId = $this->currentUserId();

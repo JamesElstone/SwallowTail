@@ -638,7 +638,7 @@ body.sidebar-collapsed .sidebar-hide-collapsed-link-initials .nav-link-short {
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
-  padding: 26px;
+  padding: 10px;
   min-width: 0;
 }
 
@@ -667,8 +667,8 @@ body.sidebar-collapsed .sidebar-hide-collapsed-link-initials .nav-link-short {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 20px;
-  margin-bottom: 22px;
+  gap: 8px;
+  margin-bottom: 8px;
   position: relative;
   padding-right: 0;
 }

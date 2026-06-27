@@ -62,11 +62,7 @@ final class _internal_profilesCard extends CardBaseFramework
 
         return '<div class="settings-fieldset">
             ' . $this->filterForms($service, $imageType, $profileName, $profileNames, $csrfToken) . '
-            <div class="profile-editor-grid">
-                ' . $this->headerRow() . '
-                ' . implode('', array_map(fn(array $row): string => $this->rowForm($row, $csrfToken), $rows)) . '
-                ' . ($draft || $rows === [] ? $this->draftRow($imageType, $profileName, $csrfToken) : '') . '
-            </div>
+            ' . $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === [])->render($context) . '
         </div>';
     }
 
@@ -98,7 +94,8 @@ final class _internal_profilesCard extends CardBaseFramework
                 <label for="internal-profiles-profile-name">Profile name</label>
                 <select id="internal-profiles-profile-name" name="internal_profiles_profile_name">' . $nameOptions . '</select>
             </form>
-            <form method="post" action="?page=profiles" data-ajax="true" class="form-row full">
+            <div class="form-row half" aria-hidden="true"></div>
+            <form method="post" action="?page=profiles" data-ajax="true" class="form-row half">
                 <input type="hidden" name="cards[]" value="internal_profiles">
                 <input type="hidden" name="card_action" value="InternalProfiles">
                 <input type="hidden" name="internal_profiles_action" value="add_profile">
@@ -122,16 +119,31 @@ final class _internal_profilesCard extends CardBaseFramework
         </div>';
     }
 
-    private function headerRow(): string
+    private function profileTable(array $rows, string $imageType, string $profileName, string $csrfToken, bool $includeDraft): TableFramework
     {
-        return '<div class="settings-order-row profile-editor-row profile-editor-header">
-            <strong>Type</strong><strong>Key</strong><strong>Value</strong><strong>Value Type</strong><strong>Actions</strong>
-        </div>';
+        if ($includeDraft) {
+            $rows[] = $this->draftRow($imageType, $profileName);
+        }
+
+        $rows = array_map(
+            fn(array $row): array => $this->normaliseTableRow($row, $csrfToken),
+            $rows
+        );
+
+        return TableFramework::make($this->key(), $rows)
+            ->exports(false)
+            ->empty('No internal profile rows are available.')
+            ->classes('profile-editor-table', 'table-scroll profile-editor-grid')
+            ->column('type', 'Type', html: fn(array $row): string => $this->typeCell($row), exportable: false)
+            ->column('key', 'Key', html: fn(array $row): string => $this->textInputCell($row, 'key'), exportable: false)
+            ->column('value', 'Value', html: fn(array $row): string => $this->textInputCell($row, 'value'), exportable: false)
+            ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect((string)($row['value_type'] ?? 'string'), empty($row['_draft']), (string)($row['_form_id'] ?? '')), exportable: false)
+            ->column('actions', 'Actions', html: fn(array $row): string => $this->actionsCell($row), exportable: false);
     }
 
-    private function draftRow(string $imageType, string $profileName, string $csrfToken): string
+    private function draftRow(string $imageType, string $profileName): array
     {
-        return $this->rowForm([
+        return [
             'id' => 0,
             'image_type' => $imageType,
             'profile_name' => $profileName,
@@ -139,60 +151,100 @@ final class _internal_profilesCard extends CardBaseFramework
             'key' => '',
             'value' => '',
             'value_type' => 'string',
-        ], $csrfToken, true);
+            '_draft' => true,
+        ];
     }
 
-    private function rowForm(array $row, string $csrfToken, bool $draft = false): string
+    private function normaliseTableRow(array $row, string $csrfToken): array
     {
         $id = max(0, (int)($row['id'] ?? 0));
         $prefix = 'internal-profile-row-' . (string)$id . '-' . substr(hash('sha1', (string)json_encode($row)), 0, 8);
-        $typeId = $prefix . '-type';
-        $keyId = $prefix . '-key';
-        $valueId = $prefix . '-value';
-        $saveId = $prefix . '-save';
-        $imageType = (string)($row['image_type'] ?? 'preview');
-        $profileName = (string)($row['profile_name'] ?? 'default');
-        $type = (string)($row['type'] ?? '');
-        $key = (string)($row['key'] ?? '');
-        $value = (string)($row['value'] ?? '');
-        $valueType = (string)($row['value_type'] ?? 'string');
+        $row['_id'] = $id;
+        $row['_csrf_token'] = $csrfToken;
+        $row['_form_id'] = $prefix . '-form';
+        $row['_type_id'] = $prefix . '-type';
+        $row['_key_id'] = $prefix . '-key';
+        $row['_value_id'] = $prefix . '-value';
+        $row['_save_id'] = $prefix . '-save';
+        $row['_draft'] = !empty($row['_draft']);
 
-        return '<form method="post" action="?page=profiles" data-ajax="true" class="settings-order-row profile-editor-row"
+        return $row;
+    }
+
+    private function typeCell(array $row): string
+    {
+        return $this->rowForm($row) . $this->textInputCell($row, 'type');
+    }
+
+    private function rowForm(array $row): string
+    {
+        $formId = (string)($row['_form_id'] ?? '');
+        $typeId = (string)($row['_type_id'] ?? '');
+        $keyId = (string)($row['_key_id'] ?? '');
+        $valueId = (string)($row['_value_id'] ?? '');
+        $saveId = (string)($row['_save_id'] ?? '');
+        $id = max(0, (int)($row['_id'] ?? 0));
+
+        return '<form id="' . HelperFramework::escape($formId) . '" method="post" action="?page=profiles" data-ajax="true"
             data-state-fields="' . HelperFramework::escape($typeId . ',' . $keyId . ',' . $valueId) . '"
             data-state-target="' . HelperFramework::escape($saveId) . '">
             <input type="hidden" name="cards[]" value="internal_profiles">
             <input type="hidden" name="card_action" value="InternalProfiles">
             <input type="hidden" name="internal_profiles_action" value="save_row">
-            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape((string)($row['_csrf_token'] ?? '')) . '">
             <input type="hidden" name="internal_profile_id" value="' . HelperFramework::escape((string)$id) . '">
             <input type="hidden" name="internal_profiles_move_id" value="' . HelperFramework::escape((string)$id) . '">
             <input type="hidden" name="internal_profiles_move_direction" value="">
-            <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '">
-            <input type="hidden" name="internal_profiles_profile_name" value="' . HelperFramework::escape($profileName) . '">
-            <input class="input" id="' . HelperFramework::escape($typeId) . '" name="internal_profile_type" type="text" value="' . HelperFramework::escape($type) . '" data-state-default="' . HelperFramework::escape($type) . '" placeholder="Section">
-            <input class="input" id="' . HelperFramework::escape($keyId) . '" name="internal_profile_key" type="text" value="' . HelperFramework::escape($key) . '" data-state-default="' . HelperFramework::escape($key) . '" placeholder="Key">
-            <input class="input" id="' . HelperFramework::escape($valueId) . '" name="internal_profile_value" type="text" value="' . HelperFramework::escape($value) . '" data-state-default="' . HelperFramework::escape($value) . '" placeholder="Value">
-            ' . $this->valueTypeSelect($valueType, !$draft) . '
-            <span class="actions-row">
-                ' . ($draft ? '' : $this->moveButton($id, $imageType, $profileName, 'up', '+', $csrfToken) . $this->moveButton($id, $imageType, $profileName, 'down', '-', $csrfToken)) . '
-                <button id="' . HelperFramework::escape($saveId) . '" class="button button-inline primary" type="submit" disabled>Save</button>
-            </span>
+            <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape((string)($row['image_type'] ?? 'preview')) . '">
+            <input type="hidden" name="internal_profiles_profile_name" value="' . HelperFramework::escape((string)($row['profile_name'] ?? 'default')) . '">
         </form>';
     }
 
-    private function valueTypeSelect(string $current, bool $submitOnChange): string
+    private function textInputCell(array $row, string $field): string
+    {
+        $id = (string)($row['_' . $field . '_id'] ?? '');
+        $value = (string)($row[$field] ?? '');
+        $name = match ($field) {
+            'type' => 'internal_profile_type',
+            'key' => 'internal_profile_key',
+            default => 'internal_profile_value',
+        };
+        $placeholder = match ($field) {
+            'type' => 'Section',
+            'key' => 'Key',
+            default => 'Value',
+        };
+
+        return '<input class="input" id="' . HelperFramework::escape($id) . '" form="' . HelperFramework::escape((string)($row['_form_id'] ?? '')) . '" name="' . HelperFramework::escape($name) . '" type="text" value="' . HelperFramework::escape($value) . '" data-state-default="' . HelperFramework::escape($value) . '" placeholder="' . HelperFramework::escape($placeholder) . '">';
+    }
+
+    private function valueTypeSelect(string $current, bool $submitOnChange, string $formId = ''): string
     {
         $options = '';
         foreach (SwallowtailInternalProfilesService::VALUE_TYPES as $type) {
             $options .= '<option value="' . HelperFramework::escape($type) . '"' . ($type === $current ? ' selected' : '') . '>' . HelperFramework::escape($type) . '</option>';
         }
 
-        return '<select name="internal_profile_value_type"' . ($submitOnChange ? ' data-submit-on-change="true"' : '') . '>' . $options . '</select>';
+        return '<select name="internal_profile_value_type"'
+            . ($formId !== '' ? ' form="' . HelperFramework::escape($formId) . '"' : '')
+            . ($submitOnChange ? ' data-submit-on-change="true"' : '')
+            . '>' . $options . '</select>';
     }
 
-    private function moveButton(int $id, string $imageType, string $profileName, string $direction, string $label, string $csrfToken): string
+    private function actionsCell(array $row): string
     {
-        return '<button class="button button-inline" type="submit" formaction="?page=profiles" name="internal_profiles_move" value="' . HelperFramework::escape($direction) . '"
+        $id = max(0, (int)($row['_id'] ?? 0));
+        $formId = (string)($row['_form_id'] ?? '');
+
+        return '<span class="actions-row">'
+            . (!empty($row['_draft']) ? '' : $this->moveButton($id, $formId, 'up', '+') . $this->moveButton($id, $formId, 'down', '-'))
+            . '<button id="' . HelperFramework::escape((string)($row['_save_id'] ?? '')) . '" form="' . HelperFramework::escape($formId) . '" class="button button-inline primary" type="submit" disabled>Save</button>'
+            . '</span>';
+    }
+
+    private function moveButton(int $id, string $formId, string $direction, string $label): string
+    {
+        return '<button class="button button-inline" type="submit" form="' . HelperFramework::escape($formId) . '" formaction="?page=profiles" name="internal_profiles_move" value="' . HelperFramework::escape($direction) . '"
             onclick="this.form.internal_profiles_action.value=\'move_profile\'; this.form.internal_profiles_move_direction.value=\'' . HelperFramework::escape($direction) . '\';"
             title="Move ' . HelperFramework::escape($direction) . '">' . HelperFramework::escape($label) . '</button>';
     }
