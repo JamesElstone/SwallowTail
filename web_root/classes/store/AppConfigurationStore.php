@@ -94,6 +94,7 @@ final class AppConfigurationStore
         foreach ([
             'app_name',
             'app_strapline',
+            'app_footer',
             'brand-mark',
             'developer_options',
             'navigation',
@@ -304,6 +305,7 @@ final class AppConfigurationStore
             'app_name' => 'eelKit Framework',
             'brand-mark' => 'E',
             'app_strapline' => self::DEFAULT_APP_STRAPLINE,
+            'app_footer' => '',
             'developer_options' => true,
             'db' => [
                 'dsn' => '',
@@ -320,6 +322,7 @@ final class AppConfigurationStore
                 'developer_only_pages' => [
                     'test',
                 ],
+                'topbar_disabled_pages' => [],
                 'hide_collapsed_link_initials' => false,
             ],
             'reverse_proxy' => [
