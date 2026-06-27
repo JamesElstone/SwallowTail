@@ -52,8 +52,6 @@ final class _data_integrity_checkCard extends CardBaseFramework
 
         $canRun = !empty($status['can_run']);
         $blockers = (array)($status['blockers'] ?? []);
-        $lazyScan = (array)($status['lazy_scan'] ?? []);
-        $requested = !empty($lazyScan['requested']);
 
         $message = $canRun
             ? '<div class="panel-soft success">Conversion and storage migration queues are idle.</div>'
@@ -65,23 +63,8 @@ final class _data_integrity_checkCard extends CardBaseFramework
 
         return $message . '
             <div class="settings-action-row">
-                ' . $this->actionForm($context, 'prevent_lazy_loading', 'Prevent Lazy Loading', !$canRun) . '
                 ' . $this->actionForm($context, 'run_checks', 'Run Integrity Checks', !$canRun) . '
             </div>
-            <dl class="storage-summary-metrics">
-                <div>
-                    <dt>Requested</dt>
-                    <dd>' . HelperFramework::escape($requested ? 'Yes' : 'No') . '</dd>
-                </div>
-                <div>
-                    <dt>Scan cursor</dt>
-                    <dd>' . HelperFramework::escape(number_format(max(0, (int)($lazyScan['cursor'] ?? 0)))) . '</dd>
-                </div>
-                <div>
-                    <dt>Remaining after cursor</dt>
-                    <dd>' . HelperFramework::escape(number_format(max(0, (int)($lazyScan['remaining_after_cursor'] ?? 0)))) . '</dd>
-                </div>
-            </dl>
             ' . $this->checksTable((array)($status['checks'] ?? []), $context, $canRun);
     }
 
