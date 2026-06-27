@@ -175,6 +175,7 @@ final class SwallowtailDataIntegrityCheckService
         $blockers = $this->queueBlockers();
         $checks[] = $this->checkRow('Active conversion jobs', (int)$blockers['photo_conversion_jobs'], 'queued or processing photo_conversion_jobs');
         $checks[] = $this->checkRow('Active storage migrations', (int)$blockers['storage_migration_jobs'], 'queued or processing storage migration jobs/items');
+        $checks[] = $this->checkRow('Uploaded CR2 photos missing base conversions', $this->uploadedCr2PhotosMissingBaseConversions(), 'uploaded CR2 photos missing succeeded embedded/thumbnail/original jobs');
         $checks[] = $this->checkRow('Succeeded jobs without asset rows', $this->succeededJobsWithoutAssetRows(), 'completed conversions not yet recorded in photo_image_assets');
         $checks[] = $this->checkRow('Profiled assets without signatures', $this->profiledAssetsWithoutSignatures(), 'preview/final/sample assets missing profile_signature');
         $checks[] = $this->checkRow('Profiled jobs without signatures', $this->profiledSucceededJobsWithoutSignatures(), 'legacy succeeded preview/final/sample jobs missing profile_signature');
@@ -410,6 +411,38 @@ final class SwallowtailDataIntegrityCheckService
         ));
     }
 
+    private function uploadedCr2PhotosMissingBaseConversions(): int
+    {
+        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+            return 0;
+        }
+        if (
+            !InterfaceDB::columnsExists('photos', ['id', 'upload_state', 'original_extension'])
+            || !InterfaceDB::columnsExists('photo_conversion_jobs', ['photo_id', 'image_type', 'status'])
+        ) {
+            return 0;
+        }
+
+        return max(0, (int)InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+             FROM photos photo
+             LEFT JOIN (
+                 SELECT photo_id,
+                        COUNT(DISTINCT CASE
+                            WHEN image_type IN ('embedded', 'thumbnail', 'original')
+                             AND status = 'succeeded'
+                            THEN image_type
+                            ELSE NULL
+                        END) AS completed_base_types
+                 FROM photo_conversion_jobs
+                 GROUP BY photo_id
+             ) jobs ON jobs.photo_id = photo.id
+             WHERE photo.upload_state = 'uploaded'
+               AND LOWER(COALESCE(photo.original_extension, '')) = 'cr2'
+               AND COALESCE(jobs.completed_base_types, 0) < 3"
+        ));
+    }
+
     private function profiledAssetsWithoutSignatures(): int
     {
         if (!InterfaceDB::tableExists('photo_image_assets') || !InterfaceDB::columnsExists('photo_image_assets', ['image_type', 'profile_signature'])) {
@@ -473,7 +506,8 @@ final class SwallowtailDataIntegrityCheckService
                  SELECT photo_id,
                         SUM(CASE WHEN status IN ('queued', 'processing') THEN 1 ELSE 0 END) AS active_jobs,
                         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
-                        COUNT(*) AS total_jobs
+                        SUM(CASE WHEN status NOT IN ('cancelled', 'obsolete') THEN 1 ELSE 0 END) AS non_cancelled_jobs,
+                        SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_jobs
                  FROM photo_conversion_jobs
                  GROUP BY photo_id
              ) jobs ON jobs.photo_id = photo.id
@@ -481,7 +515,22 @@ final class SwallowtailDataIntegrityCheckService
                AND (
                     (jobs.active_jobs > 0 AND photo.conversion_state <> 'processing')
                     OR (jobs.active_jobs = 0 AND jobs.failed_jobs > 0 AND photo.conversion_state <> 'failed')
-                    OR (jobs.active_jobs = 0 AND jobs.failed_jobs = 0 AND jobs.total_jobs > 0 AND photo.conversion_state <> 'ready')
+                    OR (
+                        jobs.active_jobs = 0
+                        AND jobs.failed_jobs = 0
+                        AND jobs.non_cancelled_jobs > 0
+                        AND jobs.succeeded_jobs >= jobs.non_cancelled_jobs
+                        AND photo.conversion_state <> 'ready'
+                    )
+                    OR (
+                        jobs.active_jobs = 0
+                        AND jobs.failed_jobs = 0
+                        AND (
+                            jobs.non_cancelled_jobs = 0
+                            OR jobs.succeeded_jobs < jobs.non_cancelled_jobs
+                        )
+                        AND photo.conversion_state <> 'pending'
+                    )
                )"
         ));
     }

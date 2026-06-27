@@ -10,6 +10,7 @@ declare(strict_types=1);
 use Swallowtail\Service\SwallowtailCombinedProfileService;
 use Swallowtail\Service\SwallowtailConversionQueueService;
 use Swallowtail\Service\SwallowtailConversionStatusApiService;
+use Swallowtail\Service\SwallowtailDataIntegrityCheckService;
 use Swallowtail\Service\SwallowtailEventAccessService;
 use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailImageServeService;
@@ -46,6 +47,7 @@ $harness->run(SwallowtailImageServeService::class);
 $harness->run(SwallowtailProfileDataService::class);
 $harness->run(SwallowtailCombinedProfileService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
+$harness->run(SwallowtailDataIntegrityCheckService::class);
 
 function swallowtail_backend_remove_tree(string $path): void
 {
@@ -1440,6 +1442,64 @@ $harness->check(SwallowtailConversionQueueService::class, 'viewer final enqueue 
     $harness->assertSame(65, $priority);
     $harness->assertCount(1, $preempts);
     $harness->assertSame(65, (int)($preempts[0]['priority'] ?? 0));
+});
+
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'reports retired state and missing base conversion issues', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::execute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES
+            (201, 'IMG_0201.CR2', 'cr2', 100, '2012012012012012012012012012012012012012012012012012012012012012', '/tmp/swallowtail', 'uploaded', 'pending'),
+            (202, 'IMG_0202.CR2', 'cr2', 100, '2022022022022022022022022022022022022022022022022022022022022022', '/tmp/swallowtail', 'uploaded', 'ready'),
+            (203, 'IMG_0203.CR2', 'cr2', 100, '2032032032032032032032032032032032032032032032032032032032032032', '/tmp/swallowtail', 'uploaded', 'pending'),
+            (204, 'IMG_0204.CR2', 'cr2', 100, '2042042042042042042042042042042042042042042042042042042042042042', '/tmp/swallowtail', 'uploaded', 'processing'),
+            (205, 'IMG_0205.CR2', 'cr2', 100, '2052052052052052052052052052052052052052052052052052052052052052', '/tmp/swallowtail', 'uploaded', 'ready')"
+    );
+
+    InterfaceDB::execute(
+        "INSERT INTO photo_conversion_jobs (
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            priority,
+            status
+        ) VALUES
+            (201, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', 10, 'obsolete'),
+            (201, 'image', 'final', '/tmp/source.cr2', '/tmp/final.jpg', 10, 'cancelled'),
+            (202, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', 10, 'succeeded'),
+            (202, 'image', 'final', '/tmp/source.cr2', '/tmp/final.jpg', 10, 'succeeded'),
+            (203, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', 10, 'succeeded'),
+            (203, 'image', 'final', '/tmp/source.cr2', '/tmp/final.jpg', 10, 'cancelled'),
+            (204, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', 10, 'queued'),
+            (205, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 10, 'succeeded'),
+            (205, 'image', 'thumbnail', '/tmp/source.cr2', '/tmp/thumbnail.jpg', 10, 'succeeded'),
+            (205, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 10, 'succeeded')"
+    );
+
+    $stateMismatchCount = null;
+    $missingBaseConversionCount = null;
+    foreach ((new SwallowtailDataIntegrityCheckService())->integrityChecks() as $check) {
+        if (($check['name'] ?? '') === 'Photo conversion state mismatches') {
+            $stateMismatchCount = (int)($check['count'] ?? 0);
+        }
+        if (($check['name'] ?? '') === 'Uploaded CR2 photos missing base conversions') {
+            $missingBaseConversionCount = (int)($check['count'] ?? 0);
+        }
+    }
+
+    $harness->assertSame(1, $stateMismatchCount);
+    $harness->assertSame(4, $missingBaseConversionCount);
 });
 
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
