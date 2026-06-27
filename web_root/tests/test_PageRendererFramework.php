@@ -244,7 +244,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
     });
 
     $harness->check(PageRendererFramework::class, 'renders absolute application footer links safely', function () use ($harness, $instance, $sanitizeApplicationFooterHtml): void {
-        $footer = '<a href="https://www.github.com/JamesElstone/SwallowTail">https://www.github.com/JamesElstone/SwallowTail</a>';
+        $footer = '<a href="https://example.test/project">https://example.test/project</a>';
 
         $harness->assertSame(
             $footer,
@@ -254,10 +254,10 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
 
     $harness->check(PageRendererFramework::class, 'fallback sanitizer preserves safe application footer links', function () use ($harness, $instance, $sanitizeApplicationFooterHtmlFallback): void {
         $harness->assertSame(
-            '<a href="https://www.github.com/JamesElstone/SwallowTail">https://www.github.com/JamesElstone/SwallowTail</a> Bad Plain<br>',
+            '<a href="https://example.test/project">https://example.test/project</a> Bad Plain<br>',
             $sanitizeApplicationFooterHtmlFallback->invoke(
                 $instance,
-                '<a href="https://www.github.com/JamesElstone/SwallowTail" onclick="alert(1)">https://www.github.com/JamesElstone/SwallowTail</a> <a href="javascript:alert(1)">Bad</a> <strong>Plain</strong><br>'
+                '<a href="https://example.test/project" onclick="alert(1)">https://example.test/project</a> <a href="javascript:alert(1)">Bad</a> <strong>Plain</strong><br>'
             )
         );
     });
