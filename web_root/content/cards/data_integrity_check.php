@@ -45,13 +45,15 @@ final class _data_integrity_checkCard extends CardBaseFramework
     public function render(array $context): string
     {
         try {
-            $status = (new SwallowtailDataIntegrityCheckService())->status();
+            $blockers = (new SwallowtailDataIntegrityCheckService())->queueBlockers();
         } catch (Throwable $exception) {
             return '<div class="panel-soft warn">Data integrity status is unavailable: ' . HelperFramework::escape($exception->getMessage()) . '</div>';
         }
 
-        $canRun = !empty($status['can_run']);
-        $blockers = (array)($status['blockers'] ?? []);
+        $canRun = (int)($blockers['total'] ?? 0) === 0;
+        $cardState = (array)($context[$this->key()] ?? []);
+        $checksLoaded = !empty($cardState['checks_loaded']);
+        $checks = $checksLoaded ? (array)($cardState['checks'] ?? []) : [];
 
         $message = $canRun
             ? '<div class="panel-soft success">Conversion and storage migration queues are idle.</div>'
@@ -65,7 +67,7 @@ final class _data_integrity_checkCard extends CardBaseFramework
             <div class="settings-action-row">
                 ' . $this->actionForm($context, 'run_checks', 'Run Integrity Checks', !$canRun) . '
             </div>
-            ' . $this->checksTable((array)($status['checks'] ?? []), $context, $canRun);
+            ' . $this->checksTable($checks, $context, $canRun, $checksLoaded);
     }
 
     private function actionForm(array $context, string $action, string $label, bool $disabled, string $buttonClass = 'button primary'): string
@@ -78,27 +80,34 @@ final class _data_integrity_checkCard extends CardBaseFramework
         </form>';
     }
 
-    private function checksTable(array $checks, array $context, bool $canRun): string
+    private function checksTable(array $checks, array $context, bool $canRun, bool $checksLoaded): string
     {
-        if ($checks === []) {
-            return '<div class="panel-soft warn">No data integrity checks are available.</div>';
-        }
-
         $repairableIssues = $this->repairableIssueCount($checks);
         $repairDisabled = !$canRun || $repairableIssues <= 0;
         $rows = '';
-        foreach ($checks as $check) {
-            $status = (string)($check['status'] ?? '');
-            $rows .= '<tr>
-                <td>' . HelperFramework::escape((string)($check['name'] ?? '')) . '</td>
-                <td>' . HelperFramework::escape($status) . '</td>
-                <td>' . HelperFramework::escape(number_format(max(0, (int)($check['count'] ?? 0)))) . '</td>
-                <td>' . HelperFramework::escape((string)($check['detail'] ?? '')) . '</td>
-                <td>' . $this->checkActions($context, $check, $canRun) . '</td>
-            </tr>';
+        if (!$checksLoaded) {
+            $intro = '<div class="panel-soft">No integrity check results have been loaded yet. Press Run Integrity Checks to scan the current data.</div>';
+            $rows = '<tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>';
+        } else {
+            if ($checks === []) {
+                $intro = '<div class="panel-soft warn">No data integrity checks are available.</div>';
+                $rows = '<tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>';
+            } else {
+                $intro = '';
+                foreach ($checks as $check) {
+                    $status = (string)($check['status'] ?? '');
+                    $rows .= '<tr>
+                        <td>' . HelperFramework::escape((string)($check['name'] ?? '')) . '</td>
+                        <td>' . HelperFramework::escape($status) . '</td>
+                        <td>' . HelperFramework::escape(number_format(max(0, (int)($check['count'] ?? 0)))) . '</td>
+                        <td>' . HelperFramework::escape((string)($check['detail'] ?? '')) . '</td>
+                        <td>' . $this->checkActions($context, $check, $canRun) . '</td>
+                    </tr>';
+                }
+            }
         }
 
-        return '<div class="table-responsive"><table class="data-table">
+        return $intro . '<div class="table-responsive"><table class="data-table">
             <thead><tr><th>Check</th><th>Status</th><th>Count</th><th>Detail</th><th>Actions</th></tr></thead>
             <tbody>' . $rows . '</tbody>
             <tfoot><tr><td colspan="5">

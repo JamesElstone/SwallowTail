@@ -50,8 +50,9 @@ final class DataIntegrityCheckAction implements ActionInterfaceFramework
                 ]]);
             }
 
+            $checks = $service->integrityChecks();
             $issues = 0;
-            foreach ($service->integrityChecks() as $check) {
+            foreach ($checks as $check) {
                 $issues += max(0, (int)($check['count'] ?? 0));
             }
 
@@ -60,7 +61,12 @@ final class DataIntegrityCheckAction implements ActionInterfaceFramework
                 'message' => $issues === 0
                     ? 'Data integrity checks completed without issues.'
                     : 'Data integrity checks completed with ' . number_format($issues) . ' items to review.',
-            ]]);
+            ]], [], [
+                'data_integrity_check' => [
+                    'checks_loaded' => true,
+                    'checks' => $checks,
+                ],
+            ]);
         }
 
         if ($action === 'details') {

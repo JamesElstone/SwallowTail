@@ -49,8 +49,6 @@ final class SwallowtailDataIntegrityCheckService
         return [
             'can_run' => (int)$blockers['total'] === 0,
             'blockers' => $blockers,
-            'lazy_scan' => $this->lazyScanState(),
-            'checks' => $this->integrityChecks(),
         ];
     }
 
