@@ -4397,6 +4397,35 @@
         return false;
     }
 
+    function selectUserCreateMode(button) {
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        const mode = String(button.dataset.userCreateModeButton || '').trim();
+        const container = button.closest('.card-body');
+        if (mode === '' || !(container instanceof HTMLElement)) {
+            return;
+        }
+
+        container.querySelectorAll('[data-user-create-mode-button]').forEach((candidate) => {
+            if (!(candidate instanceof HTMLButtonElement)) {
+                return;
+            }
+
+            candidate.setAttribute('aria-selected', candidate === button ? 'true' : 'false');
+        });
+
+        container.querySelectorAll('[data-user-create-mode-panel]').forEach((panel) => {
+            if (!(panel instanceof HTMLElement)) {
+                return;
+            }
+
+            const selected = String(panel.dataset.userCreateModePanel || '').trim() === mode;
+            panel.hidden = !selected;
+        });
+    }
+
     function applyAjaxPayloadFragment(name, callback) {
         try {
             callback();
@@ -4792,6 +4821,13 @@
                 updateGalleryEventSelectionCount(card);
                 return;
             }
+        }
+
+        const userCreateModeButton = event.target instanceof Element ? event.target.closest('[data-user-create-mode-button]') : null;
+        if (userCreateModeButton instanceof HTMLButtonElement) {
+            event.preventDefault();
+            selectUserCreateMode(userCreateModeButton);
+            return;
         }
 
         const link = event.target instanceof Element ? event.target.closest('[data-ajax-link="true"]') : null;

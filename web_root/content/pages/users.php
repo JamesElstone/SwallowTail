@@ -40,7 +40,6 @@ final class _users extends PageContextFramework
             'current_users',
             'user_login_lockouts',
             'invited_users',
-            'invite_user',
             'add_user',
             'user_logon_history_log',
             'current_user_details',
@@ -58,7 +57,6 @@ final class _users extends PageContextFramework
                     'current_users',
                     'user_login_lockouts',
                     'invited_users',
-                    'invite_user',
                     'add_user',
                     'user_logon_history_log',
                 ],
@@ -162,10 +160,10 @@ final class _users extends PageContextFramework
                         (string)$request->input('invite_mobile_number', ''),
                         (int)$request->input('invite_role_id', 0),
                         (new AccountInviteService())->buildBaseUrl($request)
-                    )
+                )
                     : ['success' => false, 'errors' => ['You do not have permission to manage users.']],
                 'Pending invited user created and invitation sent.',
-                ['current.users', 'invited.users', 'invite.user']
+                ['current.users', 'invited.users', 'add.user']
             ),
             'users-update-invited-user' => $this->resultFromArray(
                 $canManageUsers
