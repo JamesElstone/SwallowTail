@@ -26,7 +26,12 @@ final class _event_downloadsCard extends CardBaseFramework
 
     public function render(array $context): string
     {
-        $events = (new SwallowtailDownloadService())->downloadableEventsForUser($this->currentUserId());
+        $userId = $this->currentUserIdFromContext($context);
+        if ($userId <= 0) {
+            return '<p class="helper">No event downloads are available to your account.</p>';
+        }
+
+        $events = (new SwallowtailDownloadService())->downloadableEventsForUser($userId);
         if ($events === []) {
             return '<p class="helper">No event downloads are available to your account.</p>';
         }
@@ -80,5 +85,10 @@ final class _event_downloadsCard extends CardBaseFramework
         }
 
         return $html !== '' ? $html : '<span class="helper">No files available.</span>';
+    }
+
+    private function currentUserIdFromContext(array $context): int
+    {
+        return max(0, (int)(($context['auth'] ?? [])['user_id'] ?? 0));
     }
 }
