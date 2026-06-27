@@ -18,7 +18,6 @@ final class SwallowtailDataIntegrityCheckService
 {
     private const LAZY_SCAN_CURSOR_KEY = 'data_integrity.lazy_scan_after_photo_id';
     private const LAZY_SCAN_REQUESTED_KEY = 'data_integrity.lazy_loading_prevention_requested';
-    private const PROFILED_DERIVATIVE_SCAN_CURSOR_KEY = 'data_integrity.profiled_derivative_scan_after_photo_id';
     private const DATA_INTEGRITY_QUEUE_DEFAULT = 'swallowtail:metadata:data_integrity';
     private const MAX_LAZY_SCAN_PHOTOS = 150;
     private const MAX_LAZY_SCAN_SECONDS = 240;
@@ -265,14 +264,7 @@ final class SwallowtailDataIntegrityCheckService
 
         $limit = max(1, min(self::MAX_LAZY_SCAN_PHOTOS, $limit));
         $startedAt = time();
-        $cursor = $this->profiledDerivativeScanCursor();
-        $rows = $this->profiledDerivativeQueueCandidateRowsAfter($cursor, $limit);
-        $wrapped = false;
-        if ($rows === [] && $cursor > 0) {
-            $cursor = 0;
-            $rows = $this->profiledDerivativeQueueCandidateRowsAfter(0, $limit);
-            $wrapped = true;
-        }
+        $rows = $this->profiledDerivativeQueueCandidateRowsAfter(0, $limit);
 
         $result = [
             'success' => true,
@@ -282,9 +274,9 @@ final class SwallowtailDataIntegrityCheckService
             'already_fresh' => 0,
             'active_jobs' => 0,
             'skipped' => 0,
-            'last_photo_id' => $cursor,
+            'last_photo_id' => 0,
             'complete_pass' => false,
-            'wrapped' => $wrapped,
+            'wrapped' => false,
             'message' => 'Profiled derivative queue batch completed.',
         ];
 
@@ -318,16 +310,12 @@ final class SwallowtailDataIntegrityCheckService
         }
 
         if ((int)$result['scanned'] <= 0 || (int)$result['last_photo_id'] <= 0) {
-            $this->setProfiledDerivativeScanCursor(0);
             $result['complete_pass'] = true;
             return $result;
         }
 
         $hasMore = $this->profiledDerivativeQueueCandidateCountAfter((int)$result['last_photo_id']) > 0;
-        if ($hasMore) {
-            $this->setProfiledDerivativeScanCursor((int)$result['last_photo_id']);
-        } else {
-            $this->setProfiledDerivativeScanCursor(0);
+        if (!$hasMore) {
             $result['complete_pass'] = true;
         }
 
@@ -733,16 +721,6 @@ final class SwallowtailDataIntegrityCheckService
     private function setLazyScanCursor(int $photoId): void
     {
         \Swallowtail\Store\SwallowtailConfigurationStore::set(self::LAZY_SCAN_CURSOR_KEY, max(0, $photoId));
-    }
-
-    private function profiledDerivativeScanCursor(): int
-    {
-        return max(0, (int)\Swallowtail\Store\SwallowtailConfigurationStore::get(self::PROFILED_DERIVATIVE_SCAN_CURSOR_KEY, 0));
-    }
-
-    private function setProfiledDerivativeScanCursor(int $photoId): void
-    {
-        \Swallowtail\Store\SwallowtailConfigurationStore::set(self::PROFILED_DERIVATIVE_SCAN_CURSOR_KEY, max(0, $photoId));
     }
 
     private function lazyLoadingPreventionRequested(): bool
