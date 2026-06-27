@@ -81,7 +81,7 @@ final class DataIntegrityCheckAction implements ActionInterfaceFramework
         }
 
         if ($action === 'repair_profile_signatures') {
-            return $this->repairResult($service->repairProfileSignatures(), ['data.integrity']);
+            return $this->repairResult($service->repairProfileSignatures(), ['data.integrity', 'conversion.jobs']);
         }
 
         if ($action === 'repair_conversion_states') {

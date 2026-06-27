@@ -217,7 +217,9 @@ final class SwallowtailDataIntegrityCheckService
             . number_format((int)$signatures['assets_backfilled'])
             . ' asset signature(s) and '
             . number_format((int)$signatures['jobs_backfilled'])
-            . ' job signature(s).';
+            . ' job signature(s); queued '
+            . number_format((int)$signatures['queued_profile_jobs'])
+            . ' profiled refresh job(s).';
 
         return [
             'success' => true,
@@ -258,7 +260,12 @@ final class SwallowtailDataIntegrityCheckService
             . number_format((int)$result['assets_backfilled'])
             . ' asset signature(s) and '
             . number_format((int)$result['jobs_backfilled'])
-            . ' job signature(s). Remaining unsigned legacy rows may need regeneration.';
+            . ' job signature(s); queued '
+            . number_format((int)$result['queued_profile_jobs'])
+            . ' profiled refresh job(s).'
+            . ((int)$result['unsupported_sample_rows'] > 0
+                ? ' RawTheapee sample rows cannot be repaired automatically and may need to be regenerated from the profile card.'
+                : '');
 
         return $result;
     }
@@ -708,10 +715,14 @@ final class SwallowtailDataIntegrityCheckService
             return [
                 'assets_backfilled' => 0,
                 'jobs_backfilled' => 0,
+                'queued_profile_jobs' => 0,
+                'queued_profile_photos' => 0,
+                'skipped_profile_rows' => 0,
+                'unsupported_sample_rows' => 0,
             ];
         }
 
-        return InterfaceDB::transaction(function (): array {
+        $backfill = InterfaceDB::transaction(function (): array {
             $assetsBackfilled = 0;
             $assetRows = InterfaceDB::fetchAll(
                 "SELECT asset.id, job.profile_signature
@@ -777,6 +788,119 @@ final class SwallowtailDataIntegrityCheckService
                 'jobs_backfilled' => $jobsBackfilled,
             ];
         });
+
+        $queued = $this->queueUnsignedProfileSignatureRefreshes();
+        $unsupportedSampleRows = $this->unsupportedUnsignedSampleProfileRowCount();
+
+        return $backfill + $queued + [
+            'unsupported_sample_rows' => $unsupportedSampleRows,
+        ];
+    }
+
+    private function queueUnsignedProfileSignatureRefreshes(): array
+    {
+        $queuedJobs = 0;
+        $queuedPhotos = [];
+        $skippedRows = 0;
+
+        foreach ($this->unsignedProfileSignatureRefreshRows() as $row) {
+            $photoId = max(0, (int)($row['id'] ?? 0));
+            $imageType = strtolower(trim((string)($row['image_type'] ?? '')));
+            if ($photoId <= 0 || !in_array($imageType, ['preview', 'final'], true)) {
+                $skippedRows++;
+                continue;
+            }
+
+            $result = $this->queueProfiledDerivativeIfNeeded($row, $imageType);
+            if ($result === 'queued_preview' || $result === 'queued_final') {
+                $queuedJobs++;
+                $queuedPhotos[$photoId] = true;
+                continue;
+            }
+
+            if ($result !== 'active_job') {
+                $skippedRows++;
+            }
+        }
+
+        return [
+            'queued_profile_jobs' => $queuedJobs,
+            'queued_profile_photos' => count($queuedPhotos),
+            'skipped_profile_rows' => $skippedRows,
+        ];
+    }
+
+    private function unsignedProfileSignatureRefreshRows(): array
+    {
+        if (
+            !InterfaceDB::tableExists('photos')
+            || !InterfaceDB::tableExists('photo_image_assets')
+            || !InterfaceDB::tableExists('photo_conversion_jobs')
+            || !InterfaceDB::columnsExists('photos', ['id', 'original_sha256', 'storage_base_location'])
+            || !InterfaceDB::columnsExists('photo_image_assets', ['photo_id', 'image_type', 'profile_signature'])
+            || !InterfaceDB::columnsExists('photo_conversion_jobs', ['photo_id', 'image_type', 'status', 'profile_signature'])
+        ) {
+            return [];
+        }
+
+        $rows = [];
+        foreach (InterfaceDB::fetchAll(
+            "SELECT DISTINCT photo.id,
+                    photo.original_sha256,
+                    photo.storage_base_location,
+                    asset.image_type
+             FROM photo_image_assets asset
+             INNER JOIN photos photo ON photo.id = asset.photo_id
+             WHERE asset.image_type IN ('preview', 'final')
+               AND (asset.profile_signature IS NULL OR asset.profile_signature = '')
+             ORDER BY photo.id, asset.image_type"
+        ) as $row) {
+            $key = (string)(int)($row['id'] ?? 0) . ':' . (string)($row['image_type'] ?? '');
+            $rows[$key] = $row;
+        }
+
+        foreach (InterfaceDB::fetchAll(
+            "SELECT DISTINCT photo.id,
+                    photo.original_sha256,
+                    photo.storage_base_location,
+                    job.image_type
+             FROM photo_conversion_jobs job
+             INNER JOIN photos photo ON photo.id = job.photo_id
+             WHERE job.status = 'succeeded'
+               AND job.image_type IN ('preview', 'final')
+               AND (job.profile_signature IS NULL OR job.profile_signature = '')
+             ORDER BY photo.id, job.image_type"
+        ) as $row) {
+            $key = (string)(int)($row['id'] ?? 0) . ':' . (string)($row['image_type'] ?? '');
+            $rows[$key] = $row;
+        }
+
+        return array_values($rows);
+    }
+
+    private function unsupportedUnsignedSampleProfileRowCount(): int
+    {
+        $count = 0;
+        if (InterfaceDB::tableExists('photo_image_assets') && InterfaceDB::columnsExists('photo_image_assets', ['image_type', 'profile_signature'])) {
+            $count += max(0, (int)InterfaceDB::fetchColumn(
+                "SELECT COUNT(*)
+                 FROM photo_image_assets
+                 WHERE image_type = 'rawtheapee_sample'
+                   AND (profile_signature IS NULL OR profile_signature = '')"
+            ));
+        }
+
+        if (InterfaceDB::tableExists('photo_conversion_jobs') && InterfaceDB::columnsExists('photo_conversion_jobs', ['image_type', 'status', 'profile_signature'])) {
+            $count += max(0, (int)InterfaceDB::fetchColumn(
+                "SELECT COUNT(*)
+                 FROM photo_conversion_jobs
+                 WHERE status = 'succeeded'
+                   AND image_type = 'rawtheapee_sample'
+                   AND (profile_signature IS NULL OR profile_signature = '')"
+            ));
+        }
+
+        return $count;
     }
 
     private function repairPhotoConversionStatesInternal(): array
