@@ -191,6 +191,7 @@ final class SecurityStore
 
             $facts[$normalisedKey] = self::generateFact();
             self::writeFactsToHandle($handle, $facts);
+            self::ensurePrivateFileMode($path);
 
             return $facts[$normalisedKey];
         } finally {
@@ -346,7 +347,7 @@ final class SecurityStore
 
     private static function ensurePrivateFileMode(string $path): void
     {
-        if (DIRECTORY_SEPARATOR === '\\') {
+        if (DIRECTORY_SEPARATOR === '\\' || !function_exists('chmod')) {
             return;
         }
 

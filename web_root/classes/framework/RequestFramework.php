@@ -27,11 +27,10 @@ final class RequestFramework
 
     public static function fromGlobals(): self
     {
-        $headers = [];
+        $headers = self::headersFromServer($_SERVER);
         if (function_exists('getallheaders')) {
-            $headers = self::normaliseHeaders((array)getallheaders());
+            $headers = array_merge($headers, self::normaliseHeaders((array)getallheaders()));
         }
-        $headers = array_merge($headers, self::headersFromServer($_SERVER));
 
         $rawBody = $GLOBALS['__request_framework_raw_body'] ?? file_get_contents('php://input');
 
@@ -99,7 +98,7 @@ final class RequestFramework
 
     public function postValues(): array
     {
-        return array_merge($this->post, $this->jsonInput);
+        return array_merge($this->jsonInput, $this->post);
     }
 
     public function files(): array

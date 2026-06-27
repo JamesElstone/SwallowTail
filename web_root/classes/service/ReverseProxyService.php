@@ -137,7 +137,8 @@ final class ReverseProxyService
     private function normaliseHost(string $value): string
     {
         $value = strtolower(trim($value, " \t\n\r\0\x0B\"'"));
-        if ($value === ''
+        if (
+            $value === ''
             || strlen($value) > 255
             || preg_match('/[\x00-\x1F\x7F\s\/\\\\@]/', $value) === 1
         ) {
@@ -185,7 +186,8 @@ final class ReverseProxyService
         }
 
         foreach (explode('.', $host) as $label) {
-            if ($label === ''
+            if (
+                $label === ''
                 || strlen($label) > 63
                 || preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/', $label) !== 1
             ) {

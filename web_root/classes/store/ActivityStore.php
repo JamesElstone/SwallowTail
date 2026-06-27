@@ -191,7 +191,7 @@ final class ActivityStore
 
         return [
             'device_id' => $this->normaliseOptionalString($deviceId, 64),
-            'ip_address' => $this->normaliseOptionalString($request->remoteAddress(), 45),
+            'ip_address' => $this->normaliseOptionalString((new ReverseProxyService())->clientIpAddress($request), 45),
             'user_agent' => $this->normaliseOptionalString($request->header('User-Agent', $request->server('HTTP_USER_AGENT', '')), 1000),
             'request_uri' => $this->normaliseOptionalString($request->server('REQUEST_URI', ''), 2048),
         ];

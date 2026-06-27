@@ -188,7 +188,6 @@ abstract class CardBaseFramework implements CardInterfaceFramework
         $lastPage = max(1, (int)($pagination['total_pages'] ?? $pagination['page_count'] ?? $currentPage));
         $hasPreviousPage = (bool)($pagination['has_previous_page'] ?? $currentPage > 1);
         $hasNextPage = (bool)($pagination['has_next_page'] ?? $currentPage < $lastPage);
-
         $wrapperClass = trim($wrapperClass);
         $wrapperClasses = trim('status-head' . ($wrapperClass !== '' ? ' ' . $wrapperClass : ''));
 
