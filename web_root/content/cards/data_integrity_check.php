@@ -31,6 +31,17 @@ final class _data_integrity_checkCard extends CardBaseFramework
         return ['data.integrity', 'conversion.jobs', 'storage.migration.jobs'];
     }
 
+    public function refreshIntervalMs(array $context): ?int
+    {
+        try {
+            $blockers = (new SwallowtailDataIntegrityCheckService())->queueBlockers();
+        } catch (Throwable) {
+            return null;
+        }
+
+        return (int)($blockers['total'] ?? 0) > 0 ? 15000 : null;
+    }
+
     public function render(array $context): string
     {
         try {
