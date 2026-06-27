@@ -55,6 +55,7 @@ final class _data_integrity_checkCard extends CardBaseFramework
         return $message . '
             <div class="settings-action-row">
                 ' . $this->actionForm($context, 'prevent_lazy_loading', 'Prevent Lazy Loading', !$canRun) . '
+                ' . $this->actionForm($context, 'repair_safe_issues', 'Repair Safe Issues', !$canRun) . '
                 ' . $this->actionForm($context, 'run_checks', 'Run Integrity Checks', !$canRun) . '
             </div>
             <dl class="storage-summary-metrics">
@@ -71,20 +72,20 @@ final class _data_integrity_checkCard extends CardBaseFramework
                     <dd>' . HelperFramework::escape(number_format(max(0, (int)($lazyScan['remaining_after_cursor'] ?? 0)))) . '</dd>
                 </div>
             </dl>
-            ' . $this->checksTable((array)($status['checks'] ?? []));
+            ' . $this->checksTable((array)($status['checks'] ?? []), $context, $canRun);
     }
 
-    private function actionForm(array $context, string $action, string $label, bool $disabled): string
+    private function actionForm(array $context, string $action, string $label, bool $disabled, string $buttonClass = 'button primary'): string
     {
         return '<form method="post" action="?page=settings" data-ajax="true">
             <input type="hidden" name="card_action" value="DataIntegrityCheck">
             <input type="hidden" name="data_integrity_action" value="' . HelperFramework::escape($action) . '">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape((string)($context['page']['csrf_token'] ?? '')) . '">
-            <button class="button primary" type="submit"' . ($disabled ? ' disabled' : '') . '>' . HelperFramework::escape($label) . '</button>
+            <button class="' . HelperFramework::escape($buttonClass) . '" type="submit"' . ($disabled ? ' disabled' : '') . '>' . HelperFramework::escape($label) . '</button>
         </form>';
     }
 
-    private function checksTable(array $checks): string
+    private function checksTable(array $checks, array $context, bool $canRun): string
     {
         if ($checks === []) {
             return '<div class="panel-soft warn">No data integrity checks are available.</div>';
@@ -98,12 +99,41 @@ final class _data_integrity_checkCard extends CardBaseFramework
                 <td>' . HelperFramework::escape($status) . '</td>
                 <td>' . HelperFramework::escape(number_format(max(0, (int)($check['count'] ?? 0)))) . '</td>
                 <td>' . HelperFramework::escape((string)($check['detail'] ?? '')) . '</td>
+                <td>' . $this->checkActions($context, $check, $canRun) . '</td>
             </tr>';
         }
 
         return '<div class="table-responsive"><table class="data-table">
-            <thead><tr><th>Check</th><th>Status</th><th>Count</th><th>Detail</th></tr></thead>
+            <thead><tr><th>Check</th><th>Status</th><th>Count</th><th>Detail</th><th>Actions</th></tr></thead>
             <tbody>' . $rows . '</tbody>
         </table></div>';
+    }
+
+    private function checkActions(array $context, array $check, bool $canRun): string
+    {
+        $count = max(0, (int)($check['count'] ?? 0));
+        if ($count <= 0) {
+            return '-';
+        }
+
+        $key = (string)($check['key'] ?? '');
+        $actions = $this->checkActionForm($context, 'details', 'Details', false, $key, 'button button-inline');
+        $repairAction = (string)($check['repair_action'] ?? '');
+        if ($repairAction !== '') {
+            $actions .= $this->checkActionForm($context, $repairAction, 'Repair', !$canRun, $key, 'button button-inline primary');
+        }
+
+        return '<div class="actions-row-nowrap">' . $actions . '</div>';
+    }
+
+    private function checkActionForm(array $context, string $action, string $label, bool $disabled, string $checkKey, string $buttonClass): string
+    {
+        return '<form method="post" action="?page=settings" data-ajax="true">
+            <input type="hidden" name="card_action" value="DataIntegrityCheck">
+            <input type="hidden" name="data_integrity_action" value="' . HelperFramework::escape($action) . '">
+            <input type="hidden" name="data_integrity_check_key" value="' . HelperFramework::escape($checkKey) . '">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape((string)($context['page']['csrf_token'] ?? '')) . '">
+            <button class="' . HelperFramework::escape($buttonClass) . '" type="submit"' . ($disabled ? ' disabled' : '') . '>' . HelperFramework::escape($label) . '</button>
+        </form>';
     }
 }

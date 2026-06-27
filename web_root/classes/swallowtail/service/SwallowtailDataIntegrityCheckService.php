@@ -21,6 +21,17 @@ final class SwallowtailDataIntegrityCheckService
     private const DATA_INTEGRITY_QUEUE_DEFAULT = 'swallowtail:metadata:data_integrity';
     private const MAX_LAZY_SCAN_PHOTOS = 150;
     private const MAX_LAZY_SCAN_SECONDS = 240;
+    private const CHECK_ACTIVE_CONVERSION_JOBS = 'active_conversion_jobs';
+    private const CHECK_ACTIVE_STORAGE_MIGRATIONS = 'active_storage_migrations';
+    private const CHECK_UPLOADED_CR2_MISSING_BASE_CONVERSIONS = 'uploaded_cr2_missing_base_conversions';
+    private const CHECK_SUCCEEDED_JOBS_WITHOUT_ASSET_ROWS = 'succeeded_jobs_without_asset_rows';
+    private const CHECK_PROFILED_ASSETS_WITHOUT_SIGNATURES = 'profiled_assets_without_signatures';
+    private const CHECK_PROFILED_JOBS_WITHOUT_SIGNATURES = 'profiled_jobs_without_signatures';
+    private const CHECK_SIGNED_ASSET_JOB_MISMATCHES = 'signed_asset_job_mismatches';
+    private const CHECK_PHOTO_CONVERSION_STATE_MISMATCHES = 'photo_conversion_state_mismatches';
+    private const REPAIR_MISSING_BASE_CONVERSIONS = 'repair_missing_base_conversions';
+    private const REPAIR_PROFILE_SIGNATURES = 'repair_profile_signatures';
+    private const REPAIR_CONVERSION_STATES = 'repair_conversion_states';
 
     public function __construct(
         private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
@@ -173,16 +184,116 @@ final class SwallowtailDataIntegrityCheckService
     {
         $checks = [];
         $blockers = $this->queueBlockers();
-        $checks[] = $this->checkRow('Active conversion jobs', (int)$blockers['photo_conversion_jobs'], 'queued or processing photo_conversion_jobs');
-        $checks[] = $this->checkRow('Active storage migrations', (int)$blockers['storage_migration_jobs'], 'queued or processing storage migration jobs/items');
-        $checks[] = $this->checkRow('Uploaded CR2 photos missing base conversions', $this->uploadedCr2PhotosMissingBaseConversions(), 'uploaded CR2 photos missing succeeded embedded/thumbnail/original jobs');
-        $checks[] = $this->checkRow('Succeeded jobs without asset rows', $this->succeededJobsWithoutAssetRows(), 'completed conversions not yet recorded in photo_image_assets');
-        $checks[] = $this->checkRow('Profiled assets without signatures', $this->profiledAssetsWithoutSignatures(), 'preview/final/sample assets missing profile_signature');
-        $checks[] = $this->checkRow('Profiled jobs without signatures', $this->profiledSucceededJobsWithoutSignatures(), 'legacy succeeded preview/final/sample jobs missing profile_signature');
-        $checks[] = $this->checkRow('Signed asset/job mismatches', $this->signedAssetJobMismatches(), 'asset signature differs from its conversion job signature');
-        $checks[] = $this->checkRow('Photo conversion state mismatches', $this->photoConversionStateMismatches(), 'photos.conversion_state disagrees with job status summary');
+        $checks[] = $this->checkRow(self::CHECK_ACTIVE_CONVERSION_JOBS, 'Active conversion jobs', (int)$blockers['photo_conversion_jobs'], 'queued or processing photo_conversion_jobs');
+        $checks[] = $this->checkRow(self::CHECK_ACTIVE_STORAGE_MIGRATIONS, 'Active storage migrations', (int)$blockers['storage_migration_jobs'], 'queued or processing storage migration jobs/items');
+        $checks[] = $this->checkRow(self::CHECK_UPLOADED_CR2_MISSING_BASE_CONVERSIONS, 'Uploaded CR2 photos missing base conversions', $this->uploadedCr2PhotosMissingBaseConversions(), 'uploaded CR2 photos missing succeeded embedded/thumbnail/original jobs', self::REPAIR_MISSING_BASE_CONVERSIONS);
+        $checks[] = $this->checkRow(self::CHECK_SUCCEEDED_JOBS_WITHOUT_ASSET_ROWS, 'Succeeded jobs without asset rows', $this->succeededJobsWithoutAssetRows(), 'completed conversions not yet recorded in photo_image_assets');
+        $checks[] = $this->checkRow(self::CHECK_PROFILED_ASSETS_WITHOUT_SIGNATURES, 'Profiled assets without signatures', $this->profiledAssetsWithoutSignatures(), 'preview/final/sample assets missing profile_signature', self::REPAIR_PROFILE_SIGNATURES);
+        $checks[] = $this->checkRow(self::CHECK_PROFILED_JOBS_WITHOUT_SIGNATURES, 'Profiled jobs without signatures', $this->profiledSucceededJobsWithoutSignatures(), 'legacy succeeded preview/final/sample jobs missing profile_signature', self::REPAIR_PROFILE_SIGNATURES);
+        $checks[] = $this->checkRow(self::CHECK_SIGNED_ASSET_JOB_MISMATCHES, 'Signed asset/job mismatches', $this->signedAssetJobMismatches(), 'asset signature differs from its conversion job signature');
+        $checks[] = $this->checkRow(self::CHECK_PHOTO_CONVERSION_STATE_MISMATCHES, 'Photo conversion state mismatches', $this->photoConversionStateMismatches(), 'photos.conversion_state disagrees with job status summary', self::REPAIR_CONVERSION_STATES);
 
         return $checks;
+    }
+
+    public function repairSafeIssues(): array
+    {
+        $blocked = $this->repairBlockedResult();
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
+        $signatures = $this->repairProfileSignaturesInternal();
+        $states = $this->repairPhotoConversionStatesInternal();
+        $base = $this->repairMissingBaseConversionsInternal();
+
+        $message = 'Safe repair completed: queued '
+            . number_format((int)$base['queued_jobs'])
+            . ' base conversion job(s) for '
+            . number_format((int)$base['queued_photos'])
+            . ' photo(s); updated '
+            . number_format((int)$states['updated_states'])
+            . ' photo conversion state(s); backfilled '
+            . number_format((int)$signatures['assets_backfilled'])
+            . ' asset signature(s) and '
+            . number_format((int)$signatures['jobs_backfilled'])
+            . ' job signature(s).';
+
+        return [
+            'success' => true,
+            'message' => $message,
+            'missing_base_conversions' => $base,
+            'profile_signatures' => $signatures,
+            'conversion_states' => $states,
+        ];
+    }
+
+    public function repairMissingBaseConversions(): array
+    {
+        $blocked = $this->repairBlockedResult();
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
+        $result = $this->repairMissingBaseConversionsInternal();
+        $result['success'] = true;
+        $result['message'] = 'Queued ' . number_format((int)$result['queued_jobs'])
+            . ' base conversion job(s) for '
+            . number_format((int)$result['queued_photos'])
+            . ' uploaded CR2 photo(s).';
+
+        return $result;
+    }
+
+    public function repairProfileSignatures(): array
+    {
+        $blocked = $this->repairBlockedResult();
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
+        $result = $this->repairProfileSignaturesInternal();
+        $result['success'] = true;
+        $result['message'] = 'Profile signature repair completed: backfilled '
+            . number_format((int)$result['assets_backfilled'])
+            . ' asset signature(s) and '
+            . number_format((int)$result['jobs_backfilled'])
+            . ' job signature(s). Remaining unsigned legacy rows may need regeneration.';
+
+        return $result;
+    }
+
+    public function repairPhotoConversionStates(): array
+    {
+        $blocked = $this->repairBlockedResult();
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
+        $result = $this->repairPhotoConversionStatesInternal();
+        $result['success'] = true;
+        $result['message'] = 'Updated '
+            . number_format((int)$result['updated_states'])
+            . ' photo conversion state(s) from conversion job summaries.';
+
+        return $result;
+    }
+
+    public function detailSummary(string $checkKey, int $limit = 10): array
+    {
+        $limit = max(1, min(25, $limit));
+        $checkKey = strtolower(trim($checkKey));
+
+        return match ($checkKey) {
+            self::CHECK_UPLOADED_CR2_MISSING_BASE_CONVERSIONS => $this->missingBaseConversionDetails($limit),
+            self::CHECK_PROFILED_ASSETS_WITHOUT_SIGNATURES => $this->profiledAssetsWithoutSignatureDetails($limit),
+            self::CHECK_PROFILED_JOBS_WITHOUT_SIGNATURES => $this->profiledJobsWithoutSignatureDetails($limit),
+            self::CHECK_PHOTO_CONVERSION_STATE_MISMATCHES => $this->photoConversionStateMismatchDetails($limit),
+            default => [
+                'success' => true,
+                'message' => 'No detailed row sample is available for this check.',
+            ],
+        };
     }
 
     public function queueBlockers(): array
@@ -531,18 +642,384 @@ final class SwallowtailDataIntegrityCheckService
                         )
                         AND photo.conversion_state <> 'pending'
                     )
-               )"
+            )"
         ));
     }
 
-    private function checkRow(string $name, int $count, string $detail): array
+    private function repairBlockedResult(): ?array
     {
+        $blockers = $this->queueBlockers();
+        if ((int)($blockers['total'] ?? 0) <= 0) {
+            return null;
+        }
+
         return [
+            'success' => false,
+            'message' => 'Data integrity repairs can only run when conversion and storage migration queues are idle.',
+            'blockers' => $blockers,
+        ];
+    }
+
+    private function repairMissingBaseConversionsInternal(): array
+    {
+        $queuedPhotos = 0;
+        $queuedJobs = 0;
+        $skippedPhotos = 0;
+
+        foreach ($this->missingBaseConversionRows() as $row) {
+            $photoId = max(0, (int)($row['id'] ?? 0));
+            $missingTypes = (array)($row['missing_types'] ?? []);
+            if ($photoId <= 0 || $missingTypes === []) {
+                $skippedPhotos++;
+                continue;
+            }
+
+            $jobs = $this->queueService->enqueueRawConversionJobsForTypes($photoId, $missingTypes);
+            $photoQueuedJobs = 0;
+            foreach ($jobs as $job) {
+                if (max(0, (int)($job['job_id'] ?? 0)) > 0) {
+                    $photoQueuedJobs++;
+                }
+            }
+
+            if ($photoQueuedJobs > 0) {
+                $queuedPhotos++;
+                $queuedJobs += $photoQueuedJobs;
+            } else {
+                $skippedPhotos++;
+            }
+        }
+
+        return [
+            'queued_photos' => $queuedPhotos,
+            'queued_jobs' => $queuedJobs,
+            'skipped_photos' => $skippedPhotos,
+        ];
+    }
+
+    private function repairProfileSignaturesInternal(): array
+    {
+        if (
+            !InterfaceDB::tableExists('photo_image_assets')
+            || !InterfaceDB::tableExists('photo_conversion_jobs')
+            || !InterfaceDB::columnsExists('photo_image_assets', ['id', 'conversion_job_id', 'image_type', 'profile_signature'])
+            || !InterfaceDB::columnsExists('photo_conversion_jobs', ['id', 'image_type', 'profile_signature'])
+        ) {
+            return [
+                'assets_backfilled' => 0,
+                'jobs_backfilled' => 0,
+            ];
+        }
+
+        return InterfaceDB::transaction(function (): array {
+            $assetsBackfilled = 0;
+            $assetRows = InterfaceDB::fetchAll(
+                "SELECT asset.id, job.profile_signature
+                 FROM photo_image_assets asset
+                 INNER JOIN photo_conversion_jobs job
+                    ON job.id = asset.conversion_job_id
+                   AND job.image_type = asset.image_type
+                 WHERE asset.image_type IN ('preview', 'final', 'rawtheapee_sample')
+                   AND (asset.profile_signature IS NULL OR asset.profile_signature = '')
+                   AND LENGTH(COALESCE(job.profile_signature, '')) = 64"
+            );
+            foreach ($assetRows as $row) {
+                $assetId = max(0, (int)($row['id'] ?? 0));
+                $signature = strtolower(trim((string)($row['profile_signature'] ?? '')));
+                if ($assetId <= 0 || !$this->isSignature($signature)) {
+                    continue;
+                }
+
+                $assetsBackfilled += InterfaceDB::execute(
+                    "UPDATE photo_image_assets
+                     SET profile_signature = :profile_signature
+                     WHERE id = :id
+                       AND (profile_signature IS NULL OR profile_signature = '')",
+                    [
+                        'id' => $assetId,
+                        'profile_signature' => $signature,
+                    ]
+                );
+            }
+
+            $jobsBackfilled = 0;
+            $jobRows = InterfaceDB::fetchAll(
+                "SELECT job.id, asset.profile_signature
+                 FROM photo_conversion_jobs job
+                 INNER JOIN photo_image_assets asset
+                    ON asset.conversion_job_id = job.id
+                   AND asset.image_type = job.image_type
+                 WHERE job.image_type IN ('preview', 'final', 'rawtheapee_sample')
+                   AND (job.profile_signature IS NULL OR job.profile_signature = '')
+                   AND LENGTH(COALESCE(asset.profile_signature, '')) = 64"
+            );
+            foreach ($jobRows as $row) {
+                $jobId = max(0, (int)($row['id'] ?? 0));
+                $signature = strtolower(trim((string)($row['profile_signature'] ?? '')));
+                if ($jobId <= 0 || !$this->isSignature($signature)) {
+                    continue;
+                }
+
+                $jobsBackfilled += InterfaceDB::execute(
+                    "UPDATE photo_conversion_jobs
+                     SET profile_signature = :profile_signature
+                     WHERE id = :id
+                       AND (profile_signature IS NULL OR profile_signature = '')",
+                    [
+                        'id' => $jobId,
+                        'profile_signature' => $signature,
+                    ]
+                );
+            }
+
+            return [
+                'assets_backfilled' => $assetsBackfilled,
+                'jobs_backfilled' => $jobsBackfilled,
+            ];
+        });
+    }
+
+    private function repairPhotoConversionStatesInternal(): array
+    {
+        $updated = 0;
+        foreach ($this->photoConversionStateRows() as $row) {
+            $photoId = max(0, (int)($row['id'] ?? 0));
+            $expected = $this->photoStateFromJobCounts($row);
+            $current = strtolower(trim((string)($row['conversion_state'] ?? '')));
+            if ($photoId <= 0 || $expected === $current) {
+                continue;
+            }
+
+            $updated += InterfaceDB::execute(
+                "UPDATE photos
+                 SET conversion_state = :conversion_state
+                 WHERE id = :id
+                   AND conversion_state <> :conversion_state",
+                [
+                    'id' => $photoId,
+                    'conversion_state' => $expected,
+                ]
+            );
+        }
+
+        return [
+            'updated_states' => $updated,
+        ];
+    }
+
+    private function missingBaseConversionRows(int $limit = 0): array
+    {
+        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+            return [];
+        }
+        if (
+            !InterfaceDB::columnsExists('photos', ['id', 'upload_state', 'original_extension'])
+            || !InterfaceDB::columnsExists('photo_conversion_jobs', ['photo_id', 'image_type', 'status'])
+        ) {
+            return [];
+        }
+
+        $limitSql = $limit > 0 ? ' LIMIT ' . max(1, min(500, $limit)) : '';
+        $rows = InterfaceDB::fetchAll(
+            "SELECT photo.id,
+                    COALESCE(jobs.has_embedded, 0) AS has_embedded,
+                    COALESCE(jobs.has_thumbnail, 0) AS has_thumbnail,
+                    COALESCE(jobs.has_original, 0) AS has_original
+             FROM photos photo
+             LEFT JOIN (
+                 SELECT photo_id,
+                        MAX(CASE WHEN image_type = 'embedded' AND status = 'succeeded' THEN 1 ELSE 0 END) AS has_embedded,
+                        MAX(CASE WHEN image_type = 'thumbnail' AND status = 'succeeded' THEN 1 ELSE 0 END) AS has_thumbnail,
+                        MAX(CASE WHEN image_type = 'original' AND status = 'succeeded' THEN 1 ELSE 0 END) AS has_original
+                 FROM photo_conversion_jobs
+                 GROUP BY photo_id
+             ) jobs ON jobs.photo_id = photo.id
+             WHERE photo.upload_state = 'uploaded'
+               AND LOWER(COALESCE(photo.original_extension, '')) = 'cr2'
+               AND (
+                    COALESCE(jobs.has_embedded, 0) = 0
+                    OR COALESCE(jobs.has_thumbnail, 0) = 0
+                    OR COALESCE(jobs.has_original, 0) = 0
+               )
+             ORDER BY photo.id" . $limitSql
+        );
+
+        foreach ($rows as &$row) {
+            $missing = [];
+            foreach (['embedded', 'thumbnail', 'original'] as $imageType) {
+                if ((int)($row['has_' . $imageType] ?? 0) <= 0) {
+                    $missing[] = $imageType;
+                }
+            }
+            $row['missing_types'] = $missing;
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    private function photoConversionStateRows(): array
+    {
+        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::tableExists('photo_conversion_jobs')) {
+            return [];
+        }
+        if (!InterfaceDB::columnsExists('photos', ['id', 'upload_state', 'conversion_state']) || !InterfaceDB::columnsExists('photo_conversion_jobs', ['photo_id', 'status'])) {
+            return [];
+        }
+
+        return InterfaceDB::fetchAll(
+            "SELECT photo.id,
+                    photo.conversion_state,
+                    COALESCE(jobs.active_jobs, 0) AS active_jobs,
+                    COALESCE(jobs.failed_jobs, 0) AS failed_jobs,
+                    COALESCE(jobs.non_cancelled_jobs, 0) AS non_cancelled_jobs,
+                    COALESCE(jobs.succeeded_jobs, 0) AS succeeded_jobs
+             FROM photos photo
+             INNER JOIN (
+                 SELECT photo_id,
+                        SUM(CASE WHEN status IN ('queued', 'processing') THEN 1 ELSE 0 END) AS active_jobs,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+                        SUM(CASE WHEN status NOT IN ('cancelled', 'obsolete') THEN 1 ELSE 0 END) AS non_cancelled_jobs,
+                        SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded_jobs
+                 FROM photo_conversion_jobs
+                 GROUP BY photo_id
+             ) jobs ON jobs.photo_id = photo.id
+             WHERE photo.upload_state = 'uploaded'
+             ORDER BY photo.id"
+        );
+    }
+
+    private function photoStateFromJobCounts(array $row): string
+    {
+        $active = max(0, (int)($row['active_jobs'] ?? 0));
+        $failed = max(0, (int)($row['failed_jobs'] ?? 0));
+        $nonCancelled = max(0, (int)($row['non_cancelled_jobs'] ?? 0));
+        $succeeded = max(0, (int)($row['succeeded_jobs'] ?? 0));
+
+        if ($active > 0) {
+            return 'processing';
+        }
+        if ($failed > 0) {
+            return 'failed';
+        }
+        if ($nonCancelled > 0 && $succeeded >= $nonCancelled) {
+            return 'ready';
+        }
+
+        return 'pending';
+    }
+
+    private function missingBaseConversionDetails(int $limit): array
+    {
+        $items = [];
+        foreach ($this->missingBaseConversionRows($limit) as $row) {
+            $items[] = '#' . (string)(int)($row['id'] ?? 0) . ' missing ' . implode('/', (array)($row['missing_types'] ?? []));
+        }
+
+        return [
+            'success' => true,
+            'message' => $items === []
+                ? 'No uploaded CR2 photos are missing base conversions.'
+                : 'First affected photos: ' . implode('; ', $items),
+        ];
+    }
+
+    private function profiledAssetsWithoutSignatureDetails(int $limit): array
+    {
+        if (!InterfaceDB::tableExists('photo_image_assets') || !InterfaceDB::columnsExists('photo_image_assets', ['id', 'photo_id', 'image_type', 'profile_signature'])) {
+            return ['success' => true, 'message' => 'Profiled asset rows are not available.'];
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT id, photo_id, image_type
+             FROM photo_image_assets
+             WHERE image_type IN ('preview', 'final', 'rawtheapee_sample')
+               AND (profile_signature IS NULL OR profile_signature = '')
+             ORDER BY id
+             LIMIT " . $limit
+        );
+
+        $items = array_map(
+            static fn(array $row): string => '#' . (string)(int)($row['id'] ?? 0) . ' photo ' . (string)(int)($row['photo_id'] ?? 0) . ' ' . (string)($row['image_type'] ?? ''),
+            $rows
+        );
+
+        return [
+            'success' => true,
+            'message' => $items === []
+                ? 'No profiled asset rows are missing signatures.'
+                : 'First affected assets: ' . implode('; ', $items),
+        ];
+    }
+
+    private function profiledJobsWithoutSignatureDetails(int $limit): array
+    {
+        if (!InterfaceDB::tableExists('photo_conversion_jobs') || !InterfaceDB::columnsExists('photo_conversion_jobs', ['id', 'photo_id', 'image_type', 'status', 'profile_signature'])) {
+            return ['success' => true, 'message' => 'Profiled job rows are not available.'];
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT id, photo_id, image_type
+             FROM photo_conversion_jobs
+             WHERE status = 'succeeded'
+               AND image_type IN ('preview', 'final', 'rawtheapee_sample')
+               AND (profile_signature IS NULL OR profile_signature = '')
+             ORDER BY id
+             LIMIT " . $limit
+        );
+
+        $items = array_map(
+            static fn(array $row): string => '#' . (string)(int)($row['id'] ?? 0) . ' photo ' . (string)(int)($row['photo_id'] ?? 0) . ' ' . (string)($row['image_type'] ?? ''),
+            $rows
+        );
+
+        return [
+            'success' => true,
+            'message' => $items === []
+                ? 'No profiled conversion jobs are missing signatures.'
+                : 'First affected jobs: ' . implode('; ', $items),
+        ];
+    }
+
+    private function photoConversionStateMismatchDetails(int $limit): array
+    {
+        $items = [];
+        foreach ($this->photoConversionStateRows() as $row) {
+            $expected = $this->photoStateFromJobCounts($row);
+            $current = strtolower(trim((string)($row['conversion_state'] ?? '')));
+            if ($expected === $current) {
+                continue;
+            }
+
+            $items[] = '#' . (string)(int)($row['id'] ?? 0) . ' ' . $current . ' -> ' . $expected;
+            if (count($items) >= $limit) {
+                break;
+            }
+        }
+
+        return [
+            'success' => true,
+            'message' => $items === []
+                ? 'No photo conversion state mismatches were found.'
+                : 'First affected photos: ' . implode('; ', $items),
+        ];
+    }
+
+    private function checkRow(string $key, string $name, int $count, string $detail, string $repairAction = ''): array
+    {
+        $row = [
+            'key' => $key,
             'name' => $name,
             'status' => $count === 0 ? 'OK' : 'Review',
             'count' => max(0, $count),
             'detail' => $detail,
         ];
+
+        if ($repairAction !== '') {
+            $row['repair_action'] = $repairAction;
+        }
+
+        return $row;
     }
 
     private function isSignature(string $value): bool

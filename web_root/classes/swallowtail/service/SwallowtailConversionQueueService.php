@@ -47,12 +47,25 @@ final class SwallowtailConversionQueueService
 
     public function enqueueRawConversionJobs(int $photoId, string|int $priority = self::PRIORITY_EMBEDDED): array
     {
+        return $this->enqueueRawConversionJobsForTypes($photoId, ['embedded', 'thumbnail', 'original'], $priority);
+    }
+
+    public function enqueueRawConversionJobsForTypes(int $photoId, array $imageTypes, string|int $priority = self::PRIORITY_EMBEDDED): array
+    {
         if ($photoId <= 0) {
             return [];
         }
 
+        $imageTypes = array_values(array_intersect(
+            ['embedded', 'thumbnail', 'original'],
+            array_map(static fn(mixed $value): string => strtolower(trim((string)$value)), $imageTypes)
+        ));
+        if ($imageTypes === []) {
+            return [];
+        }
+
         $notifyAfterCommit = !InterfaceDB::inTransaction();
-        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $priority): array {
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $imageTypes, $priority): array {
             $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
             if ($photo === null) {
                 return [];
@@ -69,6 +82,10 @@ final class SwallowtailConversionQueueService
                 'thumbnail' => self::PRIORITY_THUMBNAIL,
                 'original' => self::PRIORITY_ORIGINAL,
             ] as $imageType => $jobPriority) {
+                if (!in_array($imageType, $imageTypes, true)) {
+                    continue;
+                }
+
                 $jobPriority = $this->normalisePriority($jobPriority);
                 $outputPath = $storage->imagePath($base, $sha256, $imageType);
                 $profilePath = $imageType === 'thumbnail'

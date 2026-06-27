@@ -1502,6 +1502,166 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'reports retired st
     $harness->assertSame(4, $missingBaseConversionCount);
 });
 
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs missing base conversions precisely', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $baseLocation = swallowtail_backend_storage_tmp_root();
+    $sha256 = str_repeat('a', 64);
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            301,
+            'IMG_0301.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            'uploaded',
+            'ready'
+        )",
+        [
+            'sha256' => $sha256,
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+    InterfaceDB::execute(
+        "INSERT INTO photo_conversion_jobs (
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            priority,
+            status
+        ) VALUES
+            (301, 'image', 'embedded', '/tmp/source.cr2', '/tmp/embedded.jpg', 40, 'succeeded'),
+            (301, 'image', 'original', '/tmp/source.cr2', '/tmp/original.jpg', 20, 'succeeded')"
+    );
+
+    $result = (new SwallowtailDataIntegrityCheckService())->repairMissingBaseConversions();
+    $queuedRows = InterfaceDB::fetchAll(
+        "SELECT image_type, status
+         FROM photo_conversion_jobs
+         WHERE photo_id = 301
+           AND status = 'queued'
+         ORDER BY image_type"
+    );
+    $photoState = InterfaceDB::fetchColumn('SELECT conversion_state FROM photos WHERE id = 301');
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(1, (int)($result['queued_jobs'] ?? 0));
+    $harness->assertCount(1, $queuedRows);
+    $harness->assertSame('thumbnail', (string)($queuedRows[0]['image_type'] ?? ''));
+    $harness->assertSame('processing', (string)$photoState);
+});
+
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs profiled signature backfills', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $assetSignature = str_repeat('b', 64);
+    $jobSignature = str_repeat('c', 64);
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (
+            id,
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            profile_signature,
+            priority,
+            status
+        ) VALUES
+            (4101, 401, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', :job_signature, 10, 'succeeded'),
+            (4102, 401, 'image', 'final', '/tmp/source.cr2', '/tmp/final.jpg', NULL, 10, 'succeeded')",
+        [
+            'job_signature' => $jobSignature,
+        ]
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_image_assets (
+            id,
+            photo_id,
+            image_type,
+            sha256,
+            bytes,
+            modified_at,
+            profile_signature,
+            conversion_job_id
+        ) VALUES
+            (4201, 401, 'preview', :asset_sha, 12, 123456789, NULL, 4101),
+            (4202, 401, 'final', :asset_sha, 12, 123456789, :asset_signature, 4102)",
+        [
+            'asset_sha' => str_repeat('d', 64),
+            'asset_signature' => $assetSignature,
+        ]
+    );
+
+    $result = (new SwallowtailDataIntegrityCheckService())->repairProfileSignatures();
+    $previewAssetSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_image_assets WHERE id = 4201');
+    $finalJobSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_conversion_jobs WHERE id = 4102');
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(1, (int)($result['assets_backfilled'] ?? 0));
+    $harness->assertSame(1, (int)($result['jobs_backfilled'] ?? 0));
+    $harness->assertSame($jobSignature, (string)$previewAssetSignature);
+    $harness->assertSame($assetSignature, (string)$finalJobSignature);
+});
+
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs photo conversion state mismatches', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    InterfaceDB::execute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            501,
+            'IMG_0501.CR2',
+            'cr2',
+            100,
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+            '/tmp/swallowtail',
+            'uploaded',
+            'pending'
+        )"
+    );
+    InterfaceDB::execute(
+        "INSERT INTO photo_conversion_jobs (
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            output_path,
+            priority,
+            status
+        ) VALUES
+            (501, 'image', 'preview', '/tmp/source.cr2', '/tmp/preview.jpg', 10, 'succeeded'),
+            (501, 'image', 'final', '/tmp/source.cr2', '/tmp/final.jpg', 10, 'succeeded')"
+    );
+
+    $result = (new SwallowtailDataIntegrityCheckService())->repairPhotoConversionStates();
+    $photoState = InterfaceDB::fetchColumn('SELECT conversion_state FROM photos WHERE id = 501');
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(1, (int)($result['updated_states'] ?? 0));
+    $harness->assertSame('ready', (string)$photoState);
+});
+
 $harness->check(SwallowtailPhotoIngestService::class, 'rejects CR3 files while conversion is CR2-only', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 

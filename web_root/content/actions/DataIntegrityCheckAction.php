@@ -63,9 +63,49 @@ final class DataIntegrityCheckAction implements ActionInterfaceFramework
             ]]);
         }
 
+        if ($action === 'details') {
+            $result = $service->detailSummary((string)$request->input('data_integrity_check_key', ''));
+
+            return ActionResultFramework::success(['data.integrity'], [[
+                'type' => 'info',
+                'message' => (string)($result['message'] ?? 'No detail is available for this check.'),
+            ]]);
+        }
+
+        if ($action === 'repair_safe_issues') {
+            return $this->repairResult($service->repairSafeIssues(), ['data.integrity', 'conversion.jobs']);
+        }
+
+        if ($action === 'repair_missing_base_conversions') {
+            return $this->repairResult($service->repairMissingBaseConversions(), ['data.integrity', 'conversion.jobs']);
+        }
+
+        if ($action === 'repair_profile_signatures') {
+            return $this->repairResult($service->repairProfileSignatures(), ['data.integrity']);
+        }
+
+        if ($action === 'repair_conversion_states') {
+            return $this->repairResult($service->repairPhotoConversionStates(), ['data.integrity']);
+        }
+
         return new ActionResultFramework(false, ['data.integrity'], [[
             'type' => 'error',
             'message' => 'Unknown data integrity action.',
+        ]]);
+    }
+
+    private function repairResult(array $result, array $facts): ActionResultFramework
+    {
+        if (empty($result['success'])) {
+            return new ActionResultFramework(false, $facts, [[
+                'type' => 'error',
+                'message' => (string)($result['message'] ?? 'Data integrity repair could not run.'),
+            ]]);
+        }
+
+        return ActionResultFramework::success($facts, [[
+            'type' => 'success',
+            'message' => (string)($result['message'] ?? 'Data integrity repair completed.'),
         ]]);
     }
 
