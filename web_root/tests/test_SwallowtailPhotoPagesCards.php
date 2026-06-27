@@ -44,15 +44,53 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $method = new ReflectionMethod($card, 'profileTable');
     $method->setAccessible(true);
 
-    $table = $method->invoke($card, [[
-        'id' => 42,
-        'image_type' => 'preview',
-        'profile_name' => 'default',
-        'type' => 'Resize',
-        'key' => 'Enabled',
-        'value' => 'true',
-        'value_type' => 'bool',
-    ]], 'preview', 'default', 'test-csrf', true);
+    $table = $method->invoke($card, [
+        [
+            'id' => 42,
+            'image_type' => 'preview',
+            'profile_name' => 'default',
+            'type' => 'Resize',
+            'key' => 'Enabled',
+            'value' => 'true',
+            'value_type' => 'bool',
+        ],
+        [
+            'id' => 43,
+            'image_type' => 'preview',
+            'profile_name' => 'default',
+            'type' => 'Resize',
+            'key' => 'ShortEdge',
+            'value' => '820',
+            'value_type' => 'int',
+        ],
+        [
+            'id' => 44,
+            'image_type' => 'preview',
+            'profile_name' => 'default',
+            'type' => 'Exposure',
+            'key' => 'Lightness',
+            'value' => '1.5',
+            'value_type' => 'float',
+        ],
+        [
+            'id' => 45,
+            'image_type' => 'preview',
+            'profile_name' => 'default',
+            'type' => 'RAW Bayer',
+            'key' => 'Method',
+            'value' => 'fast',
+            'value_type' => 'string',
+        ],
+        [
+            'id' => 46,
+            'image_type' => 'preview',
+            'profile_name' => 'default',
+            'type' => 'Resize',
+            'key' => 'Optional',
+            'value' => null,
+            'value_type' => 'null',
+        ],
+    ], 'preview', 'default', 'test-csrf', true);
 
     $harness->assertTrue($table instanceof TableFramework);
 
@@ -68,10 +106,24 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $harness->assertTrue(str_contains($html, 'name="internal_profile_type"'));
     $harness->assertTrue(str_contains($html, 'form="internal-profile-row-42-'));
     $harness->assertTrue(str_contains($html, 'name="internal_profiles_action" value="save_row"'));
-    $harness->assertTrue(str_contains($html, 'data-submit-on-change="true"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profile_value"'));
+    $harness->assertTrue(str_contains($html, 'data-validate-boolean'));
+    $harness->assertTrue(str_contains($html, '<option value="true" selected>true</option>'));
+    $harness->assertTrue(str_contains($html, 'data-validate-int inputmode="numeric" value="820"'));
+    $harness->assertTrue(str_contains($html, 'data-validate-float inputmode="decimal" value="1.5"'));
+    $harness->assertTrue(str_contains($html, 'data-validate-ascii value="fast"'));
+    $harness->assertTrue(str_contains($html, 'type="text" disabled value="">'));
+    $harness->assertTrue(str_contains($html, '<input type="hidden" name="internal_profile_value" form="internal-profile-row-46-'));
+    $harness->assertTrue(str_contains($html, 'data-validate-type-control='));
+    $harness->assertTrue(str_contains($html, 'data-validate-type-target='));
+    $harness->assertTrue(!str_contains($html, 'data-submit-on-change="true"'));
     $harness->assertTrue(!str_contains($html, 'table-footer'));
     $harness->assertTrue(!str_contains($html, '_table_export_prepare'));
     $harness->assertTrue(!str_contains($html, 'profile-editor-row'));
+
+    $targetMatches = [];
+    $harness->assertSame(1, preg_match('/data-validate-type-target="([^"]+)"/', $html, $targetMatches));
+    $harness->assertTrue(str_contains($html, 'data-validate-type-control="' . $targetMatches[1] . '"'));
 });
 
 $harness->check(_internal_profilesCard::class, 'internal profile adjustment action names selected image and profile', function () use ($harness): void {

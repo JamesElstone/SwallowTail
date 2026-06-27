@@ -149,8 +149,8 @@ final class _internal_profilesCard extends CardBaseFramework
             ->classes('profile-editor-table', 'table-scroll profile-editor-grid')
             ->column('type', 'Type', html: fn(array $row): string => $this->typeCell($row), exportable: false)
             ->column('key', 'Key', html: fn(array $row): string => $this->textInputCell($row, 'key'), exportable: false)
-            ->column('value', 'Value', html: fn(array $row): string => $this->textInputCell($row, 'value'), exportable: false)
-            ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect((string)($row['value_type'] ?? 'string'), empty($row['_draft']), (string)($row['_form_id'] ?? '')), exportable: false)
+            ->column('value', 'Value', html: fn(array $row): string => $this->valueCell($row), exportable: false)
+            ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect($row), exportable: false)
             ->column('actions', 'Actions', html: fn(array $row): string => $this->actionsCell($row), exportable: false);
     }
 
@@ -178,6 +178,8 @@ final class _internal_profilesCard extends CardBaseFramework
         $row['_type_id'] = $prefix . '-type';
         $row['_key_id'] = $prefix . '-key';
         $row['_value_id'] = $prefix . '-value';
+        $row['_value_type_id'] = $prefix . '-value-type';
+        $row['_value_type_token'] = $prefix . '-value-type-token';
         $row['_save_id'] = $prefix . '-save';
         $row['_draft'] = !empty($row['_draft']);
 
@@ -195,11 +197,12 @@ final class _internal_profilesCard extends CardBaseFramework
         $typeId = (string)($row['_type_id'] ?? '');
         $keyId = (string)($row['_key_id'] ?? '');
         $valueId = (string)($row['_value_id'] ?? '');
+        $valueTypeId = (string)($row['_value_type_id'] ?? '');
         $saveId = (string)($row['_save_id'] ?? '');
         $id = max(0, (int)($row['_id'] ?? 0));
 
         return '<form id="' . HelperFramework::escape($formId) . '" method="post" action="?page=profiles" data-ajax="true"
-            data-state-fields="' . HelperFramework::escape($typeId . ',' . $keyId . ',' . $valueId) . '"
+            data-state-fields="' . HelperFramework::escape($typeId . ',' . $keyId . ',' . $valueId . ',' . $valueTypeId) . '"
             data-state-target="' . HelperFramework::escape($saveId) . '">
             <input type="hidden" name="cards[]" value="internal_profiles">
             <input type="hidden" name="card_action" value="InternalProfiles">
@@ -231,8 +234,41 @@ final class _internal_profilesCard extends CardBaseFramework
         return '<input class="input" id="' . HelperFramework::escape($id) . '" form="' . HelperFramework::escape((string)($row['_form_id'] ?? '')) . '" name="' . HelperFramework::escape($name) . '" type="text" value="' . HelperFramework::escape($value) . '" data-state-default="' . HelperFramework::escape($value) . '" placeholder="' . HelperFramework::escape($placeholder) . '">';
     }
 
-    private function valueTypeSelect(string $current, bool $submitOnChange, string $formId = ''): string
+    private function valueCell(array $row): string
     {
+        $value = $row['value'] ?? '';
+        $valueType = (string)($row['value_type'] ?? 'string');
+        $stateDefault = $value === null ? '' : (string)$value;
+        $formId = (string)($row['_form_id'] ?? '');
+        $id = (string)($row['_value_id'] ?? '');
+        $token = (string)($row['_value_type_token'] ?? '');
+
+        $control = FieldValidationFramework::renderTypedValueControl('internal_profile_value', $value, $valueType, [
+            'id' => $id,
+            'placeholder' => 'Value',
+            'attributes' => [
+                'form' => $formId,
+                'data-state-default' => $stateDefault,
+            ],
+        ]);
+
+        return '<span data-validate-dynamic-control="true"'
+            . ' data-validate-type-target="' . HelperFramework::escape($token) . '"'
+            . ' data-validate-dynamic-name="internal_profile_value"'
+            . ' data-validate-dynamic-id="' . HelperFramework::escape($id) . '"'
+            . ' data-validate-dynamic-form="' . HelperFramework::escape($formId) . '"'
+            . ' data-validate-dynamic-placeholder="Value"'
+            . ' data-validate-dynamic-state-default="' . HelperFramework::escape($stateDefault) . '">'
+            . $control
+            . '</span>';
+    }
+
+    private function valueTypeSelect(array $row): string
+    {
+        $current = (string)($row['value_type'] ?? 'string');
+        $formId = (string)($row['_form_id'] ?? '');
+        $id = (string)($row['_value_type_id'] ?? '');
+        $token = (string)($row['_value_type_token'] ?? '');
         $options = '';
         foreach (SwallowtailInternalProfilesService::VALUE_TYPES as $type) {
             $options .= '<option value="' . HelperFramework::escape($type) . '"' . ($type === $current ? ' selected' : '') . '>' . HelperFramework::escape($type) . '</option>';
@@ -240,7 +276,9 @@ final class _internal_profilesCard extends CardBaseFramework
 
         return '<select class="select" name="internal_profile_value_type"'
             . ($formId !== '' ? ' form="' . HelperFramework::escape($formId) . '"' : '')
-            . ($submitOnChange ? ' data-submit-on-change="true"' : '')
+            . ($id !== '' ? ' id="' . HelperFramework::escape($id) . '"' : '')
+            . ' data-state-default="' . HelperFramework::escape($current) . '"'
+            . ($token !== '' ? ' data-validate-type-control="' . HelperFramework::escape($token) . '"' : '')
             . '>' . $options . '</select>';
     }
 

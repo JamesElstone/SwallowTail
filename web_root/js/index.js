@@ -651,6 +651,136 @@
         }
     }
 
+    function setAttributes(node, attributes) {
+        Object.entries(attributes).forEach(([name, value]) => {
+            if (value === false || value === null || value === undefined || value === '') {
+                return;
+            }
+
+            if (value === true) {
+                node.setAttribute(name, '');
+                return;
+            }
+
+            node.setAttribute(name, String(value));
+        });
+    }
+
+    function dynamicValidationCurrentValue(wrapper, name) {
+        if (!(wrapper instanceof HTMLElement)) {
+            return '';
+        }
+
+        const namedControl = name !== '' ? wrapper.querySelector(`[name="${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`) : null;
+        const control = namedControl instanceof HTMLInputElement || namedControl instanceof HTMLSelectElement || namedControl instanceof HTMLTextAreaElement
+            ? namedControl
+            : wrapper.querySelector('input, select, textarea');
+
+        return control && 'value' in control ? String(control.value || '') : '';
+    }
+
+    function dynamicValidationBaseAttributes(wrapper, name) {
+        const id = String(wrapper.dataset.validateDynamicId || '').trim();
+        const form = String(wrapper.dataset.validateDynamicForm || '').trim();
+        const stateDefault = String(wrapper.dataset.validateDynamicStateDefault || '');
+
+        return {
+            class: 'input',
+            id,
+            form,
+            name,
+            'data-state-default': stateDefault,
+        };
+    }
+
+    function rebindDynamicValidationStateWatcher(wrapper) {
+        const formId = String(wrapper.dataset.validateDynamicForm || '').trim();
+        const form = formId !== '' ? document.getElementById(formId) : null;
+
+        if (form instanceof HTMLElement) {
+            delete form.dataset.stateBound;
+            initStateWatchers(document);
+        }
+    }
+
+    function syncDynamicValidationControl(wrapper, type) {
+        if (!(wrapper instanceof HTMLElement) || wrapper.dataset.validateDynamicControl !== 'true') {
+            return;
+        }
+
+        const name = String(wrapper.dataset.validateDynamicName || '').trim();
+        if (name === '') {
+            return;
+        }
+
+        const placeholder = String(wrapper.dataset.validateDynamicPlaceholder || '').trim();
+        const currentValue = dynamicValidationCurrentValue(wrapper, name);
+        const baseAttributes = dynamicValidationBaseAttributes(wrapper, name);
+        const nodes = [];
+
+        if (type === 'boolean') {
+            const select = document.createElement('select');
+            const normalisedCurrentValue = currentValue.toLowerCase();
+            setAttributes(select, {
+                ...baseAttributes,
+                class: 'select',
+                'data-validate-boolean': true,
+            });
+
+            ['true', 'false'].forEach((value) => {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = value;
+                option.selected = normalisedCurrentValue === value;
+                select.appendChild(option);
+            });
+
+            if (!['true', 'false'].includes(normalisedCurrentValue)) {
+                select.value = 'false';
+            }
+            nodes.push(select);
+        } else if (type === 'null') {
+            const visible = document.createElement('input');
+            setAttributes(visible, {
+                ...baseAttributes,
+                name: '',
+                type: 'text',
+                disabled: true,
+                placeholder,
+            });
+            visible.value = '';
+
+            const hidden = document.createElement('input');
+            setAttributes(hidden, {
+                type: 'hidden',
+                name,
+                form: baseAttributes.form,
+            });
+            hidden.value = '';
+            nodes.push(visible, hidden);
+        } else {
+            const input = document.createElement('input');
+            const validationAttribute = {
+                int: 'data-validate-int',
+                float: 'data-validate-float',
+                ascii: 'data-validate-ascii',
+            }[type] || 'data-validate-ascii';
+            setAttributes(input, {
+                ...baseAttributes,
+                type: 'text',
+                placeholder,
+                inputmode: type === 'int' ? 'numeric' : (type === 'float' ? 'decimal' : ''),
+                [validationAttribute]: true,
+            });
+            input.value = sanitizeValidationValue(currentValue, type === '' ? 'ascii' : type);
+            nodes.push(input);
+        }
+
+        wrapper.replaceChildren(...nodes);
+        nodes.forEach((node) => sanitizeValidatedInput(node));
+        rebindDynamicValidationStateWatcher(wrapper);
+    }
+
     function sanitizeValidatedInput(control) {
         if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) {
             return;
@@ -716,6 +846,11 @@
         }
 
         validationPairScope(control).querySelectorAll(validationTypeTargetSelector(token)).forEach((target) => {
+            if (target instanceof HTMLElement && target.dataset.validateDynamicControl === 'true') {
+                syncDynamicValidationControl(target, normaliseValidationType(control.value));
+                return;
+            }
+
             sanitizeValidatedInput(target);
         });
     }

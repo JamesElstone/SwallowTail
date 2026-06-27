@@ -97,11 +97,16 @@ final class SwallowtailInternalProfilesService
         $type = substr(trim($type), 0, 64);
         $key = substr(trim($key), 0, 191);
         $valueType = $this->normaliseValueType($valueType);
-        $storedValue = $valueType === 'null' ? null : (string)$value;
 
         if ($type === '' || $key === '') {
             throw new InvalidArgumentException('Type and key are required.');
         }
+
+        $validation = FieldValidationFramework::validateTypedValue($value, $valueType);
+        if (empty($validation['success'])) {
+            throw new InvalidArgumentException((string)($validation['error'] ?? 'Invalid value.'));
+        }
+        $storedValue = $validation['value'];
 
         if ($id > 0) {
             InterfaceDB::prepareExecute(
@@ -143,36 +148,6 @@ final class SwallowtailInternalProfilesService
         return [
             'image_type' => $imageType,
             'profile_name' => $profileName,
-        ];
-    }
-
-    public function updateValueType(int $id, string $valueType): ?array
-    {
-        if ($id <= 0 || !$this->tableAvailable()) {
-            return null;
-        }
-
-        $row = InterfaceDB::fetchOne('SELECT image_type, profile_name FROM internal_profile_data WHERE id = :id LIMIT 1', ['id' => $id]);
-        if (!is_array($row)) {
-            return null;
-        }
-
-        InterfaceDB::prepareExecute(
-            "UPDATE internal_profile_data
-             SET value_type = :value_type,
-                 value = CASE WHEN :value_type_for_null = 'null' THEN NULL ELSE value END,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = :id",
-            [
-                'id' => $id,
-                'value_type' => $this->normaliseValueType($valueType),
-                'value_type_for_null' => $this->normaliseValueType($valueType),
-            ]
-        );
-
-        return [
-            'image_type' => $this->normaliseImageType((string)($row['image_type'] ?? '')),
-            'profile_name' => $this->normaliseProfileName((string)($row['profile_name'] ?? '')),
         ];
     }
 

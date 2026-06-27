@@ -51,14 +51,6 @@ final class InternalProfilesAction implements ActionInterfaceFramework
                 ]], [], ['internal_profiles' => $context]);
             }
 
-            if ($action === 'value_type') {
-                $updated = $service->updateValueType(
-                    max(0, (int)$request->input('internal_profile_id', 0)),
-                    (string)$request->input('internal_profile_value_type', 'string')
-                );
-                return ActionResultFramework::success(['internal.profiles'], [], [], ['internal_profiles' => $updated ?? $context]);
-            }
-
             if ($action === 'move_profile') {
                 $moved = $service->moveProfile(
                     max(0, (int)$request->input('internal_profiles_move_id', $request->input('internal_profile_id', 0))),

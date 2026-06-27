@@ -2672,6 +2672,59 @@ $harness->check(SwallowtailCombinedProfileService::class, 'combines photo profil
     }
 });
 
+$harness->check(SwallowtailInternalProfilesService::class, 'saves typed internal profile values with validation', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $service = new SwallowtailInternalProfilesService();
+    $service->saveRow(0, 'preview', 'typed_validation', 'Section', 'BoolKey', ' TRUE ', 'bool');
+    $service->saveRow(0, 'preview', 'typed_validation', 'Section', 'IntKey', '123', 'int');
+    $service->saveRow(0, 'preview', 'typed_validation', 'Section', 'FloatKey', '.5', 'float');
+    $service->saveRow(0, 'preview', 'typed_validation', 'Section', 'StringKey', 'plain ASCII', 'string');
+    $service->saveRow(0, 'preview', 'typed_validation', 'Section', 'NullKey', 'ignored', 'null');
+
+    $rows = InterfaceDB::fetchAll(
+        "SELECT `key`, value, value_type FROM internal_profile_data WHERE image_type = 'preview' AND profile_name = 'typed_validation' ORDER BY `key`"
+    );
+    $byKey = [];
+    foreach ($rows as $row) {
+        $byKey[(string)$row['key']] = $row;
+    }
+
+    $harness->assertSame('true', (string)$byKey['BoolKey']['value']);
+    $harness->assertSame('bool', (string)$byKey['BoolKey']['value_type']);
+    $harness->assertSame('123', (string)$byKey['IntKey']['value']);
+    $harness->assertSame('.5', (string)$byKey['FloatKey']['value']);
+    $harness->assertSame('plain ASCII', (string)$byKey['StringKey']['value']);
+    $harness->assertSame(null, $byKey['NullKey']['value']);
+    $harness->assertSame('null', (string)$byKey['NullKey']['value_type']);
+});
+
+$harness->check(SwallowtailInternalProfilesService::class, 'rejects invalid typed internal profile values', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $service = new SwallowtailInternalProfilesService();
+    $cases = [
+        ['BadBool', 'yes', 'bool', 'Value must be true or false.'],
+        ['BadInt', '12a', 'int', 'Value must contain digits only.'],
+        ['BadFloat', '1.', 'float', 'Value must be a decimal number.'],
+        ['BadString', 'cafe' . chr(195) . chr(169), 'string', 'Value must contain ASCII characters only.'],
+    ];
+
+    foreach ($cases as [$key, $value, $valueType, $message]) {
+        try {
+            $service->saveRow(0, 'preview', 'typed_validation_errors', 'Section', $key, $value, $valueType);
+            throw new RuntimeException('Invalid value was not rejected for ' . $key . '.');
+        } catch (InvalidArgumentException $exception) {
+            $harness->assertSame($message, $exception->getMessage());
+        }
+    }
+
+    $count = (int)InterfaceDB::fetchColumn(
+        "SELECT COUNT(*) FROM internal_profile_data WHERE image_type = 'preview' AND profile_name = 'typed_validation_errors'"
+    );
+    $harness->assertSame(0, $count);
+});
+
 $harness->check(SwallowtailCombinedProfileService::class, 'signs latest profile rows and enabled internal overlays', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 
