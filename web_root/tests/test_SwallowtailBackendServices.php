@@ -937,6 +937,7 @@ $harness->check(SwallowtailStorageService::class, 'creates storage hash director
         }
 
         $harness->assertSame(0770, $directoryMode & 0770);
+        $harness->assertSame(02000, $directoryMode & 02000);
     }
 });
 

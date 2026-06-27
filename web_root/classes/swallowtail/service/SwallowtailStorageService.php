@@ -20,6 +20,7 @@ final class SwallowtailStorageService
 {
     public const DATA_DIRECTORY = 'swallowtail-data';
     public const IMAGE_TYPES = ['source', 'source_profile', 'embedded', 'thumbnail', 'thumbnail_profile', 'preview', 'preview_profile', 'original', 'final', 'final_profile', 'rawtheapee_sample'];
+    private const STORAGE_DIRECTORY_MODE = 02770;
 
     public function storageLocations(int $requiredBytes = 0, ?string $checksum = null): array
     {
@@ -324,8 +325,12 @@ final class SwallowtailStorageService
         }
 
         foreach ($this->storageDirectoryPermissionTargets($directory) as $target) {
+            if ($this->storageDirectoryPermissionsAreCurrent($target)) {
+                continue;
+            }
+
             try {
-                $changed = $this->filesystemOperation(static fn(): bool => chmod($target, 0770));
+                $changed = $this->filesystemOperation(static fn(): bool => chmod($target, self::STORAGE_DIRECTORY_MODE));
             } catch (Throwable $exception) {
                 throw new RuntimeException(sprintf(
                     'Unable to set SwallowTail storage directory permissions: %s%s',
@@ -341,12 +346,14 @@ final class SwallowtailStorageService
                     $this->filesystemFailureSuffix($changed['warning'])
                 ));
             }
-
-            try {
-                $this->filesystemOperation(static fn(): bool => chmod($target, 02770));
-            } catch (Throwable) {
-            }
         }
+    }
+
+    private function storageDirectoryPermissionsAreCurrent(string $directory): bool
+    {
+        $mode = @fileperms($directory);
+
+        return is_int($mode) && ($mode & 07777) === self::STORAGE_DIRECTORY_MODE;
     }
 
     /**
