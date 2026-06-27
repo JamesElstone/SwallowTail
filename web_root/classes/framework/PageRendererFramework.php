@@ -290,7 +290,107 @@ final class PageRendererFramework
             return '<div id="application-footer" class="application-footer"></div>';
         }
 
-        return '<div id="application-footer" class="application-footer">' . HelperFramework::escape($footer) . '</div>';
+        return '<div id="application-footer" class="application-footer">' . $this->sanitizeApplicationFooterHtml($footer) . '</div>';
+    }
+
+    private function sanitizeApplicationFooterHtml(string $html): string
+    {
+        $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        if (!class_exists(DOMDocument::class)) {
+            return HelperFramework::escape($html);
+        }
+
+        $previousLibxmlState = libxml_use_internal_errors(true);
+        $document = new DOMDocument('1.0', 'UTF-8');
+        $loaded = $document->loadHTML(
+            '<?xml encoding="UTF-8"><div id="application-footer-fragment">' . $html . '</div>',
+            LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousLibxmlState);
+
+        if (!$loaded) {
+            return HelperFramework::escape($html);
+        }
+
+        $root = $document->getElementById('application-footer-fragment');
+        if (!$root instanceof DOMElement) {
+            return HelperFramework::escape($html);
+        }
+
+        $sanitized = '';
+        foreach ($root->childNodes as $child) {
+            $sanitized .= $this->sanitizeApplicationFooterNode($child);
+        }
+
+        return $sanitized;
+    }
+
+    private function sanitizeApplicationFooterNode(DOMNode $node): string
+    {
+        if ($node instanceof DOMText) {
+            return HelperFramework::escape($node->nodeValue);
+        }
+
+        if (!$node instanceof DOMElement) {
+            return '';
+        }
+
+        $tag = strtolower($node->tagName);
+        $children = '';
+        foreach ($node->childNodes as $child) {
+            $children .= $this->sanitizeApplicationFooterNode($child);
+        }
+
+        if ($tag === 'br') {
+            return '<br>';
+        }
+
+        if ($tag !== 'a') {
+            return $children;
+        }
+
+        $href = $this->sanitizeApplicationFooterHref($node->getAttribute('href'));
+        if ($href === '') {
+            return $children;
+        }
+
+        $attributes = ' href="' . HelperFramework::escape($href) . '"';
+        $title = trim($node->getAttribute('title'));
+        if ($title !== '') {
+            $attributes .= ' title="' . HelperFramework::escape($title) . '"';
+        }
+
+        $target = trim($node->getAttribute('target'));
+        if ($target === '_blank') {
+            $attributes .= ' target="_blank" rel="noopener noreferrer"';
+        }
+
+        return '<a' . $attributes . '>' . $children . '</a>';
+    }
+
+    private function sanitizeApplicationFooterHref(string $href): string
+    {
+        $href = trim(html_entity_decode($href, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($href === '') {
+            return '';
+        }
+
+        if (preg_match('/[\x00-\x1F\x7F]/', $href) === 1) {
+            return '';
+        }
+
+        if (preg_match('/^[a-z][a-z0-9+.-]*:/i', $href) === 1) {
+            $scheme = strtolower((string)parse_url($href, PHP_URL_SCHEME));
+            return in_array($scheme, ['http', 'https', 'mailto', 'tel'], true) ? $href : '';
+        }
+
+        if (str_starts_with($href, '//')) {
+            return '';
+        }
+
+        return $href;
     }
 
     private function renderDeveloperOptionsStatus(): string

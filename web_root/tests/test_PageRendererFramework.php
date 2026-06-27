@@ -218,7 +218,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertSame('T', $brandMark->invoke($instance));
     });
 
-    $harness->check(PageRendererFramework::class, 'renders the configured application footer safely', function () use ($harness, $instance, $renderApplicationFooter): void {
+    $harness->check(PageRendererFramework::class, 'renders configured application footer links and entities safely', function () use ($harness, $instance, $renderApplicationFooter): void {
         $path = AppConfigurationStore::configPath();
         $original = file_get_contents($path);
 
@@ -227,10 +227,10 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         }
 
         try {
-            AppConfigurationStore::set('app_footer', 'Footer & diagnostics');
+            AppConfigurationStore::set('app_footer', '&copy; <a href="/legal" title="Terms">Terms</a> <a href="javascript:alert(1)">Bad</a> <strong>Plain</strong>');
 
             $harness->assertSame(
-                '<div id="application-footer" class="application-footer">Footer &amp; diagnostics</div>',
+                '<div id="application-footer" class="application-footer">© <a href="/legal" title="Terms">Terms</a> Bad Plain</div>',
                 $renderApplicationFooter->invoke($instance)
             );
         } finally {
