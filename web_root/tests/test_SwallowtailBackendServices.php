@@ -23,6 +23,7 @@ use Swallowtail\Service\SwallowtailPreviewProfileService;
 use Swallowtail\Service\SwallowtailProfileDataService;
 use Swallowtail\Service\SwallowtailQuickChecksumApiService;
 use Swallowtail\Service\SwallowtailRawUploadApiService;
+use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
 use Swallowtail\Service\SwallowtailSpiceBushRegistrationApiService;
 use Swallowtail\Service\SwallowtailStorageCacheService;
 use Swallowtail\Service\SwallowtailStorageLocationService;
@@ -48,6 +49,7 @@ $harness->run(SwallowtailProfileDataService::class);
 $harness->run(SwallowtailCombinedProfileService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
 $harness->run(SwallowtailDataIntegrityCheckService::class);
+$harness->run(SwallowtailRawTheapeeProfileService::class);
 
 function swallowtail_backend_remove_tree(string $path): void
 {
@@ -146,6 +148,24 @@ function swallowtail_backend_record_asset(
             'conversion_job_id' => $conversionJobId,
         ]
     );
+}
+
+function swallowtail_backend_create_rawtheapee_profile_table(): void
+{
+    InterfaceDB::execute("CREATE TABLE rawtheapee_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_path TEXT NOT NULL UNIQUE,
+        relative_path TEXT NOT NULL,
+        display_label TEXT NOT NULL,
+        profile_hash TEXT NOT NULL,
+        profile_bytes INTEGER NOT NULL DEFAULT 0,
+        profile_mtime INTEGER NOT NULL DEFAULT 0,
+        profile_content TEXT NOT NULL,
+        is_available INTEGER NOT NULL DEFAULT 1,
+        scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
 }
 
 register_shutdown_function(static function (): void {
@@ -1714,6 +1734,203 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled re
     $harness->assertSame('preview', (string)($queued['image_type'] ?? ''));
     $harness->assertSame('queued', (string)($queued['status'] ?? ''));
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($queued['profile_signature'] ?? '')) === 1);
+});
+
+$harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    swallowtail_backend_create_rawtheapee_profile_table();
+
+    $profilePath = swallowtail_backend_test_temp_file('swallowtail-rawtheapee-profile-');
+    file_put_contents($profilePath, "[Version]\nAppVersion=5.10\n", LOCK_EX);
+    $profileContent = (string)file_get_contents($profilePath);
+    $baseLocation = swallowtail_backend_storage_tmp_root();
+    InterfaceDB::prepareExecute(
+        "INSERT INTO rawtheapee_profile_data (
+            id,
+            profile_path,
+            relative_path,
+            display_label,
+            profile_hash,
+            profile_bytes,
+            profile_mtime,
+            profile_content,
+            is_available
+        ) VALUES (
+            701,
+            :profile_path,
+            'sample.pp3',
+            'Sample',
+            :profile_hash,
+            :profile_bytes,
+            :profile_mtime,
+            :profile_content,
+            1
+        )",
+        [
+            'profile_path' => $profilePath,
+            'profile_hash' => hash('sha256', $profileContent),
+            'profile_bytes' => strlen($profileContent),
+            'profile_mtime' => (int)filemtime($profilePath),
+            'profile_content' => $profileContent,
+        ]
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            uploaded_by_user_id,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            702,
+            'IMG_0702.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            44,
+            'uploaded',
+            'ready'
+        )",
+        [
+            'sha256' => str_repeat('2', 64),
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+
+    $service = new SwallowtailRawTheapeeProfileService();
+    $expectedSignature = $service->profileSignatureForPath($profilePath);
+    $result = $service->enqueueSample(702, 701, 44);
+    $jobSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_conversion_jobs WHERE id = :id', ['id' => (int)($result['job_id'] ?? 0)]);
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame($expectedSignature, (string)$jobSignature);
+    $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)$jobSignature) === 1);
+
+    @unlink($profilePath);
+});
+
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtheapee sample signatures from profile metadata', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    swallowtail_backend_create_rawtheapee_profile_table();
+
+    $profilePath = '/profiles/sample-repair.pp3';
+    $profileContent = "[Version]\nAppVersion=5.10\n";
+    $expectedSignature = (new SwallowtailRawTheapeeProfileService())->profileSignature([
+        'profile_path' => $profilePath,
+        'relative_path' => 'sample-repair.pp3',
+        'profile_bytes' => strlen($profileContent),
+        'profile_mtime' => 1719500000,
+    ]);
+    InterfaceDB::prepareExecute(
+        "INSERT INTO rawtheapee_profile_data (
+            id,
+            profile_path,
+            relative_path,
+            display_label,
+            profile_hash,
+            profile_bytes,
+            profile_mtime,
+            profile_content,
+            is_available
+        ) VALUES (
+            801,
+            :profile_path,
+            'sample-repair.pp3',
+            'Sample Repair',
+            :profile_hash,
+            :profile_bytes,
+            1719500000,
+            :profile_content,
+            1
+        )",
+        [
+            'profile_path' => $profilePath,
+            'profile_hash' => hash('sha256', $profileContent),
+            'profile_bytes' => strlen($profileContent),
+            'profile_content' => $profileContent,
+        ]
+    );
+    InterfaceDB::execute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES
+            (802, 'IMG_0802.CR2', 'cr2', 100, '3333333333333333333333333333333333333333333333333333333333333333', '/tmp/swallowtail', 'uploaded', 'ready'),
+            (803, 'IMG_0803.CR2', 'cr2', 100, '4444444444444444444444444444444444444444444444444444444444444444', '/tmp/swallowtail', 'uploaded', 'ready')"
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_conversion_jobs (
+            id,
+            photo_id,
+            job_type,
+            image_type,
+            input_path,
+            profile_path,
+            output_path,
+            profile_signature,
+            priority,
+            status
+        ) VALUES
+            (8101, 802, 'image', 'rawtheapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded'),
+            (8102, 803, 'image', 'rawtheapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded')",
+        ['profile_path' => $profilePath]
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_image_assets (
+            id,
+            photo_id,
+            image_type,
+            sha256,
+            bytes,
+            modified_at,
+            profile_signature,
+            conversion_job_id
+        ) VALUES
+            (8201, 802, 'rawtheapee_sample', :asset_sha_1, 12, 123456789, NULL, 8101),
+            (8202, 803, 'rawtheapee_sample', :asset_sha_2, 12, 123456789, NULL, NULL)",
+        [
+            'asset_sha_1' => str_repeat('5', 64),
+            'asset_sha_2' => str_repeat('6', 64),
+        ]
+    );
+
+    $result = (new SwallowtailDataIntegrityCheckService())->repairProfileSignatures();
+    $unsignedAssets = InterfaceDB::fetchColumn(
+        "SELECT COUNT(*)
+         FROM photo_image_assets
+         WHERE image_type = 'rawtheapee_sample'
+           AND (profile_signature IS NULL OR profile_signature = '')"
+    );
+    $unsignedJobs = InterfaceDB::fetchColumn(
+        "SELECT COUNT(*)
+         FROM photo_conversion_jobs
+         WHERE image_type = 'rawtheapee_sample'
+           AND (profile_signature IS NULL OR profile_signature = '')"
+    );
+    $assetSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_image_assets WHERE id = 8201');
+    $fallbackAsset = InterfaceDB::fetchOne('SELECT profile_signature, conversion_job_id FROM photo_image_assets WHERE id = 8202');
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(2, (int)($result['jobs_backfilled'] ?? 0));
+    $harness->assertSame(2, (int)($result['assets_backfilled'] ?? 0));
+    $harness->assertSame(0, (int)($result['unsupported_sample_rows'] ?? -1));
+    $harness->assertSame(0, (int)$unsignedAssets);
+    $harness->assertSame(0, (int)$unsignedJobs);
+    $harness->assertSame($expectedSignature, (string)$assetSignature);
+    $harness->assertTrue(is_array($fallbackAsset));
+    $harness->assertSame($expectedSignature, (string)($fallbackAsset['profile_signature'] ?? ''));
+    $harness->assertSame(8102, (int)($fallbackAsset['conversion_job_id'] ?? 0));
 });
 
 $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs photo conversion state mismatches', function () use ($harness, $swallowtailCreateSqliteSchema): void {

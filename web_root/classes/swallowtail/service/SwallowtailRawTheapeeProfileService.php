@@ -56,6 +56,54 @@ final class SwallowtailRawTheapeeProfileService
         return is_array($row) ? $row : null;
     }
 
+    public function profileSignature(array $profile): string
+    {
+        $path = trim((string)($profile['profile_path'] ?? ''));
+        $fileHash = '';
+        if ($path !== '' && is_file($path) && is_readable($path)) {
+            $hash = hash_file('sha256', $path);
+            if (is_string($hash) && preg_match('/^[a-f0-9]{64}$/', $hash) === 1) {
+                $fileHash = $hash;
+            }
+        }
+
+        return hash('sha256', implode("\n", [
+            'rawtheapee_sample_profile',
+            $fileHash,
+            $path,
+            (string)($profile['relative_path'] ?? ''),
+            (string)max(0, (int)($profile['profile_bytes'] ?? 0)),
+            (string)max(0, (int)($profile['profile_mtime'] ?? 0)),
+        ]));
+    }
+
+    public function profileSignatureForPath(string $profilePath): string
+    {
+        $profilePath = trim($profilePath);
+        if ($profilePath === '') {
+            return '';
+        }
+
+        if ($this->tableAvailable()) {
+            $row = InterfaceDB::fetchOne(
+                "SELECT *
+                 FROM rawtheapee_profile_data
+                 WHERE profile_path = :profile_path
+                 LIMIT 1",
+                ['profile_path' => $profilePath]
+            );
+            if (is_array($row)) {
+                return $this->profileSignature($row);
+            }
+        }
+
+        if (is_file($profilePath) && is_readable($profilePath)) {
+            return $this->profileSignature(['profile_path' => $profilePath]);
+        }
+
+        return '';
+    }
+
     public function randomAccessiblePhoto(int $userId): ?array
     {
         if ($userId <= 0) {
@@ -108,6 +156,7 @@ final class SwallowtailRawTheapeeProfileService
         $base = (string)($photo['storage_base_location'] ?? '');
         $inputPath = $storage->imagePath($base, $checksum, 'source');
         $outputPath = $storage->imagePath($base, $checksum, self::SAMPLE_IMAGE_TYPE);
+        $profileSignature = $this->profileSignature($profile);
 
         $jobId = (new SwallowtailConversionQueueService())->enqueueImageJob(
             $photoId,
@@ -119,7 +168,7 @@ final class SwallowtailRawTheapeeProfileService
             $userId,
             null,
             null,
-            ''
+            $profileSignature
         );
 
         if ($jobId === null) {
