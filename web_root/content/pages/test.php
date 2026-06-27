@@ -97,11 +97,11 @@ final class _test extends PageContextFramework
     ): array {
         $preset = $this->normalisePreset((string)$request->input('preset', 'alpha'));
         $note = $this->normaliseNote((string)$request->input('note', ''));
-        $pageCards = $this->cards();
+        $context = parent::buildContext($request, $services, $actionResult);
+        $pageCards = (array)($context['page']['page_cards'] ?? $this->cards());
         $sharedCardContext = $this->buildSharedCardContext($preset, $note);
 
-        return [
-            'test.context' => [
+        $context['test.context'] = [
                 'page_id' => 'test',
                 'page_cards' => $pageCards,
                 'selected_preset' => $preset,
@@ -113,8 +113,9 @@ final class _test extends PageContextFramework
                     $pageCards
                 ),
                 'last_action_success' => $actionResult->isSuccess(),
-            ],
         ];
+
+        return $context;
     }
 
     private function buildSharedCardContext(string $preset, string $note): array
