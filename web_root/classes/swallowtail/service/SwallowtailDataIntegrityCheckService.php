@@ -725,6 +725,7 @@ final class SwallowtailDataIntegrityCheckService
         $backfill = InterfaceDB::transaction(function (): array {
             $assetsBackfilled = 0;
             $jobsBackfilled = $this->backfillRawTheapeeSampleJobSignatures();
+            $jobsBackfilled += $this->backfillPreviewFinalJobSignaturesFromCurrentProfiles();
             $assetRows = InterfaceDB::fetchAll(
                 "SELECT asset.id, job.profile_signature
                  FROM photo_image_assets asset
@@ -796,6 +797,57 @@ final class SwallowtailDataIntegrityCheckService
         return $backfill + $queued + [
             'unsupported_sample_rows' => $unsupportedSampleRows,
         ];
+    }
+
+    private function backfillPreviewFinalJobSignaturesFromCurrentProfiles(): int
+    {
+        if (
+            !InterfaceDB::columnsExists('photo_conversion_jobs', ['id', 'photo_id', 'image_type', 'status', 'profile_signature'])
+            || !InterfaceDB::tableExists('photo_profile_data')
+        ) {
+            return 0;
+        }
+
+        $updated = 0;
+        $signatures = [];
+        foreach (InterfaceDB::fetchAll(
+            "SELECT id, photo_id, image_type
+             FROM photo_conversion_jobs
+             WHERE status = 'succeeded'
+               AND image_type IN ('preview', 'final')
+               AND (profile_signature IS NULL OR profile_signature = '')
+             ORDER BY id"
+        ) as $row) {
+            $jobId = max(0, (int)($row['id'] ?? 0));
+            $photoId = max(0, (int)($row['photo_id'] ?? 0));
+            $imageType = strtolower(trim((string)($row['image_type'] ?? '')));
+            if ($jobId <= 0 || $photoId <= 0 || !in_array($imageType, ['preview', 'final'], true)) {
+                continue;
+            }
+
+            $key = $photoId . ':' . $imageType;
+            if (!array_key_exists($key, $signatures)) {
+                $signatures[$key] = $this->combinedProfileService->profileSignature($photoId, $imageType);
+            }
+
+            $signature = (string)$signatures[$key];
+            if (!$this->isSignature($signature)) {
+                continue;
+            }
+
+            $updated += InterfaceDB::execute(
+                "UPDATE photo_conversion_jobs
+                 SET profile_signature = :profile_signature
+                 WHERE id = :id
+                   AND (profile_signature IS NULL OR profile_signature = '')",
+                [
+                    'id' => $jobId,
+                    'profile_signature' => $signature,
+                ]
+            );
+        }
+
+        return $updated;
     }
 
     private function backfillRawTheapeeSampleJobSignatures(): int

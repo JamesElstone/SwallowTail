@@ -1636,7 +1636,7 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs profiled s
     $harness->assertSame($assetSignature, (string)$finalJobSignature);
 });
 
-$harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled refreshes for unsigned profile rows', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs unsigned preview rows from current profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
 
     $baseLocation = swallowtail_backend_storage_tmp_root();
@@ -1718,22 +1718,15 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled re
     );
 
     $result = (new SwallowtailDataIntegrityCheckService())->repairProfileSignatures();
-    $queued = InterfaceDB::fetchOne(
-        "SELECT image_type, profile_signature, status
-         FROM photo_conversion_jobs
-         WHERE photo_id = 431
-           AND status = 'queued'
-         LIMIT 1"
-    );
+    $jobSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_conversion_jobs WHERE id = 4301');
+    $assetSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_image_assets WHERE id = 4302');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(0, (int)($result['assets_backfilled'] ?? 0));
-    $harness->assertSame(0, (int)($result['jobs_backfilled'] ?? 0));
-    $harness->assertSame(1, (int)($result['queued_profile_jobs'] ?? 0));
-    $harness->assertTrue(is_array($queued));
-    $harness->assertSame('preview', (string)($queued['image_type'] ?? ''));
-    $harness->assertSame('queued', (string)($queued['status'] ?? ''));
-    $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($queued['profile_signature'] ?? '')) === 1);
+    $harness->assertSame(1, (int)($result['assets_backfilled'] ?? 0));
+    $harness->assertSame(1, (int)($result['jobs_backfilled'] ?? 0));
+    $harness->assertSame(0, (int)($result['queued_profile_jobs'] ?? -1));
+    $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)$jobSignature) === 1);
+    $harness->assertSame((string)$jobSignature, (string)$assetSignature);
 });
 
 $harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
