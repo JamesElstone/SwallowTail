@@ -370,6 +370,7 @@ final class AppConfigurationStore
                     'storage_wake_queue' => 'swallowtail:conversion:storage_wake',
                     'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
                     'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
+                    'metadata_data_integrity_queue' => 'swallowtail:metadata:data_integrity',
                     'rawtheapee_profile_refresh_queue' => 'swallowtail:metadata:rawtheapee_profiles',
                 ],
                 'rawtheapee' => [

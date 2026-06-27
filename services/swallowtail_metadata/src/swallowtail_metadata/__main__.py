@@ -46,6 +46,7 @@ def main() -> int:
     config = replace(
         config,
         project_root=args.project_root,
+        php_binary=args.php_binary,
         metadata=replace(config.metadata, exiftool_binary=args.exiftool_binary, rawtherapee_binary=args.rawtherapee_binary),
         redis=replace(
             config.redis,

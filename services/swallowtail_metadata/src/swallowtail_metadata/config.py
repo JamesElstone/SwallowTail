@@ -25,6 +25,7 @@ class RedisConfig:
     timeout_seconds: int
     profile_queue: str
     asset_queue: str
+    data_integrity_queue: str
     rawtheapee_profile_refresh_queue: str
 
 
@@ -67,6 +68,7 @@ class AppConfig:
     metadata: MetadataConfig
     logging: LoggingConfig
     project_root: str
+    php_binary: str
 
 
 def default_config() -> AppConfig:
@@ -86,6 +88,7 @@ def default_config() -> AppConfig:
             timeout_seconds=5,
             profile_queue="swallowtail:metadata:profile_urgent",
             asset_queue="swallowtail:metadata:asset_urgent",
+            data_integrity_queue="swallowtail:metadata:data_integrity",
             rawtheapee_profile_refresh_queue="swallowtail:metadata:rawtheapee_profiles",
         ),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
@@ -98,6 +101,7 @@ def default_config() -> AppConfig:
         ),
         logging=LoggingConfig(file="/var/log/swallowtail/swallowtail_metadata.log", level="INFO"),
         project_root="/usr/local/swallowtail",
+        php_binary="php",
     )
 
 
@@ -180,6 +184,7 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             port=int(redis.get("port", config.redis.port)),
             profile_queue=str(redis.get("metadata_profile_queue", config.redis.profile_queue)),
             asset_queue=str(redis.get("metadata_asset_queue", config.redis.asset_queue)),
+            data_integrity_queue=str(redis.get("metadata_data_integrity_queue", config.redis.data_integrity_queue)),
             rawtheapee_profile_refresh_queue=str(
                 redis.get("rawtheapee_profile_refresh_queue", config.redis.rawtheapee_profile_refresh_queue)
             ),

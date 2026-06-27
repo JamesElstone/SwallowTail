@@ -31,6 +31,7 @@ final class _settings extends PageContextFramework
             'upload_tokens',
             'storage_available',
             'jobs',
+            'data_integrity_check',
             'timezone_settings',
             'web_environment',
             'invitation_settings',

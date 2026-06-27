@@ -25,6 +25,12 @@ class AssetNotification:
     reason: str
 
 
+@dataclass(frozen=True)
+class DataIntegrityNotification:
+    action: str
+    reason: str
+
+
 class RedisHeartbeat:
     def __init__(self, config: RedisConfig):
         self.config = config
@@ -133,6 +139,30 @@ class RedisHeartbeat:
         except (OSError, RuntimeError):
             return False
         return response is not None
+
+    def pop_data_integrity_notification(self) -> DataIntegrityNotification | None:
+        queue = self.config.data_integrity_queue.strip()
+        if queue == "":
+            return None
+        try:
+            with socket.create_connection((self.config.host, self.config.port), timeout=2) as sock:
+                sock.settimeout(self.config.timeout_seconds)
+                sock.sendall(self._command("RPOP", queue))
+                response = self._read_resp(sock)
+        except (OSError, RuntimeError):
+            return None
+        if response is None:
+            return None
+        try:
+            payload = json.loads(self._to_text(response))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return DataIntegrityNotification(
+            action=str(payload.get("action") or "").strip(),
+            reason=str(payload.get("reason") or "").strip(),
+        )
 
     def has_profile_notification(self) -> bool:
         queue = self.config.profile_queue.strip()

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import json
 import signal
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -27,6 +29,7 @@ class MetadataWorker:
         self.shutdown_requested = threading.Event()
         self.idle_delay_seconds = config.worker.poll_min_seconds
         self.last_rawtheapee_profile_scan_at = time.time()
+        self.data_integrity_requested = True
 
     def request_shutdown(self) -> None:
         self.shutdown_requested.set()
@@ -58,6 +61,15 @@ class MetadataWorker:
                 self.process_asset_notification(asset_notification)
                 self._touch_status()
                 return True
+        if hasattr(self.redis, "pop_data_integrity_notification"):
+            data_integrity_notification = self.redis.pop_data_integrity_notification()
+            if data_integrity_notification is not None:
+                self.data_integrity_requested = True
+                self.log.info(
+                    "Data integrity maintenance notification received; action=%s reason=%s",
+                    data_integrity_notification.action,
+                    data_integrity_notification.reason,
+                )
         if time.time() - self.last_rawtheapee_profile_scan_at >= 86400:
             self.scan_rawtheapee_profiles("daily")
             self._touch_status()
@@ -80,6 +92,9 @@ class MetadataWorker:
             if profile_photo is None:
                 asset_job = self.db.next_unrecorded_image_asset_job() if hasattr(self.db, "next_unrecorded_image_asset_job") else None
                 if asset_job is None:
+                    if getattr(self, "data_integrity_requested", False) and self.process_data_integrity_maintenance():
+                        self._touch_status()
+                        return True
                     self.log.info("No metadata, profile, or asset records returned; worker idle")
                     return False
                 self.process_asset_job(asset_job)
@@ -101,6 +116,62 @@ class MetadataWorker:
             count,
         )
         return count
+
+    def process_data_integrity_maintenance(self) -> bool:
+        script = Path(self.config.project_root) / "tools" / "php" / "dataIntegrityCheck.php"
+        if not script.is_file():
+            self.data_integrity_requested = False
+            self.log.warning("Data integrity maintenance script was not found: %s", script)
+            return False
+
+        try:
+            result = subprocess.run(
+                [
+                    self.config.php_binary,
+                    str(script),
+                    "--process-lazy-loading",
+                    "--json",
+                    "--limit=150",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=270,
+            )
+        except Exception as exc:
+            self.log.warning("Data integrity maintenance failed to start: %s", exc)
+            return False
+
+        output = (result.stdout or "").strip()
+        if result.returncode != 0:
+            detail = (result.stderr or output).strip()
+            self.log.warning("Data integrity maintenance failed: %s", detail)
+            return False
+
+        try:
+            payload = json.loads(output) if output != "" else {}
+        except json.JSONDecodeError:
+            self.log.warning("Data integrity maintenance returned invalid JSON: %s", output[:400])
+            return False
+
+        requested = bool(payload.get("requested", False))
+        blocked = bool(payload.get("blocked", False))
+        complete = bool(payload.get("complete_pass", False))
+        queued = int(payload.get("queued_preview", 0) or 0) + int(payload.get("queued_final", 0) or 0)
+        scanned = int(payload.get("scanned", 0) or 0)
+        self.data_integrity_requested = requested and not complete
+        if blocked:
+            return False
+        if not requested:
+            return False
+
+        self.log.info(
+            "Data integrity maintenance batch completed; scanned=%s queued=%s complete=%s",
+            scanned,
+            queued,
+            complete,
+        )
+        return scanned > 0 or queued > 0 or complete
 
     def _urgent_profile_photo(self) -> dict[str, Any] | None:
         notification = self.redis.pop_profile_notification()
@@ -294,6 +365,7 @@ class MetadataWorker:
                 "poll_min_seconds": self.config.worker.poll_min_seconds,
                 "poll_max_seconds": self.config.worker.poll_max_seconds,
                 "server_timezone": self.config.metadata.server_timezone,
+                "data_integrity_requested": self.data_integrity_requested,
             },
             "metadata": self.db.counts(),
         }
