@@ -1847,6 +1847,13 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled pr
     $harness->assertSame('queued', (string)($jobs[1]['status'] ?? ''));
     $harness->assertTrue(is_file((string)($jobs[1]['profile_path'] ?? '')));
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($jobs[1]['profile_signature'] ?? '')) === 1);
+
+    $second = (new SwallowtailDataIntegrityCheckService())->processProfiledDerivativeQueueBatch(10);
+    $harness->assertTrue(!empty($second['success']));
+    $harness->assertSame(0, (int)($second['scanned'] ?? -1));
+    $harness->assertSame(0, (int)($second['queued_preview'] ?? -1));
+    $harness->assertSame(0, (int)($second['queued_final'] ?? -1));
+    $harness->assertSame(true, !empty($second['complete_pass']));
 });
 
 $harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {

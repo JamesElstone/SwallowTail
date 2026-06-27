@@ -93,7 +93,7 @@ class MetadataWorker:
             if profile_photo is None:
                 asset_job = self.db.next_unrecorded_image_asset_job() if hasattr(self.db, "next_unrecorded_image_asset_job") else None
                 if asset_job is None:
-                    if getattr(self, "profiled_derivative_queue_requested", True) and self.process_profiled_derivative_queue_batch():
+                    if self.process_profiled_derivative_queue_batch():
                         self._touch_status()
                         return True
                     if getattr(self, "data_integrity_requested", False) and self.process_data_integrity_maintenance():

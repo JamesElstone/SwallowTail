@@ -266,11 +266,11 @@ final class SwallowtailDataIntegrityCheckService
         $limit = max(1, min(self::MAX_LAZY_SCAN_PHOTOS, $limit));
         $startedAt = time();
         $cursor = $this->profiledDerivativeScanCursor();
-        $rows = $this->readyUploadedPhotosAfter($cursor, $limit);
+        $rows = $this->profiledDerivativeQueueCandidateRowsAfter($cursor, $limit);
         $wrapped = false;
         if ($rows === [] && $cursor > 0) {
             $cursor = 0;
-            $rows = $this->readyUploadedPhotosAfter(0, $limit);
+            $rows = $this->profiledDerivativeQueueCandidateRowsAfter(0, $limit);
             $wrapped = true;
         }
 
@@ -323,7 +323,7 @@ final class SwallowtailDataIntegrityCheckService
             return $result;
         }
 
-        $hasMore = $this->readyUploadedPhotoCountAfter((int)$result['last_photo_id']) > 0;
+        $hasMore = $this->profiledDerivativeQueueCandidateCountAfter((int)$result['last_photo_id']) > 0;
         if ($hasMore) {
             $this->setProfiledDerivativeScanCursor((int)$result['last_photo_id']);
         } else {
@@ -583,6 +583,114 @@ final class SwallowtailDataIntegrityCheckService
              LIMIT " . max(1, min(self::MAX_LAZY_SCAN_PHOTOS, $limit)),
             ['photo_id' => $photoId]
         );
+    }
+
+    private function profiledDerivativeQueueCandidateRowsAfter(int $photoId, int $limit): array
+    {
+        return InterfaceDB::fetchAll(
+            "SELECT p.*
+             FROM photos p
+             INNER JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+               AND status.value = 'processed'
+             WHERE p.id > :photo_id
+               AND p.upload_state = 'uploaded'
+               AND LOWER(COALESCE(p.original_extension, '')) = 'cr2'
+               AND (
+                    (
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM photo_image_assets preview_asset
+                            WHERE preview_asset.photo_id = p.id
+                              AND preview_asset.image_type = 'preview'
+                            LIMIT 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM photo_conversion_jobs preview_job
+                            WHERE preview_job.photo_id = p.id
+                              AND preview_job.image_type = 'preview'
+                              AND preview_job.status IN ('queued', 'processing', 'succeeded')
+                            LIMIT 1
+                        )
+                    )
+                    OR (
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM photo_image_assets final_asset
+                            WHERE final_asset.photo_id = p.id
+                              AND final_asset.image_type = 'final'
+                            LIMIT 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM photo_conversion_jobs final_job
+                            WHERE final_job.photo_id = p.id
+                              AND final_job.image_type = 'final'
+                              AND final_job.status IN ('queued', 'processing', 'succeeded')
+                            LIMIT 1
+                        )
+                    )
+               )
+             ORDER BY p.id
+             LIMIT " . max(1, min(self::MAX_LAZY_SCAN_PHOTOS, $limit)),
+            ['photo_id' => $photoId]
+        );
+    }
+
+    private function profiledDerivativeQueueCandidateCountAfter(int $photoId): int
+    {
+        return max(0, (int)InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+             FROM photos p
+             INNER JOIN photo_profile_data status
+                ON status.photo_id = p.id
+               AND status.type = 'swallowtail'
+               AND status.`key` = 'status'
+               AND status.value = 'processed'
+             WHERE p.id > :photo_id
+               AND p.upload_state = 'uploaded'
+               AND LOWER(COALESCE(p.original_extension, '')) = 'cr2'
+               AND (
+                    (
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM photo_image_assets preview_asset
+                            WHERE preview_asset.photo_id = p.id
+                              AND preview_asset.image_type = 'preview'
+                            LIMIT 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM photo_conversion_jobs preview_job
+                            WHERE preview_job.photo_id = p.id
+                              AND preview_job.image_type = 'preview'
+                              AND preview_job.status IN ('queued', 'processing', 'succeeded')
+                            LIMIT 1
+                        )
+                    )
+                    OR (
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM photo_image_assets final_asset
+                            WHERE final_asset.photo_id = p.id
+                              AND final_asset.image_type = 'final'
+                            LIMIT 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM photo_conversion_jobs final_job
+                            WHERE final_job.photo_id = p.id
+                              AND final_job.image_type = 'final'
+                              AND final_job.status IN ('queued', 'processing', 'succeeded')
+                            LIMIT 1
+                        )
+                    )
+               )",
+            ['photo_id' => $photoId]
+        ));
     }
 
     private function readyUploadedPhotoCountAfter(int $photoId): int
