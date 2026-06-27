@@ -25,6 +25,7 @@ final class _activityCard extends CardBaseFramework
                 'method' => 'fetchRecentFlashActivity',
                 'params' => [
                     'limit' => 200,
+                    'userId' => ':activity_user_id',
                 ],
             ],
         ];
@@ -42,6 +43,7 @@ final class _activityCard extends CardBaseFramework
         ActionResultFramework $actionResult
     ): array {
         $pageContext = parent::handle($request, $services, $pageContext, $actionResult);
+        $pageContext = $this->applyActivityScopeContext($pageContext);
 
         return $this->applyTableSortContext($request, $pageContext, $this->key());
     }
@@ -49,6 +51,18 @@ final class _activityCard extends CardBaseFramework
     protected function additionalInvalidationFacts(): array
     {
         return ['page.context'];
+    }
+
+    private function applyActivityScopeContext(array $pageContext): array
+    {
+        $userId = (int)(($pageContext['auth'] ?? [])['user_id'] ?? 0);
+        $roleId = (int)(($pageContext['auth'] ?? [])['role_id'] ?? 0);
+
+        if ($userId > 0 && $roleId !== RoleAssignmentService::ADMIN_ROLE_ID) {
+            $pageContext['activity_user_id'] = $userId;
+        }
+
+        return $pageContext;
     }
 
     public function handleError(string $serviceKey, array $error, array $context): string
