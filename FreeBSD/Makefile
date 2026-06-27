@@ -33,7 +33,7 @@ USE_RC_SUBR=	swallowtail_storage \
 
 CONFLICTS_INSTALL=	swallowtail-raw-conversion
 
-OPTIONS_DEFINE=	APACHECONF SUDOERS
+OPTIONS_DEFINE=	APACHECONF DOCS SUDOERS
 OPTIONS_DEFAULT=	SUDOERS
 APACHECONF_DESC=	Install active Apache include as swallowtail.conf
 SUDOERS_DESC=	Install sudoers rule for storage permission repair
@@ -53,9 +53,9 @@ PROJECT_DIRS=	db_schema \
 		services \
 		tools \
 		web_root
-PROJECT_FILES=	API.md \
+PROJECT_FILES=	LICENSE
+PROJECT_DOCS=	API.md \
 		DEPLOYMENT.md \
-		LICENSE \
 		README.md \
 		eelKit_CHANGES.md
 
@@ -124,18 +124,24 @@ do-install:
 		${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT}/tools/bin -type f \
 			-exec ${CHMOD} 0555 {} \; ; \
 	fi
-	if [ -d "${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root" ]; then \
-		${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT}/web_root -type f \
-			-name '*.md' -delete; \
-	fi
-	${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/secure/README.md" \
-		${STAGEDIR}${SWALLOWTAIL_ROOT}/secure/README.md
 	for project_file in ${PROJECT_FILES}; do \
 		if [ -f "${SWALLOWTAIL_SOURCE}/$${project_file}" ]; then \
 			${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/$${project_file}" \
 				${STAGEDIR}${SWALLOWTAIL_ROOT}/"$${project_file}"; \
 		fi; \
 	done
+.if ${PORT_OPTIONS:MDOCS}
+	${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/secure/README.md" \
+		${STAGEDIR}${SWALLOWTAIL_ROOT}/secure/README.md
+	for project_doc in ${PROJECT_DOCS}; do \
+		if [ -f "${SWALLOWTAIL_SOURCE}/$${project_doc}" ]; then \
+			${INSTALL_DATA} "${SWALLOWTAIL_SOURCE}/$${project_doc}" \
+				${STAGEDIR}${SWALLOWTAIL_ROOT}/"$${project_doc}"; \
+		fi; \
+	done
+.else
+	${FIND} ${STAGEDIR}${SWALLOWTAIL_ROOT} -type f -name '*.md' -delete
+.endif
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_storage.newsyslog.conf \
 		${STAGEDIR}${PREFIX}/etc/newsyslog.conf.d/swallowtail_storage.conf
 	${INSTALL_DATA} ${FILESDIR}/swallowtail_conversion.newsyslog.conf \
