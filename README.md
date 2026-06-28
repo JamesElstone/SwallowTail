@@ -14,11 +14,14 @@ Users with permission can currently:
 
 - Browse an event gallery with tiled photo thumbnails.
 - Open a single-photo viewer page.
+- Download a permitted photo's final JPEG from the gallery.
+- Download ZIP archives for permitted events through the Download page.
 - View private generated JPEG assets through application routes after access checks.
 
 The schema and permission services already model single-JPEG, event ZIP,
-all-accessible ZIP, and RAW-original download rights. The remaining ZIP and
-RAW-original download UI/API flows are still in progress.
+all-accessible ZIP, and RAW-original download rights. Single final-JPEG
+downloads and whole-event ZIP downloads are implemented. Selected-photo ZIP and
+all-accessible ZIP download flows are still in progress.
 
 Admins and editors can manage uploads, event assignment, permissions, duplicate detection, conversion state, and storage.
 
@@ -42,10 +45,10 @@ The intended flow is:
 2. SwallowTail computes a checksum for duplicate detection.
 3. The source file is stored outside `web_root`.
 4. The photo starts as unassigned, so normal event viewers cannot see it.
-5. A conversion process creates image files such as embedded, original, thumbnail, preview, and final JPEGs.
+5. A conversion process creates image files such as embedded, thumbnail, original, preview, and final JPEGs.
 6. An admin or editor assigns the photo to one or more events.
 7. Event permissions decide which users can view and download the photo.
-8. Private generated image files are streamed by the application after checking access.
+8. Private generated image files and download archives are streamed by the application after checking access.
 
 Duplicate uploads should be detected by checksum rather than filename. Matching checksums can be blocked or flagged as duplicates, while matching filenames with different checksums should be treated as a warning for admin review.
 
@@ -73,18 +76,18 @@ Current core features:
 - SHA-256 quick checksum preflight and duplicate detection during ingest.
 - Off-web-root storage for RAW sources, generated JPEGs, thumbnails, previews, final images, and PP3 profiles.
 - Dynamic storage discovery with root-partition exclusion, free-space thresholds, optional checksum round-robin selection, ZFS dataset selection, cached storage snapshots, and queued storage migrations.
-- RAW-to-JPEG conversion jobs for embedded, original, thumbnail, preview, and final outputs.
-- FreeBSD rc.d services for conversion work and storage cache/migration work.
+- RAW-to-JPEG conversion jobs for embedded, thumbnail, original, preview, final, and RawTherapee sample outputs.
+- FreeBSD rc.d services for conversion, metadata extraction, and storage cache/migration work.
 - Event, photo assignment, and event-permission service tables.
-- Tiled gallery, single-photo viewer, picture editor preview flow, recent uploads, storage summary, and storage settings UI.
+- Tiled gallery, single-photo viewer, picture editor preview flow, recent uploads, event downloads, storage summary, and storage settings UI.
 - Upload token management with per-token CIDR allow lists.
 - Audit logging for uploads, duplicate detections, conversions, token use, permission changes, and storage migrations.
 
 Still in progress:
 
-- Full event-management UI for creating events, assigning photos, and granting viewer permissions.
-- ZIP generation and download flows for selected photos, whole events, and all accessible photos.
-- RAW-original download controls exposed through the UI.
+- Broader event-management workflows around bulk assignment and permission review.
+- ZIP generation and download flows for selected photos and all accessible photos.
+- Broader RAW-original download controls and policy settings.
 - Storage verification and orphan cleanup tools.
 - EXIF handling options, including stripping GPS data from generated JPEGs.
 - Event invitations.

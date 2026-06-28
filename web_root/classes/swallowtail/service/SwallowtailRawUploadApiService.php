@@ -11,6 +11,7 @@ namespace Swallowtail\Service;
 
 use AppConfigurationStore;
 use InvalidArgumentException;
+use LengthException;
 use RequestFramework;
 use ResponseFramework;
 use RuntimeException;

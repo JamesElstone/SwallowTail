@@ -203,8 +203,8 @@ New uploads return HTTP `201`.
   "conversion_job_id": 456,
   "conversion_jobs": {
     "embedded": {"job_id": 456, "status": "queued"},
-    "original": {"job_id": 457, "status": "queued"},
-    "thumbnail": {"job_id": 458, "status": "queued"}
+    "thumbnail": {"job_id": 457, "status": "queued"},
+    "original": {"job_id": 458, "status": "queued"}
   },
   "warnings": []
 }
@@ -225,7 +225,7 @@ Duplicate uploads return HTTP `200`. No second original is stored.
 
 ## Conversion Status
 
-Returns conversion job state and filesystem-derived image readiness for a photo.
+Returns conversion job state and asset-registry image readiness for a photo.
 
 Endpoint:
 
@@ -254,7 +254,11 @@ Successful response:
     "thumbnail": {"job_id": 458, "status": "succeeded"},
     "preview": {"job_id": null, "status": "not_queued"},
     "final": {"job_id": null, "status": "not_queued"},
-    "profile": {"job_id": null, "status": "not_queued"}
+    "rawtheapee_sample": {"job_id": null, "status": "not_queued"},
+    "source_profile": {"job_id": null, "status": "not_queued"},
+    "thumbnail_profile": {"job_id": null, "status": "not_queued"},
+    "preview_profile": {"job_id": null, "status": "not_queued"},
+    "final_profile": {"job_id": null, "status": "not_queued"}
   },
   "images": {
     "embedded": {"ready": false},
@@ -267,7 +271,11 @@ Successful response:
     },
     "preview": {"ready": false},
     "final": {"ready": false},
-    "profile": {"ready": false}
+    "rawtheapee_sample": {"ready": false},
+    "source_profile": {"ready": false},
+    "thumbnail_profile": {"ready": false},
+    "preview_profile": {"ready": false},
+    "final_profile": {"ready": false}
   }
 }
 ```

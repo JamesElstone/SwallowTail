@@ -376,7 +376,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor contains portrait previews in stage', function () use ($harness): void {
-        $stylesheet = file_get_contents(APP_CSS . 'index.css');
+        $stylesheet = file_get_contents(APP_CSS . 'project.css');
 
         if (!is_string($stylesheet)) {
             throw new RuntimeException('Unable to read frontend stylesheet.');

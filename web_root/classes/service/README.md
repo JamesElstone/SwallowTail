@@ -98,7 +98,7 @@ Implements the backend API workflow for RAW uploads.
 - Can also read a raw request body for simpler hardware clients.
 - Supports optional `X-Swallowtail-Checksum-SHA256` verification.
 - Passes upload metadata such as device ID, IP address, and user agent into audit logging.
-- Returns JSON responses suitable for future ESP32 or Windows uploader clients.
+- Returns JSON responses suitable for hardware bridges and SpiceBush uploader clients.
 
 The public entrypoint is `web_root/api/upload-raw.php`.
 
@@ -119,7 +119,8 @@ The default posture is least privilege: no event permission means no access.
 
 Provides a small database-backed queue facade for image generation.
 
-- Enqueues RAW image jobs for embedded, original, preview, and final outputs.
+- Enqueues initial RAW image jobs for embedded, thumbnail, and original outputs.
+- Enqueues profile-derived jobs for preview, final, and RawTherapee sample outputs.
 - Avoids creating duplicate queued or processing jobs for the same photo.
 - Lists queued jobs ordered by priority and age.
 
@@ -160,7 +161,10 @@ Each eligible base location stores files under `swallowtail-data`. Stored photos
 {storage_base_location}/swallowtail-data/{checksum[0:2]}/{checksum[2:4]}/{checksum}_{image_type}.{ext}
 ```
 
-`source` uses `.cr2`, `profile` uses `.pp3`, and generated images use `.jpg`. `storage_location_properties` stores per-base metadata such as whether a location is excluded from future writes.
+`source` uses `.cr2`; `source_profile`, `thumbnail_profile`, `preview_profile`,
+and `final_profile` use `.pp3`; generated image assets use `.jpg`.
+`storage_location_properties` stores per-base metadata such as whether a
+location is excluded from future writes.
 
 For ZFS, `storage_location_properties` stores the selected dataset against the
 zpool name. Changing the selected dataset can enqueue storage migration jobs for
@@ -182,6 +186,12 @@ and storage migration tables. The current service set uses:
 - `event_photos`
 - `event_permissions`
 - `photo_conversion_jobs`
+- `photo_image_assets`
+- `photo_profile_data`
+- `internal_profile_data`
+- `rawtheapee_profile_data`
+- `photo_metadata`
+- `photo_metadata_property`
 - `photo_audit`
 - `storage_migration_jobs`
 - `storage_migration_job_items`

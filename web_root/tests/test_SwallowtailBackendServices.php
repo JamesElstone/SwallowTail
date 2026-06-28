@@ -163,6 +163,7 @@ function swallowtail_backend_enable_final_profile_overlay(string $profileName = 
 
 function swallowtail_backend_create_rawtheapee_profile_table(): void
 {
+    InterfaceDB::execute('DROP TABLE IF EXISTS rawtheapee_profile_data');
     InterfaceDB::execute("CREATE TABLE rawtheapee_profile_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         profile_path TEXT NOT NULL UNIQUE,
@@ -265,7 +266,9 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         'storage_migration_job_items',
         'storage_migration_jobs',
         'internal_profile_data',
+        'rawtheapee_profile_data',
         'photo_profile_data',
+        'photo_image_assets',
         'photo_conversion_jobs',
         'event_permissions',
         'event_photos',
@@ -568,13 +571,13 @@ $swallowtailCreateSpiceBushUserSchema = static function (): void {
     InterfaceDB::execute("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         display_name TEXT NOT NULL,
-        email_address TEXT NOT NULL,
+        email_address TEXT NULL,
         mobile_number TEXT NULL,
-        password_hash TEXT NOT NULL,
+        password_hash TEXT NULL,
         must_change_password INTEGER NOT NULL DEFAULT 0,
         otp_required INTEGER NOT NULL DEFAULT 1,
         is_active INTEGER NOT NULL DEFAULT 1,
-        role_id INTEGER NULL,
+        role_id INTEGER NOT NULL DEFAULT 0,
         current_session_token_hash TEXT NULL,
         current_session_started_at TEXT NULL,
         current_session_last_seen_at TEXT NULL,
@@ -1300,12 +1303,12 @@ $harness->check(SwallowtailPhotoIngestService::class, 'ingests RAW files as unas
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'embedded',
-        'priority' => 40,
+        'priority' => 75,
     ]));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
         'image_type' => 'thumbnail',
-        'priority' => 45,
+        'priority' => 80,
     ]));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
         'photo_id' => (int)$result['photo_id'],
@@ -1805,6 +1808,9 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled pr
     $originalPath = $storage->imagePath($baseLocation, $sha256, 'original');
     $storage->ensureDirectoryForPath($originalPath);
     file_put_contents($originalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    $finalPath = $storage->imagePath($baseLocation, $sha256, 'final');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     InterfaceDB::prepareExecute(
         "INSERT INTO photos (
             id,
@@ -1833,10 +1839,10 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled pr
     swallowtail_backend_record_asset(432, 'original', $originalPath, str_repeat('8', 64));
     InterfaceDB::execute(
         "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
-            (432, 0, 'swallowtail', 'status', 'processed', 'string'),
-            (432, 0, 'Version', 'AppVersion', '5.12', 'float'),
-            (432, 0, 'Exposure', 'Brightness', '1', 'int')"
+            (432, 0, 'swallowtail', 'status', 'processed', 'string')"
     );
+    $finalSignature = (new SwallowtailCombinedProfileService())->profileSignature(432, 'final');
+    swallowtail_backend_record_asset(432, 'final', $finalPath, str_repeat('7', 64), $finalSignature);
 
     $result = (new SwallowtailDataIntegrityCheckService())->processProfiledDerivativeQueueBatch(10);
     $jobs = InterfaceDB::fetchAll(
@@ -3867,8 +3873,7 @@ $harness->check(SwallowtailDownloadService::class, 'single final JPEG download u
     swallowtail_backend_record_asset(602, 'original', $originalPath, str_repeat('5', 64));
     InterfaceDB::execute(
         "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
-            (602, 0, 'swallowtail', 'status', 'processed', 'string'),
-            (602, 0, 'Version', 'AppVersion', '5.12', 'float')"
+            (602, 0, 'swallowtail', 'status', 'processed', 'string')"
     );
 
     $library = new SwallowtailPhotoLibraryService();
@@ -3884,7 +3889,7 @@ $harness->check(SwallowtailDownloadService::class, 'single final JPEG download u
     $harness->assertSame($originalPath, (string)($download['path'] ?? ''));
     $harness->assertSame('final', (string)($download['image_type'] ?? ''));
     $harness->assertSame('original', (string)($download['source_image_type'] ?? ''));
-    $harness->assertSame('Single-Download_final.jpg', (string)($download['filename'] ?? ''));
+    $harness->assertSame('Single-Download-final.jpg', (string)($download['filename'] ?? ''));
 });
 
 $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job even when an older final image exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -5142,6 +5147,7 @@ $harness->check(SwallowtailConversionStatusApiService::class, 'returns conversio
     $previewPath = $storage->imagePath((string)($photo['storage_base_location'] ?? ''), (string)($photo['original_sha256'] ?? ''), 'preview');
     $storage->ensureDirectoryForPath($previewPath);
     file_put_contents($previewPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+    swallowtail_backend_record_asset($photoId, 'preview', $previewPath, str_repeat('a', 64));
 
     $request = new RequestFramework(
         ['photo_id' => (string)$photoId],
@@ -5590,16 +5596,21 @@ $harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only a
     }
     $swallowtailWriteRawFixture($source, 'cr2');
 
-    $notificationCount = 0;
-    $queue = new SwallowtailConversionQueueService(static function (int $jobId) use ($harness, &$notificationCount): void {
-        $notificationCount++;
+    $rawNotificationJobIds = [];
+    $queue = new SwallowtailConversionQueueService(static function (int $jobId) use ($harness, &$rawNotificationJobIds): void {
         $job = InterfaceDB::fetchOne(
-            'SELECT photo_id FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
+            'SELECT photo_id, image_type FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
             ['id' => $jobId]
         );
         $harness->assertTrue(is_array($job));
+        $imageType = (string)($job['image_type'] ?? '');
+        if (!in_array($imageType, ['embedded', 'thumbnail', 'original'], true)) {
+            return;
+        }
+
+        $rawNotificationJobIds[$jobId] = true;
         $photoId = (int)($job['photo_id'] ?? 0);
-        $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', $photoId));
+        $harness->assertTrue(InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', $photoId) >= 3);
         $photo = InterfaceDB::fetchOne(
             'SELECT conversion_state FROM photos WHERE id = :id LIMIT 1',
             ['id' => $photoId]
@@ -5615,8 +5626,13 @@ $harness->check(SwallowtailConversionQueueService::class, 'notifies Redis only a
     $result = $ingest->ingestLocalRawFile($source, 'IMG_0007.CR2');
 
     $harness->assertTrue(!empty($result['success']));
-    $harness->assertSame(3, $notificationCount);
-    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$result['photo_id']));
+    $harness->assertSame(3, count($rawNotificationJobIds));
+    foreach (['embedded', 'thumbnail', 'original'] as $imageType) {
+        $harness->assertSame(1, InterfaceDB::countWhere('photo_conversion_jobs', [
+            'photo_id' => (int)$result['photo_id'],
+            'image_type' => $imageType,
+        ]));
+    }
 
     @unlink($source);
 });

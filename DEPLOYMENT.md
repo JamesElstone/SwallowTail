@@ -395,6 +395,7 @@ service php_fpm start
 service apache24 start
 service swallowtail_conversion start
 service swallowtail_storage start
+service swallowtail_metadata start
 ```
 
 After PHP, ODBC, or Apache changes:
@@ -409,6 +410,7 @@ After SwallowTail code or database migrations:
 ```sh
 service swallowtail_conversion restart
 service swallowtail_storage restart
+service swallowtail_metadata restart
 ```
 
 ## Production Checks
@@ -423,6 +425,7 @@ service php_fpm status
 service redis status
 service swallowtail_conversion status
 service swallowtail_storage status
+service swallowtail_metadata status
 ```
 
 Confirm:
@@ -436,4 +439,4 @@ Confirm:
 - `developer_options` is set to `false` in `secure/app.php`.
 - SQL logging is disabled unless actively diagnosing an issue.
 - Photo storage roots and generated ZIP directories are outside `web_root`.
-- `swallowtail_conversion` and `swallowtail_storage` are healthy if enabled.
+- `swallowtail_conversion`, `swallowtail_storage`, and `swallowtail_metadata` are healthy if enabled.

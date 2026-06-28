@@ -150,6 +150,14 @@ Runs the PHP test index, SpiceBush client build, and Python service tests:
 tools/run-all-tests.sh
 ```
 
+On Windows with Git Bash, set `PYTHON` if `python3` resolves to the Microsoft
+Store alias instead of a usable interpreter:
+
+```powershell
+$env:PYTHON='C:\Python314\python.exe'
+sh tools/run-all-tests.sh
+```
+
 ## resetPassword
 
 Connects to the configured database, finds a user by display name or email address, resets the user's password, and optionally resets OTP setup.

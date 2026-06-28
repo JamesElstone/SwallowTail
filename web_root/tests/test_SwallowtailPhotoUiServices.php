@@ -202,6 +202,9 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         'photo_audit',
         'storage_migration_job_items',
         'storage_migration_jobs',
+        'internal_profile_data',
+        'photo_profile_data',
+        'photo_image_assets',
         'photo_conversion_jobs',
         'event_permissions',
         'event_photos',
@@ -866,11 +869,9 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves final downloads to o
     swallowtail_ui_record_asset($photoId, 'original', $originalAbsolute, str_repeat('a', 64));
     InterfaceDB::prepareExecute(
         "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
-            (:photo_id_status, 0, 'swallowtail', 'status', 'processed', 'string'),
-            (:photo_id_version, 0, 'Version', 'AppVersion', '5.12', 'float')",
+            (:photo_id_status, 0, 'swallowtail', 'status', 'processed', 'string')",
         [
             'photo_id_status' => $photoId,
-            'photo_id_version' => $photoId,
         ]
     );
 
@@ -893,7 +894,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves final downloads to o
     $harness->assertSame('original', (string)$asset['source_image_type']);
     $harness->assertSame('original', (string)$asset['effective_image_type']);
     $harness->assertSame(true, (bool)($asset['final_equivalent_original'] ?? false));
-    $harness->assertTrue(str_ends_with((string)$asset['filename'], '_final.jpg'));
+    $harness->assertTrue(str_ends_with((string)$asset['filename'], '-final.jpg'));
     $harness->assertTrue(is_array($details));
     $harness->assertSame(true, (bool)($details['final_ready'] ?? false));
 });

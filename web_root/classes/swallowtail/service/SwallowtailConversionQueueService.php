@@ -10,8 +10,10 @@ declare(strict_types=1);
 namespace Swallowtail\Service;
 
 use AppConfigurationStore;
+use Closure;
 use InterfaceDB;
 use InvalidArgumentException;
+use ReflectionFunction;
 use RuntimeException;
 use Throwable;
 

@@ -1261,7 +1261,7 @@ $harness->check(_gallery::class, 'browse gallery polls photo status between card
     $harness->assertTrue(str_contains($js, 'const galleryCardRefreshIntervalMs = 30000;'));
     $harness->assertTrue(str_contains($js, 'function galleryPendingStatusUrls(target)'));
     $harness->assertTrue(str_contains($js, 'function pollGalleryPhotoStatuses(target)'));
-    $harness->assertFalse(str_contains($js, 'function galleryAssetHintPayload(target)'));
+    $harness->assertTrue(!str_contains($js, 'function galleryAssetHintPayload(target)'));
 });
 
 $harness->check(_gallery::class, 'browse gallery renders auto scroll control', function () use ($harness): void {
@@ -1452,7 +1452,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
 
 $harness->check(_gallery::class, 'browse gallery event assignment markup is hidden by default', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
-    $css = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'index.css');
+    $css = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'project.css');
     $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
     $action = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'actions' . DIRECTORY_SEPARATOR . 'EventPermissionsAction.php');
 
