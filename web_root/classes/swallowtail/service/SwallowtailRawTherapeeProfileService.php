@@ -13,11 +13,11 @@ use AppConfigurationStore;
 use InterfaceDB;
 use RoleAssignmentService;
 
-final class SwallowtailRawTheapeeProfileService
+final class SwallowtailRawTherapeeProfileService
 {
-    private const TABLE = 'rawtheapee_profile_data';
-    private const REFRESH_QUEUE_DEFAULT = 'swallowtail:metadata:rawtheapee_profiles';
-    public const SAMPLE_IMAGE_TYPE = 'rawtheapee_sample';
+    private const TABLE = 'rawtherapee_profile_data';
+    private const REFRESH_QUEUE_DEFAULT = 'swallowtail:metadata:rawtherapee_profiles';
+    public const SAMPLE_IMAGE_TYPE = 'rawtherapee_sample';
     public const SAMPLE_PRIORITY = 65;
 
     public function tableAvailable(): bool
@@ -31,12 +31,80 @@ final class SwallowtailRawTheapeeProfileService
             return [];
         }
 
+        $defaultSql = InterfaceDB::columnExists(self::TABLE, 'is_default') ? 'is_default' : '0 AS is_default';
+
         return InterfaceDB::fetchAll(
-            "SELECT id, profile_path, relative_path, display_label, profile_bytes, profile_mtime, scanned_at
-             FROM rawtheapee_profile_data
+            "SELECT id, profile_path, relative_path, display_label, profile_hash, profile_bytes, profile_mtime, " . $defaultSql . ", scanned_at
+             FROM rawtherapee_profile_data
              WHERE is_available = 1
-             ORDER BY display_label, relative_path"
+             ORDER BY is_default DESC, display_label, relative_path"
         );
+    }
+
+    public function defaultProfile(): ?array
+    {
+        if (!$this->tableAvailable() || !InterfaceDB::columnExists(self::TABLE, 'is_default')) {
+            return null;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            "SELECT *
+             FROM rawtherapee_profile_data
+             WHERE is_default = 1
+               AND is_available = 1
+             ORDER BY updated_at DESC, id DESC
+             LIMIT 1"
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    public function defaultProfileId(): ?int
+    {
+        $profile = $this->defaultProfile();
+        $profileId = max(0, (int)($profile['id'] ?? 0));
+
+        return $profileId > 0 ? $profileId : null;
+    }
+
+    public function setDefaultProfile(int $profileId): array
+    {
+        if ($profileId <= 0 || !$this->tableAvailable() || !InterfaceDB::columnExists(self::TABLE, 'is_default')) {
+            return ['success' => false, 'message' => 'RawTherapee profile defaults are not available yet.'];
+        }
+
+        $profile = $this->profileById($profileId);
+        if ($profile === null) {
+            return ['success' => false, 'message' => 'RawTherapee profile was not available.'];
+        }
+
+        InterfaceDB::transaction(function () use ($profileId): void {
+            InterfaceDB::prepareExecute(
+                "UPDATE rawtherapee_profile_data
+                 SET is_default = 0
+                 WHERE is_default <> 0"
+            );
+            InterfaceDB::prepareExecute(
+                "UPDATE rawtherapee_profile_data
+                 SET is_default = 1
+                 WHERE id = :id
+                   AND is_available = 1",
+                ['id' => $profileId]
+            );
+        });
+
+        return [
+            'success' => true,
+            'message' => 'Default RawTherapee profile updated.',
+            'profile' => $this->profileById($profileId),
+        ];
+    }
+
+    public function profileForPhoto(array $photo): ?array
+    {
+        $profileId = max(0, (int)($photo['rawtherapee_profile_id'] ?? 0));
+
+        return $profileId > 0 ? $this->profileById($profileId) : null;
     }
 
     public function dashboard(
@@ -79,7 +147,7 @@ final class SwallowtailRawTheapeeProfileService
                 if ($sampleAsset !== null) {
                     $asset = $sampleAsset;
                     $displayUrl = $this->assetUrl($photoId, $sampleAsset);
-                    $displayType = 'rawtheapee';
+                    $displayType = 'rawtherapee';
                     $status = 'Ready';
                 } else {
                     $status = 'Queued';
@@ -89,6 +157,7 @@ final class SwallowtailRawTheapeeProfileService
 
         return [
             'profiles' => $profiles,
+            'default_profile_id' => max(0, (int)($this->defaultProfileId() ?? 0)),
             'profile_id' => $profileId,
             'photo_id' => $photoId,
             'photo' => $photo,
@@ -109,7 +178,7 @@ final class SwallowtailRawTheapeeProfileService
 
         $row = InterfaceDB::fetchOne(
             "SELECT *
-             FROM rawtheapee_profile_data
+             FROM rawtherapee_profile_data
              WHERE id = :id
                AND is_available = 1
              LIMIT 1",
@@ -131,7 +200,7 @@ final class SwallowtailRawTheapeeProfileService
         }
 
         return hash('sha256', implode("\n", [
-            'rawtheapee_sample_profile',
+            'rawtherapee_sample_profile',
             $fileHash,
             $path,
             (string)($profile['relative_path'] ?? ''),
@@ -150,7 +219,7 @@ final class SwallowtailRawTheapeeProfileService
         if ($this->tableAvailable()) {
             $row = InterfaceDB::fetchOne(
                 "SELECT *
-                 FROM rawtheapee_profile_data
+                 FROM rawtherapee_profile_data
                  WHERE profile_path = :profile_path
                  LIMIT 1",
                 ['profile_path' => $profilePath]
@@ -167,7 +236,7 @@ final class SwallowtailRawTheapeeProfileService
         return '';
     }
 
-    public function randomAccessibleThumbnailPhoto(int $userId, bool $preferRawTheapeeArtifacts = false): ?array
+    public function randomAccessibleThumbnailPhoto(int $userId, bool $preferRawTherapeeArtifacts = false): ?array
     {
         if ($userId <= 0) {
             return null;
@@ -178,7 +247,7 @@ final class SwallowtailRawTheapeeProfileService
         ];
         $sampleJoin = '';
         $preferredOrder = '';
-        if ($preferRawTheapeeArtifacts) {
+        if ($preferRawTherapeeArtifacts) {
             $params['sample_image_type'] = self::SAMPLE_IMAGE_TYPE;
             $sampleJoin = "
              LEFT JOIN photo_image_assets sample_asset
@@ -320,7 +389,7 @@ final class SwallowtailRawTheapeeProfileService
     public function requestRefresh(): bool
     {
         $queue = trim((string)\Swallowtail\Store\SwallowtailConfigurationStore::get(
-            'redis.rawtheapee_profile_refresh_queue',
+            'redis.rawtherapee_profile_refresh_queue',
             self::REFRESH_QUEUE_DEFAULT
         ));
         if ($queue === '') {
@@ -341,7 +410,7 @@ final class SwallowtailRawTheapeeProfileService
 
         $profile = $this->profileById($profileId);
         if ($profile === null) {
-            return ['success' => false, 'message' => 'RawTheapee profile was not available.'];
+            return ['success' => false, 'message' => 'RawTherapee profile was not available.'];
         }
 
         $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
@@ -364,7 +433,7 @@ final class SwallowtailRawTheapeeProfileService
                 'photo_id' => $photoId,
                 'profile_id' => $profileId,
                 'ready' => true,
-                'message' => 'RawTheapee sample is ready.',
+                'message' => 'RawTherapee sample is ready.',
                 'status_url' => '',
                 'image_url' => $this->assetUrl($photoId, $existingAsset),
             ];
@@ -444,7 +513,7 @@ final class SwallowtailRawTheapeeProfileService
     {
         $displayType = strtolower(trim($displayType));
 
-        return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
+        return in_array($displayType, ['preview', 'thumbnail', 'rawtherapee'], true) ? $displayType : 'none';
     }
 
     private function randomOrderSql(): string

@@ -248,26 +248,53 @@ class MetadataDatabase:
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self.connection.commit()
 
-    def replace_profile_data(self, photo_id: int, properties: list[dict[str, Any]], source_profile_path: str, rawtherapee_version: str) -> dict[str, int]:
+    def replace_profile_data(
+        self,
+        photo_id: int,
+        properties: list[dict[str, Any]],
+        source_profile_path: str,
+        rawtherapee_version: str,
+        rawtherapee_profile: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
         self._execute("DELETE FROM photo_profile_data WHERE photo_id = %s AND revision = 0 AND type <> 'swallowtail'", (photo_id,))
         stats = self._insert_profile_properties_by_section(photo_id, properties)
         self._set_profile_value(photo_id, "swallowtail", "source_profile_path", source_profile_path, "string")
         self._set_profile_value(photo_id, "swallowtail", "rawtherapee_version", rawtherapee_version, "string")
+        self._set_profile_value(photo_id, "swallowtail", "rawtherapee_profile_id", int((rawtherapee_profile or {}).get("id") or 0), "int")
+        self._set_profile_value(photo_id, "swallowtail", "rawtherapee_profile_path", str((rawtherapee_profile or {}).get("profile_path") or ""), "string")
+        self._set_profile_value(photo_id, "swallowtail", "rawtherapee_profile_hash", str((rawtherapee_profile or {}).get("profile_hash") or ""), "string")
         self._set_profile_value(photo_id, "swallowtail", "last_error", "", "string")
         self._set_profile_value(photo_id, "swallowtail", "status", "processed", "string")
         self.connection.commit()
         return stats
 
-    def replace_rawtheapee_profiles(self, profiles: list[Any]) -> int:
-        if not self._table_exists("rawtheapee_profile_data"):
+    def rawtherapee_profile_for_photo(self, photo: dict[str, Any]) -> dict[str, Any] | None:
+        profile_id = int(photo.get("rawtherapee_profile_id") or 0)
+        if profile_id <= 0 or not self._table_exists("rawtherapee_profile_data"):
+            return None
+        row = self._fetchone(
+            """
+            SELECT id, profile_path, relative_path, display_label, profile_hash, profile_bytes, profile_mtime
+              FROM rawtherapee_profile_data
+             WHERE id = %s
+               AND is_available = 1
+             LIMIT 1
+            """,
+            (profile_id,),
+        )
+        self._rollback_read()
+        return row
+
+    def replace_rawtherapee_profiles(self, profiles: list[Any]) -> int:
+        if not self._table_exists("rawtherapee_profile_data"):
             return 0
 
-        self._execute("UPDATE rawtheapee_profile_data SET is_available = 0, scanned_at = CURRENT_TIMESTAMP")
+        self._execute("UPDATE rawtherapee_profile_data SET is_available = 0, scanned_at = CURRENT_TIMESTAMP")
         written = 0
         for profile in profiles:
             self._execute(
                 """
-                INSERT INTO rawtheapee_profile_data (
+                INSERT INTO rawtherapee_profile_data (
                     profile_path,
                     relative_path,
                     display_label,
@@ -321,9 +348,9 @@ class MetadataDatabase:
             return
         conversion_job_id = conversion_job_id if conversion_job_id is not None and conversion_job_id > 0 else None
         profile_signature = profile_signature if len(profile_signature) == 64 else None
-        if image_type == "rawtheapee_sample" and profile_signature is None:
+        if image_type == "rawtherapee_sample" and profile_signature is None:
             return
-        asset_variant_key = profile_signature if image_type == "rawtheapee_sample" and profile_signature is not None else ""
+        asset_variant_key = profile_signature if image_type == "rawtherapee_sample" and profile_signature is not None else ""
         self._execute(
             """
             INSERT INTO photo_image_assets (
@@ -383,13 +410,13 @@ class MetadataDatabase:
                 ON asset.photo_id = job.photo_id
                AND asset.image_type = job.image_type
                AND (
-                   job.image_type <> 'rawtheapee_sample'
+                   job.image_type <> 'rawtherapee_sample'
                    OR asset.asset_variant_key = job.profile_signature
                )
              WHERE job.status = 'succeeded'
-               AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample')
+               AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample')
                AND (
-                   job.image_type <> 'rawtheapee_sample'
+                   job.image_type <> 'rawtherapee_sample'
                    OR LENGTH(COALESCE(job.profile_signature, '')) = 64
                )
                AND asset.id IS NULL
@@ -400,7 +427,7 @@ class MetadataDatabase:
                        WHEN 'final' THEN 2
                        WHEN 'original' THEN 3
                        WHEN 'embedded' THEN 4
-                       WHEN 'rawtheapee_sample' THEN 5
+                       WHEN 'rawtherapee_sample' THEN 5
                        ELSE 6
                    END,
                    job.completed_at DESC,

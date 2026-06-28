@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-IMAGE_TYPES = {"embedded", "thumbnail", "original", "preview", "final", "rawtheapee_sample"}
+IMAGE_TYPES = {"embedded", "thumbnail", "original", "preview", "final", "rawtherapee_sample"}
 
 
 @dataclass(frozen=True)

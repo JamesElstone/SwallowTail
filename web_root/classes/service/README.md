@@ -189,7 +189,7 @@ and storage migration tables. The current service set uses:
 - `photo_image_assets`
 - `photo_profile_data`
 - `internal_profile_data`
-- `rawtheapee_profile_data`
+- `rawtherapee_profile_data`
 - `photo_metadata`
 - `photo_metadata_property`
 - `photo_audit`

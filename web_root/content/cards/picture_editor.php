@@ -62,6 +62,9 @@ final class _picture_editorCard extends CardBaseFramework
         $previewStatusUrl = (string)($state['preview_status_url'] ?? ($preview['status_url'] ?? ''));
         $baseline = (array)($state['baseline'] ?? []);
         $baselineReady = !empty($baseline['ready']);
+        $rawTherapeeProfiles = (array)($state['rawtherapee_profiles'] ?? []);
+        $rawTherapeeProfileId = max(0, (int)($state['rawtherapee_profile_id'] ?? 0));
+        $rawTherapeeDefaultProfileId = max(0, (int)($state['rawtherapee_default_profile_id'] ?? 0));
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $photoStatusLabel = $previewReady
             ? 'Ready'
@@ -106,6 +109,7 @@ final class _picture_editorCard extends CardBaseFramework
                 </div>
             </div>
             <div class="picture-editor-controls">
+                ' . $this->baselineProfileField($rawTherapeeProfiles, $rawTherapeeProfileId, $rawTherapeeDefaultProfileId) . '
                 <div class="picture-editor-status" data-picture-editor-status>Photo: ' . HelperFramework::escape($photoStatusLabel) . '</div>
                 <div class="picture-editor-display-state" data-picture-editor-display-state data-picture-editor-display-type="' . HelperFramework::escape($displayType) . '">Displaying: ' . HelperFramework::escape($displayLabel) . '</div>
                 <div class="picture-editor-profile-state" data-picture-editor-profile-state>Profile: ' . ($baselineReady ? 'Ready' : 'Preparing') . '</div>
@@ -179,6 +183,29 @@ final class _picture_editorCard extends CardBaseFramework
         return '<label class="picture-editor-toggle" for="' . HelperFramework::escape($id) . '">
             <input id="' . HelperFramework::escape($id) . '" type="checkbox" value="1" ' . ($checked ? 'checked' : '') . ' data-picture-editor-check="' . HelperFramework::escape($key) . '" disabled>
             <span>' . HelperFramework::escape($label) . '</span>
+        </label>';
+    }
+
+    private function baselineProfileField(array $profiles, int $profileId, int $defaultProfileId): string
+    {
+        $options = '<option value="0"' . ($profileId === 0 ? ' selected' : '') . '>RawTherapee built-in defaults</option>';
+        foreach ($profiles as $profile) {
+            $id = max(0, (int)($profile['id'] ?? 0));
+            if ($id <= 0) {
+                continue;
+            }
+            $label = (string)($profile['display_label'] ?? $profile['relative_path'] ?? 'RawTherapee profile');
+            if ($id === $defaultProfileId) {
+                $label .= ' (current default)';
+            }
+            $options .= '<option value="' . HelperFramework::escape((string)$id) . '"' . ($id === $profileId ? ' selected' : '') . '>' . HelperFramework::escape($label) . '</option>';
+        }
+
+        return '<label class="picture-editor-field picture-editor-baseline-profile" for="picture-editor-baseline-profile">
+            <span>Baseline Profile</span>
+            <select id="picture-editor-baseline-profile" data-picture-editor-baseline-profile data-previous-value="' . HelperFramework::escape((string)$profileId) . '">
+                ' . $options . '
+            </select>
         </label>';
     }
 

@@ -7,9 +7,9 @@
  */
 declare(strict_types=1);
 
-use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
+use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
 
-final class RawTheapeeProfilesAction implements ActionInterfaceFramework
+final class RawTherapeeProfilesAction implements ActionInterfaceFramework
 {
     public function handle(RequestFramework $request, PageServiceFramework $services): ActionResultFramework
     {
@@ -17,31 +17,39 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
         $session->startSession();
         $userId = $this->currentUserId($session);
         if ($userId <= 0 || !$this->canAccess($userId) || !$session->isValidCsrfToken((string)$request->input('csrf_token', ''))) {
-            return new ActionResultFramework(false, ['rawtheapee.profiles'], [[
+            return new ActionResultFramework(false, ['rawtherapee.profiles'], [[
                 'type' => 'error',
-                'message' => 'You do not have permission to update RawTheapee profiles, or your security token expired.',
+                'message' => 'You do not have permission to update RawTherapee profiles, or your security token expired.',
             ]]);
         }
 
-        $service = new SwallowtailRawTheapeeProfileService();
-        $profileId = max(0, (int)$request->input('rawtheapee_profile_id', 0));
-        $photoId = max(0, (int)$request->input('rawtheapee_photo_id', 0));
+        $service = new SwallowtailRawTherapeeProfileService();
+        $profileId = max(0, (int)$request->input('rawtherapee_profile_id', 0));
+        $photoId = max(0, (int)$request->input('rawtherapee_photo_id', 0));
         $context = [
             'profile_id' => $profileId,
             'photo_id' => $photoId,
-            'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtheapee_display_url', '')),
-            'display_type' => $this->normaliseDisplayType((string)$request->input('rawtheapee_display_type', 'none')),
-            'photo_search' => $this->normalisePhotoSearch((string)$request->input('rawtheapee_photo_search', '')),
+            'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtherapee_display_url', '')),
+            'display_type' => $this->normaliseDisplayType((string)$request->input('rawtherapee_display_type', 'none')),
+            'photo_search' => $this->normalisePhotoSearch((string)$request->input('rawtherapee_photo_search', '')),
         ];
 
-        $action = (string)$request->input('rawtheapee_profiles_action', 'test');
+        $action = (string)$request->input('rawtherapee_profiles_action', 'test');
         $action = trim($action) !== '' ? trim($action) : 'test';
         if ($action === 'refresh') {
             $ok = $service->requestRefresh();
-            return ActionResultFramework::success(['rawtheapee.profiles'], [[
+            return ActionResultFramework::success(['rawtherapee.profiles'], [[
                 'type' => $ok ? 'success' : 'error',
-                'message' => $ok ? 'RawTheapee profile refresh requested.' : 'Unable to request RawTheapee profile refresh.',
-            ]], [], ['rawtheapee_profiles' => $context]);
+                'message' => $ok ? 'RawTherapee profile refresh requested.' : 'Unable to request RawTherapee profile refresh.',
+            ]], [], ['rawtherapee_profiles' => $context]);
+        }
+
+        if ($action === 'set_default') {
+            $result = $service->setDefaultProfile($profileId);
+            return new ActionResultFramework(!empty($result['success']), ['rawtherapee.profiles'], [[
+                'type' => !empty($result['success']) ? 'success' : 'error',
+                'message' => (string)($result['message'] ?? (!empty($result['success']) ? 'Default RawTherapee profile updated.' : 'Unable to update default RawTherapee profile.')),
+            ]], [], ['rawtherapee_profiles' => $context]);
         }
 
         if ($action === 'search_photo') {
@@ -50,11 +58,11 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
                 : [];
             $context['photo_search_performed'] = true;
 
-            return ActionResultFramework::success(['rawtheapee.profiles'], [], [], ['rawtheapee_profiles' => $context]);
+            return ActionResultFramework::success(['rawtherapee.profiles'], [], [], ['rawtherapee_profiles' => $context]);
         }
 
         if ($action === 'select_photo') {
-            $selectedPhotoId = max(0, (int)$request->input('rawtheapee_selected_photo_id', 0));
+            $selectedPhotoId = max(0, (int)$request->input('rawtherapee_selected_photo_id', 0));
             $selectedPhoto = $this->selectedAccessibleThumbnailPhoto($service, $userId, $selectedPhotoId);
             if ($selectedPhoto === null) {
                 $context['photo_search_results'] = $context['photo_search'] !== ''
@@ -62,10 +70,10 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
                     : [];
                 $context['photo_search_performed'] = true;
 
-                return new ActionResultFramework(false, ['rawtheapee.profiles'], [[
+                return new ActionResultFramework(false, ['rawtherapee.profiles'], [[
                     'type' => 'error',
                     'message' => 'The selected photo was not available.',
-                ]], [], ['rawtheapee_profiles' => $context]);
+                ]], [], ['rawtherapee_profiles' => $context]);
             }
 
             $photoId = $selectedPhotoId;
@@ -101,21 +109,21 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
                     'current_profile' => true,
                 ];
 
-                return ActionResultFramework::success(['rawtheapee.profiles'], [], [], ['rawtheapee_profiles' => $context]);
+                return ActionResultFramework::success(['rawtherapee.profiles'], [], [], ['rawtherapee_profiles' => $context]);
             }
 
             $result = $service->enqueueSample($photoId, $profileId, $userId);
             $context['sample'] = $result;
-            return new ActionResultFramework(!empty($result['success']), ['rawtheapee.profiles'], [[
+            return new ActionResultFramework(!empty($result['success']), ['rawtherapee.profiles'], [[
                 'type' => !empty($result['success']) ? 'success' : 'error',
-                'message' => (string)($result['message'] ?? (!empty($result['success']) ? 'RawTheapee sample queued.' : 'RawTheapee sample could not be queued.')),
-            ]], [], ['rawtheapee_profiles' => $context]);
+                'message' => (string)($result['message'] ?? (!empty($result['success']) ? 'RawTherapee sample queued.' : 'RawTherapee sample could not be queued.')),
+            ]], [], ['rawtherapee_profiles' => $context]);
         }
 
-        return new ActionResultFramework(false, ['rawtheapee.profiles'], [[
+        return new ActionResultFramework(false, ['rawtherapee.profiles'], [[
             'type' => 'error',
-            'message' => 'Unknown RawTheapee profiles action.',
-        ]], [], ['rawtheapee_profiles' => $context]);
+            'message' => 'Unknown RawTherapee profiles action.',
+        ]], [], ['rawtherapee_profiles' => $context]);
     }
 
     private function currentUserId(SessionAuthenticationService $session): int
@@ -127,7 +135,7 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
 
     private function canAccess(int $userId): bool
     {
-        return in_array('rawtheapee_profiles', (new CardAccessFramework())->allowedCardsForUser($userId, ['rawtheapee_profiles']), true);
+        return in_array('rawtherapee_profiles', (new CardAccessFramework())->allowedCardsForUser($userId, ['rawtherapee_profiles']), true);
     }
 
     private function normaliseDisplayUrl(string $displayUrl): string
@@ -141,7 +149,7 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
     {
         $displayType = strtolower(trim($displayType));
 
-        return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
+        return in_array($displayType, ['preview', 'thumbnail', 'rawtherapee'], true) ? $displayType : 'none';
     }
 
     private function normalisePhotoSearch(string $query): string
@@ -149,7 +157,7 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
         return substr(trim($query), 0, 255);
     }
 
-    private function selectedAccessibleThumbnailPhoto(SwallowtailRawTheapeeProfileService $service, int $userId, int $photoId): ?array
+    private function selectedAccessibleThumbnailPhoto(SwallowtailRawTherapeeProfileService $service, int $userId, int $photoId): ?array
     {
         if ($photoId <= 0) {
             return null;

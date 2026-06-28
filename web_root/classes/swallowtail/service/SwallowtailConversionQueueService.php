@@ -19,7 +19,7 @@ use Throwable;
 
 final class SwallowtailConversionQueueService
 {
-    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample'];
     private const PRIORITY_FINAL = 55;
     private const PRIORITY_ORIGINAL = 20;
     private const PRIORITY_THUMBNAIL = 80;
@@ -94,9 +94,11 @@ final class SwallowtailConversionQueueService
 
                 $jobPriority = $this->normalisePriority($jobPriority);
                 $outputPath = $storage->imagePath($base, $sha256, $imageType);
-                $profilePath = $imageType === 'thumbnail'
-                    ? $this->writeThumbnailProfile($photo, $storage)
-                    : null;
+                $profilePath = match ($imageType) {
+                    'thumbnail' => $this->writeThumbnailProfile($photo, $storage),
+                    'original' => $this->baselineProfilePathForPhoto($photo),
+                    default => null,
+                };
                 $jobId = $this->enqueueImageJob(
                     $photoId,
                     $imageType,
@@ -207,6 +209,91 @@ final class SwallowtailConversionQueueService
         }
 
         return $this->nullablePositiveInt($jobs[$imageType]['job_id'] ?? null);
+    }
+
+    public function enqueueOriginalRefresh(
+        int $photoId,
+        ?string $profilePath,
+        ?int $requestedByUserId = null,
+        string|int $priority = self::PRIORITY_PREVIEW
+    ): ?int {
+        if ($photoId <= 0) {
+            return null;
+        }
+
+        $notifyAfterCommit = !InterfaceDB::inTransaction();
+        $jobs = $this->withRetryableQueueTransaction(function () use ($photoId, $profilePath, $requestedByUserId, $priority): array {
+            $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
+            if ($photo === null) {
+                return [];
+            }
+
+            $storage = new SwallowtailStorageService();
+            $sha256 = (string)($photo['original_sha256'] ?? '');
+            $base = (string)($photo['storage_base_location'] ?? '');
+            $jobPriority = $this->normalisePriority($priority);
+            $jobId = $this->enqueueImageJob(
+                $photoId,
+                'original',
+                $storage->imagePath($base, $sha256, 'source'),
+                $storage->imagePath($base, $sha256, 'original'),
+                $profilePath,
+                $jobPriority,
+                $requestedByUserId
+            );
+
+            $this->setPhotoConversionState($photoId, 'processing');
+
+            return [
+                'original' => [
+                    'job_id' => $jobId,
+                    'image_type' => 'original',
+                    'priority' => $jobPriority,
+                    'status' => $jobId !== null ? 'queued' : 'not_queued',
+                ],
+            ];
+        });
+
+        if ($notifyAfterCommit) {
+            $this->notifyRedisForJobs($jobs);
+        }
+
+        return $this->nullablePositiveInt($jobs['original']['job_id'] ?? null);
+    }
+
+    public function obsoleteActiveJobsForPhoto(int $photoId, array $imageTypes, string $message): int
+    {
+        if ($photoId <= 0 || $imageTypes === []) {
+            return 0;
+        }
+
+        $imageTypes = array_values(array_intersect(
+            self::IMAGE_TYPES,
+            array_map(static fn(mixed $value): string => strtolower(trim((string)$value)), $imageTypes)
+        ));
+        if ($imageTypes === []) {
+            return 0;
+        }
+
+        $params = ['photo_id' => $photoId, 'last_error' => substr($message, 0, 1000)];
+        $placeholders = [];
+        foreach ($imageTypes as $index => $imageType) {
+            $key = 'image_type_' . $index;
+            $placeholders[] = ':' . $key;
+            $params[$key] = $imageType;
+        }
+
+        return InterfaceDB::prepareExecute(
+            "UPDATE photo_conversion_jobs
+             SET status = 'obsolete',
+                 last_error = :last_error,
+                 completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP),
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE photo_id = :photo_id
+               AND image_type IN (" . implode(', ', $placeholders) . ")
+               AND status IN ('queued', 'processing')",
+            $params
+        )->rowCount();
     }
 
     public function enqueueImageJob(
@@ -661,6 +748,14 @@ final class SwallowtailConversionQueueService
         @chmod($path, 0660);
 
         return $path;
+    }
+
+    private function baselineProfilePathForPhoto(array $photo): ?string
+    {
+        $profile = (new SwallowtailRawTherapeeProfileService())->profileForPhoto($photo);
+        $path = trim((string)($profile['profile_path'] ?? ''));
+
+        return $path !== '' ? $path : null;
     }
 
     private function normaliseImageType(string $imageType): string

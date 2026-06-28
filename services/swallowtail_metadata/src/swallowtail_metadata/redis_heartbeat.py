@@ -127,8 +127,8 @@ class RedisHeartbeat:
             reason=str(payload.get("reason") or ""),
         )
 
-    def pop_rawtheapee_profile_refresh(self) -> bool:
-        queue = self.config.rawtheapee_profile_refresh_queue.strip()
+    def pop_rawtherapee_profile_refresh(self) -> bool:
+        queue = self.config.rawtherapee_profile_refresh_queue.strip()
         if queue == "":
             return False
         try:

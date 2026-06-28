@@ -32,6 +32,11 @@ $payload = [
 $action = strtolower(trim((string)$request->input('action', $request->query('action', 'preview_profile'))));
 $service = new SwallowtailPreviewProfileService();
 $result = match ($action) {
+    'baseline_profile' => $service->changeBaselineProfile(
+        $photoId,
+        $security->userId(),
+        max(0, (int)$request->input('rawtherapee_profile_id', $request->input('baseline_profile_id', 0)))
+    ),
     'final_profile' => $service->enqueueFinal($photoId, $security->userId(), $payload),
     default => $service->enqueuePreview($photoId, $security->userId(), $payload),
 };

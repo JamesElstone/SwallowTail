@@ -27,7 +27,7 @@
   }
 
   function setStatusImage(panel, text) {
-    const image = panel.querySelector('[data-rawtheapee-profile-state-image="true"]');
+    const image = panel.querySelector('[data-rawtherapee-profile-state-image="true"]');
     if (!(image instanceof HTMLImageElement)) {
       return;
     }
@@ -41,22 +41,22 @@
   }
 
   function setStatus(panel, text) {
-    setText(panel.querySelector('[data-rawtheapee-profile-status="true"]'), text);
+    setText(panel.querySelector('[data-rawtherapee-profile-status="true"]'), text);
     setStatusImage(panel, text);
   }
 
   function setImageShown(panel, text) {
-    setText(panel.querySelector('[data-rawtheapee-profile-image-shown="true"]'), text);
+    setText(panel.querySelector('[data-rawtherapee-profile-image-shown="true"]'), text);
   }
 
   function setDisplayFields(panel, url, type) {
-    panel.querySelectorAll('[data-rawtheapee-display-url-field="true"]').forEach((urlField) => {
+    panel.querySelectorAll('[data-rawtherapee-display-url-field="true"]').forEach((urlField) => {
       if (urlField instanceof HTMLInputElement) {
         urlField.value = String(url || '');
       }
     });
 
-    panel.querySelectorAll('[data-rawtheapee-display-type-field="true"]').forEach((typeField) => {
+    panel.querySelectorAll('[data-rawtherapee-display-type-field="true"]').forEach((typeField) => {
       if (typeField instanceof HTMLInputElement) {
         typeField.value = String(type || 'none');
       }
@@ -68,7 +68,7 @@
       return;
     }
 
-    setDisplayFields(panel, image.getAttribute('src') || '', String(image.dataset.rawtheapeeProfileImageType || 'none'));
+    setDisplayFields(panel, image.getAttribute('src') || '', String(image.dataset.rawtherapeeProfileImageType || 'none'));
   }
 
   function imageLoaded(image) {
@@ -94,9 +94,9 @@
   }
 
   function resolvedImagePayload(payload) {
-    const rawTheapeeUrl = String(payload.rawtheapee_sample_url || '').trim();
-    if (rawTheapeeUrl !== '') {
-      return { type: 'rawtheapee', url: rawTheapeeUrl };
+    const rawTherapeeUrl = String(payload.rawtherapee_sample_url || '').trim();
+    if (rawTherapeeUrl !== '') {
+      return { type: 'rawtherapee', url: rawTherapeeUrl };
     }
 
     const previewUrl = String(payload.preview_url || '').trim();
@@ -126,10 +126,10 @@
       setStatus(panel, statusLabel(status));
 
       const resolved = resolvedImagePayload(payload);
-      const image = panel.querySelector('[data-rawtheapee-profile-image="true"]');
+      const image = panel.querySelector('[data-rawtherapee-profile-image="true"]');
       if ((status === 'succeeded' || payload.ready === true) && resolved.url !== '' && image instanceof HTMLImageElement) {
         if ((image.getAttribute('src') || '') === resolved.url && imageLoaded(image)) {
-          image.dataset.rawtheapeeProfileImageType = resolved.type;
+          image.dataset.rawtherapeeProfileImageType = resolved.type;
           setImageShown(panel, resolved.type);
           setDisplayFields(panel, resolved.url, resolved.type);
           setStatus(panel, 'Ready');
@@ -138,7 +138,7 @@
 
         setStatus(panel, 'Loading');
         setImageShown(panel, resolved.type);
-        image.dataset.rawtheapeeProfileImageType = resolved.type;
+        image.dataset.rawtherapeeProfileImageType = resolved.type;
         image.addEventListener('load', () => {
           setDisplayFields(panel, resolved.url, resolved.type);
           setStatus(panel, 'Ready');
@@ -159,14 +159,14 @@
     }
   }
 
-  function initialiseRawTheapeeProfilePanel(panel) {
+  function initialiseRawTherapeeProfilePanel(panel) {
     if (!(panel instanceof HTMLElement) || panels.has(panel)) {
       return;
     }
 
     panels.add(panel);
-    const image = panel.querySelector('[data-rawtheapee-profile-image="true"]');
-    const statusUrl = String(panel.dataset.rawtheapeeProfileStatusUrl || '').trim();
+    const image = panel.querySelector('[data-rawtherapee-profile-image="true"]');
+    const statusUrl = String(panel.dataset.rawtherapeeProfileStatusUrl || '').trim();
 
     if (statusUrl !== '') {
       pollStatus(panel, statusUrl, 0);
@@ -184,7 +184,7 @@
       return;
     }
 
-    root.querySelectorAll('[data-rawtheapee-profile-panel="true"]').forEach(initialiseRawTheapeeProfilePanel);
+    root.querySelectorAll('[data-rawtherapee-profile-panel="true"]').forEach(initialiseRawTherapeeProfilePanel);
   }
 
   function prepareInternalProfileMove(button) {
@@ -214,6 +214,74 @@
     }
   }
 
+  function syncRawTherapeeDefaultButton(select) {
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const form = select.closest('form');
+    const button = form instanceof HTMLFormElement ? form.querySelector('[data-rawtherapee-set-default-button="true"]') : null;
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const selected = String(select.value || '0');
+    const defaultProfile = String(select.dataset.rawtherapeeDefaultProfileId || '0');
+    const disabled = selected === '0' || selected === defaultProfile;
+    button.disabled = disabled;
+    button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+
+  async function changePictureEditorBaseline(select) {
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const editor = select.closest('[data-picture-editor="true"]');
+    if (!(editor instanceof HTMLElement)) {
+      return;
+    }
+
+    const url = String(editor.dataset.profileUrl || '/api/photo-update.php').trim() || '/api/photo-update.php';
+    const photoId = String(editor.dataset.photoId || '').trim();
+    const csrfToken = String(editor.dataset.csrfToken || '').trim();
+    const profileState = editor.querySelector('[data-picture-editor-profile-state]');
+    const previousValue = String(select.dataset.previousValue || select.defaultValue || '0');
+    const form = new FormData();
+    form.set('action', 'baseline_profile');
+    form.set('photo_id', photoId);
+    form.set('rawtherapee_profile_id', select.value);
+    if (csrfToken !== '') {
+      form.set('csrf_token', csrfToken);
+    }
+
+    select.disabled = true;
+    setText(profileState, 'Profile: Queued');
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        body: form,
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.success !== true) {
+        throw new Error((payload.errors || [payload.message || 'Unable to change RawTherapee baseline profile.']).join(' '));
+      }
+      select.dataset.previousValue = select.value;
+      editor.dataset.baselineReady = '0';
+      setText(profileState, 'Profile: Preparing');
+      const statusNode = editor.querySelector('[data-picture-editor-status]');
+      setText(statusNode, 'Photo: Queued');
+    } catch (error) {
+      console.error(error);
+      select.value = previousValue;
+      setText(profileState, 'Profile: Change failed');
+    } finally {
+      select.disabled = false;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => initialise(document));
 
   document.addEventListener('click', (event) => {
@@ -225,12 +293,21 @@
     prepareInternalProfileMove(target.closest('[data-internal-profile-move-direction]'));
   });
 
+  document.addEventListener('change', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLSelectElement && target.matches('[data-picture-editor-baseline-profile]')) {
+      changePictureEditorBaseline(target);
+    } else if (target instanceof HTMLSelectElement && target.matches('[data-rawtherapee-default-profile-id]')) {
+      syncRawTherapeeDefaultButton(target);
+    }
+  });
+
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof HTMLElement) {
-          if (node.matches('[data-rawtheapee-profile-panel="true"]')) {
-            initialiseRawTheapeeProfilePanel(node);
+          if (node.matches('[data-rawtherapee-profile-panel="true"]')) {
+            initialiseRawTherapeeProfilePanel(node);
           }
           initialise(node);
         }
@@ -244,7 +321,7 @@
   });
 
   window.addEventListener('pagehide', () => {
-    document.querySelectorAll('[data-rawtheapee-profile-panel="true"]').forEach((panel) => {
+    document.querySelectorAll('[data-rawtherapee-profile-panel="true"]').forEach((panel) => {
       const timer = pollTimers.get(panel);
       if (typeof timer === 'number') {
         window.clearTimeout(timer);

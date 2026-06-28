@@ -10,7 +10,7 @@ declare(strict_types=1);
 use Swallowtail\Service\SwallowtailPhotoLibraryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
 use Swallowtail\Service\SwallowtailEventManagementService;
-use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
+use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
 use Swallowtail\Service\SwallowtailStorageService;
 use Swallowtail\Service\SwallowtailWebRawUploadService;
 
@@ -117,7 +117,7 @@ function swallowtail_ui_record_asset(
             'bytes' => max(1, (int)@filesize($path)),
             'modified_at' => max(1, (int)@filemtime($path)),
             'profile_signature' => $profileSignature,
-            'asset_variant_key' => $imageType === 'rawtheapee_sample' && $profileSignature !== null ? $profileSignature : '',
+            'asset_variant_key' => $imageType === 'rawtherapee_sample' && $profileSignature !== null ? $profileSignature : '',
             'conversion_job_id' => $conversionJobId,
         ]
     );
@@ -674,7 +674,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame(0, (int)$uploaderFilteredGallery['pagination']['total_items']);
 });
 
-$harness->check(SwallowtailRawTheapeeProfileService::class, 'searches accessible thumbnail photos by id filename and checksum', function () use ($harness, $swallowtailUiCreateSchema): void {
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'searches accessible thumbnail photos by id filename and checksum', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
     $locations = (new SwallowtailStorageService())->storageLocations();
     $baseLocation = (string)($locations[0]['storage_base_location'] ?? '');
@@ -738,7 +738,7 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'searches accessible
         );
     }
 
-    $service = new SwallowtailRawTheapeeProfileService();
+    $service = new SwallowtailRawTherapeeProfileService();
     $adminFilenameRows = $service->searchAccessibleThumbnailPhotos(901, 'Recall', 10);
     $uploaderFilenameRows = $service->searchAccessibleThumbnailPhotos(902, 'Recall', 10);
     $noAccessRows = $service->searchAccessibleThumbnailPhotos(904, 'Recall', 10);

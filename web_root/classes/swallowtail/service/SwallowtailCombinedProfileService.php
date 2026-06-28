@@ -147,6 +147,7 @@ final class SwallowtailCombinedProfileService
         if (
             !InterfaceDB::tableExists(self::INTERNAL_TABLE)
             || !InterfaceDB::columnExists(self::INTERNAL_TABLE, 'enabled')
+            || InterfaceDB::columnExists('photos', 'rawtherapee_profile_id')
         ) {
             return '';
         }
@@ -229,6 +230,11 @@ final class SwallowtailCombinedProfileService
             ];
         }
 
+        $baseline = $this->baselineSignatureRow($photoId);
+        if ($baseline !== null) {
+            $rows[] = $baseline;
+        }
+
         if ($imageType !== 'embedded' && InterfaceDB::tableExists(self::INTERNAL_TABLE)) {
             $enabledFilter = InterfaceDB::columnExists(self::INTERNAL_TABLE, 'enabled') ? ' AND enabled = 1' : '';
             $internalRows = InterfaceDB::fetchAll(
@@ -257,6 +263,43 @@ final class SwallowtailCombinedProfileService
         usort($rows, static fn(array $left, array $right): int => $left['sort'] <=> $right['sort']);
 
         return $rows;
+    }
+
+    private function baselineSignatureRow(int $photoId): ?array
+    {
+        if (
+            $photoId <= 0
+            || !InterfaceDB::columnExists('photos', 'rawtherapee_profile_id')
+            || !InterfaceDB::tableExists('rawtherapee_profile_data')
+        ) {
+            return null;
+        }
+
+        $row = InterfaceDB::fetchOne(
+            "SELECT photo.rawtherapee_profile_id, profile.profile_path, profile.relative_path, profile.profile_hash, profile.profile_bytes, profile.profile_mtime
+             FROM photos photo
+             LEFT JOIN rawtherapee_profile_data profile
+               ON profile.id = photo.rawtherapee_profile_id
+             WHERE photo.id = :photo_id
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return [
+            'sort' => 'baseline' . "\t" . str_pad((string)max(0, (int)($row['rawtherapee_profile_id'] ?? 0)), 10, '0', STR_PAD_LEFT),
+            'part' => implode("\t", [
+                'baseline',
+                (string)max(0, (int)($row['rawtherapee_profile_id'] ?? 0)),
+                (string)($row['profile_hash'] ?? ''),
+                (string)($row['profile_path'] ?? ''),
+                (string)($row['relative_path'] ?? ''),
+                (string)max(0, (int)($row['profile_bytes'] ?? 0)),
+                (string)max(0, (int)($row['profile_mtime'] ?? 0)),
+            ]),
+        ];
     }
 
     private function renderRows(array $rows): string

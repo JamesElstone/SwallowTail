@@ -1,5 +1,5 @@
 /*
- * Store RawTheapee profile samples as separate asset variants per profile signature.
+ * Store RawTherapee profile samples as separate asset variants per profile signature.
  */
 
 ALTER TABLE photo_image_assets
@@ -7,7 +7,7 @@ ALTER TABLE photo_image_assets
 
 UPDATE photo_image_assets
 SET asset_variant_key = profile_signature
-WHERE image_type = 'rawtheapee_sample'
+WHERE image_type = 'rawtherapee_sample'
   AND profile_signature REGEXP '^[0-9a-f]{64}$';
 
 ALTER TABLE photo_image_assets

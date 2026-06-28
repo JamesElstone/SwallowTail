@@ -11,7 +11,7 @@ namespace Swallowtail\Service;
 
 final class SwallowtailImageServeService
 {
-    private const IMAGE_TYPES = ['original', 'embedded', 'thumbnail', 'preview', 'final', 'rawtheapee_sample'];
+    private const IMAGE_TYPES = ['original', 'embedded', 'thumbnail', 'preview', 'final', 'rawtherapee_sample'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -40,14 +40,14 @@ final class SwallowtailImageServeService
             return null;
         }
 
-        $info = $imageType === 'rawtheapee_sample'
+        $info = $imageType === 'rawtherapee_sample'
             ? $this->assetService->assetForPhotoProfileSignature($photo, $imageType, $profileSignature)
             : $this->assetService->assetForPhoto($photo, $imageType);
         if ($info === null) {
             return null;
         }
 
-        $etagSource = $imageType === 'rawtheapee_sample'
+        $etagSource = $imageType === 'rawtherapee_sample'
             ? (string)($info['profile_signature'] ?? '')
             : (string)($info['sha256'] ?? '');
         $bytes = (int)$info['bytes'];

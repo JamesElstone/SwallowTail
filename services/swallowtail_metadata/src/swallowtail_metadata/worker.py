@@ -13,7 +13,7 @@ from typing import Any
 from .config import AppConfig
 from .db import MetadataDatabase
 from .exiftool import ExifToolRunner
-from .profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
+from .profile import RawTherapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
 from .redis_heartbeat import AssetNotification, RedisHeartbeat
 
 
@@ -24,11 +24,11 @@ class MetadataWorker:
         self.db = MetadataDatabase(config.database)
         self.exiftool = ExifToolRunner(config.metadata.exiftool_binary)
         self.profile_runner = RawTherapeeBaselineRunner(config.metadata.rawtherapee_binary)
-        self.rawtheapee_scanner = RawTheapeeProfileScanner(config.metadata.rawtheapee_profile_root)
+        self.rawtherapee_scanner = RawTherapeeProfileScanner(config.metadata.rawtherapee_profile_root)
         self.redis = RedisHeartbeat(config.redis)
         self.shutdown_requested = threading.Event()
         self.idle_delay_seconds = config.worker.poll_min_seconds
-        self.last_rawtheapee_profile_scan_at = time.time()
+        self.last_rawtherapee_profile_scan_at = time.time()
         self.data_integrity_requested = True
         self.profiled_derivative_queue_requested = True
 
@@ -37,7 +37,7 @@ class MetadataWorker:
 
     def run_forever(self) -> None:
         self.log.info("Metadata worker started")
-        self.scan_rawtheapee_profiles("startup")
+        self.scan_rawtherapee_profiles("startup")
         while not self.shutdown_requested.is_set():
             processed = self.run_once()
             if processed:
@@ -50,10 +50,10 @@ class MetadataWorker:
 
     def run_once(self) -> bool:
         self._touch_status()
-        if not hasattr(self, "last_rawtheapee_profile_scan_at"):
-            self.last_rawtheapee_profile_scan_at = time.time()
-        if hasattr(self.redis, "pop_rawtheapee_profile_refresh") and self.redis.pop_rawtheapee_profile_refresh():
-            self.scan_rawtheapee_profiles("refresh")
+        if not hasattr(self, "last_rawtherapee_profile_scan_at"):
+            self.last_rawtherapee_profile_scan_at = time.time()
+        if hasattr(self.redis, "pop_rawtherapee_profile_refresh") and self.redis.pop_rawtherapee_profile_refresh():
+            self.scan_rawtherapee_profiles("refresh")
             self._touch_status()
             return True
         if hasattr(self.redis, "pop_asset_notification"):
@@ -71,8 +71,8 @@ class MetadataWorker:
                     data_integrity_notification.action,
                     data_integrity_notification.reason,
                 )
-        if time.time() - self.last_rawtheapee_profile_scan_at >= 86400:
-            self.scan_rawtheapee_profiles("daily")
+        if time.time() - self.last_rawtherapee_profile_scan_at >= 86400:
+            self.scan_rawtherapee_profiles("daily")
             self._touch_status()
             return True
         urgent_profile_photo = self._urgent_profile_photo()
@@ -109,14 +109,14 @@ class MetadataWorker:
         self._touch_status()
         return True
 
-    def scan_rawtheapee_profiles(self, reason: str) -> int:
-        profiles = self.rawtheapee_scanner.scan()
-        count = self.db.replace_rawtheapee_profiles(profiles)
-        self.last_rawtheapee_profile_scan_at = time.time()
+    def scan_rawtherapee_profiles(self, reason: str) -> int:
+        profiles = self.rawtherapee_scanner.scan()
+        count = self.db.replace_rawtherapee_profiles(profiles)
+        self.last_rawtherapee_profile_scan_at = time.time()
         self.log.info(
-            "RawTheapee profile scan completed; reason=%s root=%s profiles=%s",
+            "RawTherapee profile scan completed; reason=%s root=%s profiles=%s",
             reason,
-            self.config.metadata.rawtheapee_profile_root,
+            self.config.metadata.rawtherapee_profile_root,
             count,
         )
         return count
@@ -284,14 +284,20 @@ class MetadataWorker:
                 raise RuntimeError(f"Source CR2 file was not found: {source_path}")
             source_profile_path = self.image_path(photo, "source_profile")
             self.db.mark_profile_processing(photo_id)
+            rawtherapee_profile = self.db.rawtherapee_profile_for_photo(photo) if hasattr(self.db, "rawtherapee_profile_for_photo") else None
+            rawtherapee_profile_text = str(rawtherapee_profile.get("profile_path") or "") if rawtherapee_profile else ""
+            rawtherapee_profile_path = Path(rawtherapee_profile_text) if rawtherapee_profile_text != "" else None
             profile_source = "existing"
             version = self.profile_runner.version()
             if not source_profile_path.is_file() or source_profile_path.stat().st_size <= 0:
                 profile_source = "generated"
-                result = self.profile_runner.generate(source_path, source_profile_path)
+                result = self.profile_runner.generate(source_path, source_profile_path, rawtherapee_profile_path) if rawtherapee_profile_path is not None else self.profile_runner.generate(source_path, source_profile_path)
                 version = result.version
             properties = parse_pp3_properties(source_profile_path.read_text(encoding="utf-8"))
-            store_stats = self.db.replace_profile_data(photo_id, properties, str(source_profile_path), version)
+            try:
+                store_stats = self.db.replace_profile_data(photo_id, properties, str(source_profile_path), version, rawtherapee_profile)
+            except TypeError:
+                store_stats = self.db.replace_profile_data(photo_id, properties, str(source_profile_path), version)
             duration_seconds = time.perf_counter() - started_at
             self.log.info(
                 "Stored RawTherapee source profile for photo=%s path=%s source=%s duration_seconds=%.3f profile_rows=%s profile_sections=%s profile_insert_batches=%s profile_largest_value_length=%s profile_max_value_chunks=%s",

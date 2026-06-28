@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS photo_image_assets (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   photo_id bigint(20) NOT NULL,
-  image_type enum('embedded','thumbnail','original','preview','final','rawtheapee_sample') NOT NULL,
+  image_type enum('embedded','thumbnail','original','preview','final','rawtherapee_sample') NOT NULL,
   sha256 char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   bytes bigint(20) unsigned NOT NULL,
   modified_at int(10) unsigned NOT NULL DEFAULT 0,

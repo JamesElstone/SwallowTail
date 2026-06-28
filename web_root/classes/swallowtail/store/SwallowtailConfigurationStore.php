@@ -44,9 +44,9 @@ final class SwallowtailConfigurationStore
                 'metadata_profile_queue' => 'swallowtail:metadata:profile_urgent',
                 'metadata_asset_queue' => 'swallowtail:metadata:asset_urgent',
                 'metadata_data_integrity_queue' => 'swallowtail:metadata:data_integrity',
-                'rawtheapee_profile_refresh_queue' => 'swallowtail:metadata:rawtheapee_profiles',
+                'rawtherapee_profile_refresh_queue' => 'swallowtail:metadata:rawtherapee_profiles',
             ],
-            'rawtheapee' => [
+            'rawtherapee' => [
                 'profile_root' => '/usr/local/share/rawtherapee/profiles',
             ],
             'trace' => [

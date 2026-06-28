@@ -404,7 +404,7 @@ final class SwallowtailDataIntegrityCheckService
             . number_format((int)$result['queued_profile_jobs'])
             . ' profiled refresh job(s).'
             . ((int)$result['unsupported_sample_rows'] > 0
-                ? ' RawTheapee sample rows cannot be repaired automatically and may need to be regenerated from the profile card.'
+                ? ' RawTherapee sample rows cannot be repaired automatically and may need to be regenerated from the profile card.'
                 : '');
 
         return $result;
@@ -824,7 +824,7 @@ final class SwallowtailDataIntegrityCheckService
         return max(0, (int)InterfaceDB::fetchColumn(
             "SELECT COUNT(*)
              FROM photo_image_assets
-             WHERE image_type IN ('preview', 'final', 'rawtheapee_sample')
+             WHERE image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND (profile_signature IS NULL OR profile_signature = '')"
         ));
     }
@@ -839,7 +839,7 @@ final class SwallowtailDataIntegrityCheckService
             "SELECT COUNT(*)
              FROM photo_conversion_jobs
              WHERE status = 'succeeded'
-               AND image_type IN ('preview', 'final', 'rawtheapee_sample')
+               AND image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND (profile_signature IS NULL OR profile_signature = '')"
         ));
     }
@@ -855,7 +855,7 @@ final class SwallowtailDataIntegrityCheckService
              FROM photo_image_assets asset
              INNER JOIN photo_conversion_jobs job
                 ON job.id = asset.conversion_job_id
-             WHERE asset.image_type IN ('preview', 'final', 'rawtheapee_sample')
+             WHERE asset.image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND LENGTH(COALESCE(asset.profile_signature, '')) = 64
                AND LENGTH(COALESCE(job.profile_signature, '')) = 64
                AND asset.profile_signature <> job.profile_signature"
@@ -978,7 +978,7 @@ final class SwallowtailDataIntegrityCheckService
 
         $backfill = InterfaceDB::transaction(function (): array {
             $assetsBackfilled = 0;
-            $jobsBackfilled = $this->backfillRawTheapeeSampleJobSignatures();
+            $jobsBackfilled = $this->backfillRawTherapeeSampleJobSignatures();
             $jobsBackfilled += $this->backfillPreviewFinalJobSignaturesFromCurrentProfiles();
             $assetRows = InterfaceDB::fetchAll(
                 "SELECT asset.id, job.profile_signature
@@ -986,7 +986,7 @@ final class SwallowtailDataIntegrityCheckService
                  INNER JOIN photo_conversion_jobs job
                     ON job.id = asset.conversion_job_id
                    AND job.image_type = asset.image_type
-                 WHERE asset.image_type IN ('preview', 'final', 'rawtheapee_sample')
+                 WHERE asset.image_type IN ('preview', 'final', 'rawtherapee_sample')
                    AND (asset.profile_signature IS NULL OR asset.profile_signature = '')
                    AND LENGTH(COALESCE(job.profile_signature, '')) = 64"
             );
@@ -1016,7 +1016,7 @@ final class SwallowtailDataIntegrityCheckService
                  INNER JOIN photo_image_assets asset
                     ON asset.conversion_job_id = job.id
                    AND asset.image_type = job.image_type
-                 WHERE job.image_type IN ('preview', 'final', 'rawtheapee_sample')
+                 WHERE job.image_type IN ('preview', 'final', 'rawtherapee_sample')
                    AND (job.profile_signature IS NULL OR job.profile_signature = '')
                    AND LENGTH(COALESCE(asset.profile_signature, '')) = 64"
             );
@@ -1104,25 +1104,25 @@ final class SwallowtailDataIntegrityCheckService
         return $updated;
     }
 
-    private function backfillRawTheapeeSampleJobSignatures(): int
+    private function backfillRawTherapeeSampleJobSignatures(): int
     {
         if (!InterfaceDB::columnsExists('photo_conversion_jobs', ['id', 'image_type', 'profile_path', 'profile_signature'])) {
             return 0;
         }
 
-        $rawTheapee = new SwallowtailRawTheapeeProfileService();
+        $rawTherapee = new SwallowtailRawTherapeeProfileService();
         $updated = 0;
         foreach (InterfaceDB::fetchAll(
             "SELECT id, profile_path
              FROM photo_conversion_jobs
-             WHERE image_type = 'rawtheapee_sample'
+             WHERE image_type = 'rawtherapee_sample'
                AND (profile_signature IS NULL OR profile_signature = '')
                AND profile_path IS NOT NULL
                AND profile_path <> ''
              ORDER BY id"
         ) as $row) {
             $jobId = max(0, (int)($row['id'] ?? 0));
-            $signature = $rawTheapee->profileSignatureForPath((string)($row['profile_path'] ?? ''));
+            $signature = $rawTherapee->profileSignatureForPath((string)($row['profile_path'] ?? ''));
             if ($jobId <= 0 || !$this->isSignature($signature)) {
                 continue;
             }
@@ -1155,7 +1155,7 @@ final class SwallowtailDataIntegrityCheckService
         $assetRows = InterfaceDB::fetchAll(
             "SELECT id, photo_id, image_type
              FROM photo_image_assets
-             WHERE image_type IN ('preview', 'final', 'rawtheapee_sample')
+             WHERE image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND (profile_signature IS NULL OR profile_signature = '')
              ORDER BY id"
         );
@@ -1164,7 +1164,7 @@ final class SwallowtailDataIntegrityCheckService
             $assetId = max(0, (int)($asset['id'] ?? 0));
             $photoId = max(0, (int)($asset['photo_id'] ?? 0));
             $imageType = strtolower(trim((string)($asset['image_type'] ?? '')));
-            if ($assetId <= 0 || $photoId <= 0 || !in_array($imageType, ['preview', 'final', 'rawtheapee_sample'], true)) {
+            if ($assetId <= 0 || $photoId <= 0 || !in_array($imageType, ['preview', 'final', 'rawtherapee_sample'], true)) {
                 continue;
             }
 
@@ -1297,7 +1297,7 @@ final class SwallowtailDataIntegrityCheckService
             $count += max(0, (int)InterfaceDB::fetchColumn(
                 "SELECT COUNT(*)
                  FROM photo_image_assets
-                 WHERE image_type = 'rawtheapee_sample'
+                 WHERE image_type = 'rawtherapee_sample'
                    AND (profile_signature IS NULL OR profile_signature = '')"
             ));
         }
@@ -1307,7 +1307,7 @@ final class SwallowtailDataIntegrityCheckService
                 "SELECT COUNT(*)
                  FROM photo_conversion_jobs
                  WHERE status = 'succeeded'
-                   AND image_type = 'rawtheapee_sample'
+                   AND image_type = 'rawtherapee_sample'
                    AND (profile_signature IS NULL OR profile_signature = '')"
             ));
         }
@@ -1469,7 +1469,7 @@ final class SwallowtailDataIntegrityCheckService
         $rows = InterfaceDB::fetchAll(
             "SELECT id, photo_id, image_type
              FROM photo_image_assets
-             WHERE image_type IN ('preview', 'final', 'rawtheapee_sample')
+             WHERE image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND (profile_signature IS NULL OR profile_signature = '')
              ORDER BY id
              LIMIT " . $limit
@@ -1498,7 +1498,7 @@ final class SwallowtailDataIntegrityCheckService
             "SELECT id, photo_id, image_type
              FROM photo_conversion_jobs
              WHERE status = 'succeeded'
-               AND image_type IN ('preview', 'final', 'rawtheapee_sample')
+               AND image_type IN ('preview', 'final', 'rawtherapee_sample')
                AND (profile_signature IS NULL OR profile_signature = '')
              ORDER BY id
              LIMIT " . $limit

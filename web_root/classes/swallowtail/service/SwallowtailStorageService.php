@@ -19,7 +19,7 @@ use Throwable;
 final class SwallowtailStorageService
 {
     public const DATA_DIRECTORY = 'swallowtail-data';
-    public const IMAGE_TYPES = ['source', 'source_profile', 'embedded', 'thumbnail', 'thumbnail_profile', 'preview', 'preview_profile', 'original', 'final', 'final_profile', 'rawtheapee_sample'];
+    public const IMAGE_TYPES = ['source', 'source_profile', 'embedded', 'thumbnail', 'thumbnail_profile', 'preview', 'preview_profile', 'original', 'final', 'final_profile', 'rawtherapee_sample'];
     private const STORAGE_DIRECTORY_MODE = 02770;
 
     public function storageLocations(int $requiredBytes = 0, ?string $checksum = null): array
@@ -293,7 +293,7 @@ final class SwallowtailStorageService
         $checksum = $this->normaliseChecksum($checksum);
         $imageType = $this->normaliseImageType($imageType);
         $variantKey = strtolower(trim($variantKey));
-        if ($imageType !== 'rawtheapee_sample' || preg_match('/^[a-f0-9]{64}$/', $variantKey) !== 1) {
+        if ($imageType !== 'rawtherapee_sample' || preg_match('/^[a-f0-9]{64}$/', $variantKey) !== 1) {
             throw new InvalidArgumentException('Unsupported image variant.');
         }
 

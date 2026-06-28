@@ -21,7 +21,7 @@ class BaselineResult:
 
 
 @dataclass(frozen=True)
-class RawTheapeeProfileRow:
+class RawTherapeeProfileRow:
     profile_path: str
     relative_path: str
     display_label: str
@@ -31,15 +31,15 @@ class RawTheapeeProfileRow:
     profile_content: str
 
 
-class RawTheapeeProfileScanner:
+class RawTherapeeProfileScanner:
     def __init__(self, root: str):
         self.root = Path(root)
 
-    def scan(self) -> list[RawTheapeeProfileRow]:
+    def scan(self) -> list[RawTherapeeProfileRow]:
         if not self.root.is_dir():
             return []
 
-        rows: list[RawTheapeeProfileRow] = []
+        rows: list[RawTherapeeProfileRow] = []
         for path in sorted(self.root.rglob("*.pp3"), key=lambda item: str(item).lower()):
             if not path.is_file():
                 continue
@@ -50,7 +50,7 @@ class RawTheapeeProfileScanner:
             relative = path.relative_to(self.root).as_posix()
             stat = path.stat()
             rows.append(
-                RawTheapeeProfileRow(
+                RawTherapeeProfileRow(
                     profile_path=str(path),
                     relative_path=relative,
                     display_label=self.display_label(relative),
@@ -82,10 +82,13 @@ class RawTherapeeBaselineRunner:
         if result.returncode != 0 and "rawtherapee" not in version.lower():
             raise RuntimeError(version or "RawTherapee did not run")
 
-    def generate(self, source_path: Path, baseline_path: Path) -> BaselineResult:
+    def generate(self, source_path: Path, baseline_path: Path, profile_path: Path | None = None) -> BaselineResult:
         baseline_path.parent.mkdir(parents=True, exist_ok=True)
         scratch = baseline_path.with_name(baseline_path.stem + "_scratch.jpg")
-        command = [self.binary, "-q", "-Y", "-O", str(scratch), "-j1", "-c", str(source_path)]
+        command = [self.binary, "-q", "-Y", "-O", str(scratch), "-j1"]
+        if profile_path is not None:
+            command.extend(["-p", str(profile_path)])
+        command.extend(["-c", str(source_path)])
         runtime_path = self._create_runtime_path(baseline_path)
         try:
             env = self._runtime_environment(runtime_path)

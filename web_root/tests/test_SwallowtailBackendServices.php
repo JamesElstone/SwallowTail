@@ -25,7 +25,7 @@ use Swallowtail\Service\SwallowtailPreviewProfileService;
 use Swallowtail\Service\SwallowtailProfileDataService;
 use Swallowtail\Service\SwallowtailQuickChecksumApiService;
 use Swallowtail\Service\SwallowtailRawUploadApiService;
-use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
+use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
 use Swallowtail\Service\SwallowtailSpiceBushRegistrationApiService;
 use Swallowtail\Service\SwallowtailStorageCacheService;
 use Swallowtail\Service\SwallowtailStorageLocationService;
@@ -52,7 +52,7 @@ $harness->run(SwallowtailCombinedProfileService::class);
 $harness->run(SwallowtailPreviewProfileService::class);
 $harness->run(SwallowtailDataIntegrityCheckService::class);
 $harness->run(SwallowtailDownloadService::class);
-$harness->run(SwallowtailRawTheapeeProfileService::class);
+$harness->run(SwallowtailRawTherapeeProfileService::class);
 
 function swallowtail_backend_remove_tree(string $path): void
 {
@@ -151,7 +151,7 @@ function swallowtail_backend_record_asset(
             'bytes' => max(1, (int)@filesize($path)),
             'modified_at' => max(1, (int)@filemtime($path)),
             'profile_signature' => $profileSignature,
-            'asset_variant_key' => $imageType === 'rawtheapee_sample' && $profileSignature !== null ? $profileSignature : '',
+            'asset_variant_key' => $imageType === 'rawtherapee_sample' && $profileSignature !== null ? $profileSignature : '',
             'conversion_job_id' => $conversionJobId,
         ]
     );
@@ -166,10 +166,10 @@ function swallowtail_backend_enable_final_profile_overlay(string $profileName = 
     );
 }
 
-function swallowtail_backend_create_rawtheapee_profile_table(): void
+function swallowtail_backend_create_rawtherapee_profile_table(): void
 {
-    InterfaceDB::execute('DROP TABLE IF EXISTS rawtheapee_profile_data');
-    InterfaceDB::execute("CREATE TABLE rawtheapee_profile_data (
+    InterfaceDB::execute('DROP TABLE IF EXISTS rawtherapee_profile_data');
+    InterfaceDB::execute("CREATE TABLE rawtherapee_profile_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         profile_path TEXT NOT NULL UNIQUE,
         relative_path TEXT NOT NULL,
@@ -179,6 +179,7 @@ function swallowtail_backend_create_rawtheapee_profile_table(): void
         profile_mtime INTEGER NOT NULL DEFAULT 0,
         profile_content TEXT NOT NULL,
         is_available INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0,
         scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -271,7 +272,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         'storage_migration_job_items',
         'storage_migration_jobs',
         'internal_profile_data',
-        'rawtheapee_profile_data',
+        'rawtherapee_profile_data',
         'photo_profile_data',
         'photo_image_assets',
         'photo_conversion_jobs',
@@ -353,6 +354,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         storage_base_location TEXT NOT NULL,
         upload_state TEXT NOT NULL DEFAULT 'uploaded',
         conversion_state TEXT NOT NULL DEFAULT 'pending',
+        rawtherapee_profile_id INTEGER NULL,
         uploaded_by_user_id INTEGER NULL,
         uploaded_via TEXT NOT NULL DEFAULT 'api',
         upload_token_id INTEGER NULL,
@@ -1943,16 +1945,16 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'queues profiled fi
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', (string)($jobs[1]['profile_signature'] ?? '')) === 1);
 });
 
-$harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'queues sample jobs with profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
-    swallowtail_backend_create_rawtheapee_profile_table();
+    swallowtail_backend_create_rawtherapee_profile_table();
 
-    $profilePath = swallowtail_backend_test_temp_file('swallowtail-rawtheapee-profile-');
+    $profilePath = swallowtail_backend_test_temp_file('swallowtail-rawtherapee-profile-');
     file_put_contents($profilePath, "[Version]\nAppVersion=5.10\n", LOCK_EX);
     $profileContent = (string)file_get_contents($profilePath);
     $baseLocation = swallowtail_backend_storage_tmp_root();
     InterfaceDB::prepareExecute(
-        "INSERT INTO rawtheapee_profile_data (
+        "INSERT INTO rawtherapee_profile_data (
             id,
             profile_path,
             relative_path,
@@ -2009,7 +2011,7 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs 
         ]
     );
 
-    $service = new SwallowtailRawTheapeeProfileService();
+    $service = new SwallowtailRawTherapeeProfileService();
     $expectedSignature = $service->profileSignatureForPath($profilePath);
     $result = $service->enqueueSample(702, 701, 44);
     $job = InterfaceDB::fetchOne(
@@ -2022,22 +2024,74 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'queues sample jobs 
     $harness->assertTrue(!empty($result['success']));
     $harness->assertSame($expectedSignature, $jobSignature);
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', $jobSignature) === 1);
-    $harness->assertTrue(str_ends_with($outputPath, '_rawtheapee_sample_' . $expectedSignature . '.jpg'));
+    $harness->assertTrue(str_ends_with($outputPath, '_rawtherapee_sample_' . $expectedSignature . '.jpg'));
 
     @unlink($profilePath);
 });
 
-$harness->check(SwallowtailRawTheapeeProfileService::class, 'reuses exact rawtheapee sample variants by profile signature', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'sets exactly one default rawtherapee profile', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
-    swallowtail_backend_create_rawtheapee_profile_table();
+    swallowtail_backend_create_rawtherapee_profile_table();
 
-    $profilePath = swallowtail_backend_test_temp_file('swallowtail-rawtheapee-reuse-profile-');
+    InterfaceDB::prepareExecute(
+        "INSERT INTO rawtherapee_profile_data (
+            id, profile_path, relative_path, display_label, profile_hash, profile_content, is_available, is_default
+        ) VALUES
+            (801, '/tmp/profile-one.pp3', 'one.pp3', 'One', :hash_one, '[Version]', 1, 1),
+            (802, '/tmp/profile-two.pp3', 'two.pp3', 'Two', :hash_two, '[Version]', 1, 0)",
+        [
+            'hash_one' => str_repeat('1', 64),
+            'hash_two' => str_repeat('2', 64),
+        ]
+    );
+
+    $result = (new SwallowtailRawTherapeeProfileService())->setDefaultProfile(802);
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM rawtherapee_profile_data WHERE is_default = 1"));
+    $harness->assertSame(802, (int)InterfaceDB::fetchColumn("SELECT id FROM rawtherapee_profile_data WHERE is_default = 1"));
+});
+
+$harness->check(SwallowtailPhotoLibraryService::class, 'new raw uploads inherit default rawtherapee profile id', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    swallowtail_backend_create_rawtherapee_profile_table();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO rawtherapee_profile_data (
+            id, profile_path, relative_path, display_label, profile_hash, profile_content, is_available, is_default
+        ) VALUES (
+            811, '/tmp/default.pp3', 'default.pp3', 'Default', :hash, '[Version]', 1, 1
+        )",
+        ['hash' => str_repeat('a', 64)]
+    );
+
+    $sha256 = hash('sha256', 'baseline-default-upload');
+    $result = (new SwallowtailPhotoLibraryService())->recordRawUpload([
+        'sha256' => $sha256,
+        'original_filename' => 'IMG_BASELINE.CR2',
+        'extension' => 'cr2',
+        'bytes' => 123,
+        'storage_base_location' => swallowtail_backend_storage_tmp_root(),
+        'uploaded_by_user_id' => 44,
+        'uploaded_via' => 'api',
+    ]);
+    $photo = (array)($result['photo'] ?? []);
+
+    $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(811, (int)($photo['rawtherapee_profile_id'] ?? 0));
+});
+
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'reuses exact rawtherapee sample variants by profile signature', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    swallowtail_backend_create_rawtherapee_profile_table();
+
+    $profilePath = swallowtail_backend_test_temp_file('swallowtail-rawtherapee-reuse-profile-');
     file_put_contents($profilePath, "[Version]\nAppVersion=5.10\n[Exposure]\nBrightness=1\n", LOCK_EX);
     $profileContent = (string)file_get_contents($profilePath);
     $baseLocation = swallowtail_backend_storage_tmp_root();
     $sha256 = str_repeat('a', 64);
     InterfaceDB::prepareExecute(
-        "INSERT INTO rawtheapee_profile_data (
+        "INSERT INTO rawtherapee_profile_data (
             id,
             profile_path,
             relative_path,
@@ -2094,16 +2148,16 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'reuses exact rawthe
         ]
     );
 
-    $service = new SwallowtailRawTheapeeProfileService();
+    $service = new SwallowtailRawTherapeeProfileService();
     $signature = $service->profileSignatureForPath($profilePath);
-    $samplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $signature);
+    $samplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $signature);
     (new SwallowtailStorageService())->ensureDirectoryForPath($samplePath);
     file_put_contents($samplePath, "\xFF\xD8\xFF\xD9", LOCK_EX);
-    swallowtail_backend_record_asset(712, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $samplePath, str_repeat('9', 64), $signature, 0);
+    swallowtail_backend_record_asset(712, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $samplePath, str_repeat('9', 64), $signature, 0);
     $otherSignature = str_repeat('8', 64);
-    $otherSamplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $otherSignature);
+    $otherSamplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $otherSignature);
     file_put_contents($otherSamplePath, "\xFF\xD8\xFF\xD9", LOCK_EX);
-    swallowtail_backend_record_asset(712, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $otherSamplePath, str_repeat('7', 64), $otherSignature, 0);
+    swallowtail_backend_record_asset(712, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $otherSamplePath, str_repeat('7', 64), $otherSignature, 0);
 
     $result = $service->enqueueSample(712, 711, 44);
 
@@ -2111,13 +2165,13 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'reuses exact rawthe
     $harness->assertSame(0, (int)($result['job_id'] ?? -1));
     $harness->assertTrue(str_contains((string)($result['image_url'] ?? ''), 'profile_signature=' . $signature));
     $harness->assertTrue(str_contains((string)($result['image_url'] ?? ''), 'v=' . $signature));
-    $harness->assertSame(2, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_image_assets WHERE photo_id = 712 AND image_type = 'rawtheapee_sample'"));
-    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_conversion_jobs WHERE photo_id = 712 AND image_type = 'rawtheapee_sample'"));
+    $harness->assertSame(2, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_image_assets WHERE photo_id = 712 AND image_type = 'rawtherapee_sample'"));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM photo_conversion_jobs WHERE photo_id = 712 AND image_type = 'rawtherapee_sample'"));
 
     @unlink($profilePath);
 });
 
-$harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample status and serving require profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+$harness->check(SwallowtailPreviewProfileService::class, 'rawtherapee sample status and serving require profile signatures', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
     $swallowtailCreateSqliteSchema();
     $swallowtailCreateSpiceBushUserSchema();
 
@@ -2133,8 +2187,8 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample stat
             account_status
         ) VALUES (
             44,
-            'RawTheapee Status Admin',
-            'rawtheapee-status-admin@example.test',
+            'RawTherapee Status Admin',
+            'rawtherapee-status-admin@example.test',
             'not-used',
             0,
             1,
@@ -2174,7 +2228,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample stat
             'storage_base_location' => $baseLocation,
         ]
     );
-    $samplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $signature);
+    $samplePath = (new SwallowtailStorageService())->imageVariantPath($baseLocation, $sha256, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $signature);
     (new SwallowtailStorageService())->ensureDirectoryForPath($samplePath);
     file_put_contents($samplePath, "\xFF\xD8\xFF\xD9", LOCK_EX);
     InterfaceDB::prepareExecute(
@@ -2194,7 +2248,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample stat
             721,
             722,
             'image',
-            'rawtheapee_sample',
+            'rawtherapee_sample',
             '/tmp/source.cr2',
             '/tmp/profile.pp3',
             :output_path,
@@ -2208,13 +2262,13 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample stat
             'profile_signature' => $signature,
         ]
     );
-    swallowtail_backend_record_asset(722, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, $samplePath, str_repeat('d', 64), $signature, 721);
+    swallowtail_backend_record_asset(722, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $samplePath, str_repeat('d', 64), $signature, 721);
 
-    $status = (new SwallowtailPreviewProfileService())->imageStatus(722, 721, 44, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE);
-    $url = (string)($status['rawtheapee_sample_url'] ?? '');
-    $image = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, 44, $signature);
-    $missingSignature = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, 44);
-    $wrongSignature = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE, 44, str_repeat('e', 64));
+    $status = (new SwallowtailPreviewProfileService())->imageStatus(722, 721, 44, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE);
+    $url = (string)($status['rawtherapee_sample_url'] ?? '');
+    $image = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, 44, $signature);
+    $missingSignature = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, 44);
+    $wrongSignature = (new SwallowtailImageServeService())->derivativeImage(722, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, 44, str_repeat('e', 64));
 
     $harness->assertSame(true, (bool)($status['success'] ?? false));
     $harness->assertSame('succeeded', (string)($status['status'] ?? ''));
@@ -2226,7 +2280,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtheapee sample stat
     $harness->assertSame(null, $wrongSignature);
 });
 
-$harness->check(SwallowtailRawTheapeeProfileService::class, 'prefers photos with rawtheapee artifacts for initial profile selection', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'prefers photos with rawtherapee artifacts for initial profile selection', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
     $swallowtailCreateSqliteSchema();
     $swallowtailCreateSpiceBushUserSchema();
 
@@ -2242,8 +2296,8 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'prefers photos with
             account_status
         ) VALUES (
             44,
-            'RawTheapee Admin',
-            'rawtheapee-admin@example.test',
+            'RawTherapee Admin',
+            'rawtherapee-admin@example.test',
             'not-used',
             0,
             1,
@@ -2284,7 +2338,7 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'prefers photos with
         ) VALUES
             (901, 'thumbnail', :plain_thumb_sha, 10, 123, NULL, '', CURRENT_TIMESTAMP),
             (902, 'thumbnail', :sampled_thumb_sha, 10, 123, NULL, '', CURRENT_TIMESTAMP),
-            (902, 'rawtheapee_sample', :sample_sha, 10, 123, :sample_signature, :sample_signature, CURRENT_TIMESTAMP)",
+            (902, 'rawtherapee_sample', :sample_sha, 10, 123, :sample_signature, :sample_signature, CURRENT_TIMESTAMP)",
         [
             'plain_thumb_sha' => str_repeat('3', 64),
             'sampled_thumb_sha' => str_repeat('4', 64),
@@ -2293,26 +2347,26 @@ $harness->check(SwallowtailRawTheapeeProfileService::class, 'prefers photos with
         ]
     );
 
-    $photo = (new SwallowtailRawTheapeeProfileService())->randomAccessibleThumbnailPhoto(44, true);
+    $photo = (new SwallowtailRawTherapeeProfileService())->randomAccessibleThumbnailPhoto(44, true);
 
     $harness->assertTrue(is_array($photo));
     $harness->assertSame(902, (int)($photo['id'] ?? 0));
 });
 
-$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtheapee sample signatures from profile metadata', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+$harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtherapee sample signatures from profile metadata', function () use ($harness, $swallowtailCreateSqliteSchema): void {
     $swallowtailCreateSqliteSchema();
-    swallowtail_backend_create_rawtheapee_profile_table();
+    swallowtail_backend_create_rawtherapee_profile_table();
 
     $profilePath = '/profiles/sample-repair.pp3';
     $profileContent = "[Version]\nAppVersion=5.10\n";
-    $expectedSignature = (new SwallowtailRawTheapeeProfileService())->profileSignature([
+    $expectedSignature = (new SwallowtailRawTherapeeProfileService())->profileSignature([
         'profile_path' => $profilePath,
         'relative_path' => 'sample-repair.pp3',
         'profile_bytes' => strlen($profileContent),
         'profile_mtime' => 1719500000,
     ]);
     InterfaceDB::prepareExecute(
-        "INSERT INTO rawtheapee_profile_data (
+        "INSERT INTO rawtherapee_profile_data (
             id,
             profile_path,
             relative_path,
@@ -2367,8 +2421,8 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtheapee
             priority,
             status
         ) VALUES
-            (8101, 802, 'image', 'rawtheapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded'),
-            (8102, 803, 'image', 'rawtheapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded')",
+            (8101, 802, 'image', 'rawtherapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded'),
+            (8102, 803, 'image', 'rawtherapee_sample', '/tmp/source.cr2', :profile_path, '/tmp/sample.jpg', NULL, 65, 'succeeded')",
         ['profile_path' => $profilePath]
     );
     InterfaceDB::prepareExecute(
@@ -2382,8 +2436,8 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtheapee
             profile_signature,
             conversion_job_id
         ) VALUES
-            (8201, 802, 'rawtheapee_sample', :asset_sha_1, 12, 123456789, NULL, 8101),
-            (8202, 803, 'rawtheapee_sample', :asset_sha_2, 12, 123456789, NULL, NULL)",
+            (8201, 802, 'rawtherapee_sample', :asset_sha_1, 12, 123456789, NULL, 8101),
+            (8202, 803, 'rawtherapee_sample', :asset_sha_2, 12, 123456789, NULL, NULL)",
         [
             'asset_sha_1' => str_repeat('5', 64),
             'asset_sha_2' => str_repeat('6', 64),
@@ -2394,13 +2448,13 @@ $harness->check(SwallowtailDataIntegrityCheckService::class, 'repairs rawtheapee
     $unsignedAssets = InterfaceDB::fetchColumn(
         "SELECT COUNT(*)
          FROM photo_image_assets
-         WHERE image_type = 'rawtheapee_sample'
+         WHERE image_type = 'rawtherapee_sample'
            AND (profile_signature IS NULL OR profile_signature = '')"
     );
     $unsignedJobs = InterfaceDB::fetchColumn(
         "SELECT COUNT(*)
          FROM photo_conversion_jobs
-         WHERE image_type = 'rawtheapee_sample'
+         WHERE image_type = 'rawtherapee_sample'
            AND (profile_signature IS NULL OR profile_signature = '')"
     );
     $assetSignature = InterfaceDB::fetchColumn('SELECT profile_signature FROM photo_image_assets WHERE id = 8201');
@@ -5695,11 +5749,11 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $fixPreviewProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_002_fix_preview_internal_profile_data.sql';
     $widenProfileSectionsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_003_widen_profile_section_names.sql';
     $internalProfileDataEnabledPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_004_internal_profile_data_enabled.sql';
-    $rawTheapeeProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_005_rawtheapee_profile_data.sql';
+    $rawTherapeeProfileDataPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_005_rawtherapee_profile_data.sql';
     $eventEditPermissionPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_006_event_edit_permission.sql';
     $conversionProfileSignaturePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_007_conversion_profile_signature.sql';
     $photoImageAssetsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_008_photo_image_assets.sql';
-    $rawTheapeeSampleVariantsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_28_001_rawtheapee_sample_asset_variants.sql';
+    $rawTherapeeSampleVariantsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_28_001_rawtherapee_sample_asset_variants.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -5719,17 +5773,17 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $fixPreviewProfileDataSql = file_get_contents($fixPreviewProfileDataPath);
     $widenProfileSectionsSql = file_get_contents($widenProfileSectionsPath);
     $internalProfileDataEnabledSql = file_get_contents($internalProfileDataEnabledPath);
-    $rawTheapeeProfileDataSql = file_get_contents($rawTheapeeProfileDataPath);
+    $rawTherapeeProfileDataSql = file_get_contents($rawTherapeeProfileDataPath);
     $eventEditPermissionSql = file_get_contents($eventEditPermissionPath);
     $conversionProfileSignatureSql = file_get_contents($conversionProfileSignaturePath);
     $photoImageAssetsSql = file_get_contents($photoImageAssetsPath);
-    $rawTheapeeSampleVariantsSql = file_get_contents($rawTheapeeSampleVariantsPath);
+    $rawTherapeeSampleVariantsSql = file_get_contents($rawTherapeeSampleVariantsPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTheapeeProfileDataSql) || !is_string($eventEditPermissionSql) || !is_string($conversionProfileSignatureSql) || !is_string($photoImageAssetsSql) || !is_string($rawTheapeeSampleVariantsSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTherapeeProfileDataSql) || !is_string($eventEditPermissionSql) || !is_string($conversionProfileSignatureSql) || !is_string($photoImageAssetsSql) || !is_string($rawTherapeeSampleVariantsSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTheapeeProfileDataSql . "\n" . $eventEditPermissionSql . "\n" . $conversionProfileSignatureSql . "\n" . $photoImageAssetsSql . "\n" . $rawTheapeeSampleVariantsSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTherapeeProfileDataSql . "\n" . $eventEditPermissionSql . "\n" . $conversionProfileSignatureSql . "\n" . $photoImageAssetsSql . "\n" . $rawTherapeeSampleVariantsSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -5772,7 +5826,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'CREATE TABLE IF NOT EXISTS photo_metadata_property',
         'CREATE TABLE IF NOT EXISTS photo_profile_data',
         'CREATE TABLE IF NOT EXISTS internal_profile_data',
-        'CREATE TABLE IF NOT EXISTS rawtheapee_profile_data',
+        'CREATE TABLE IF NOT EXISTS rawtherapee_profile_data',
         'UNIQUE KEY uq_photo_profile_data_key (photo_id, type, `key`)',
         'ADD COLUMN revision int NOT NULL DEFAULT 0 AFTER photo_id',
         'ADD UNIQUE KEY uq_photo_profile_data_key (photo_id, type, `key`, revision)',
@@ -5805,8 +5859,8 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         "`key` varchar(191) NOT NULL",
         "MODIFY type varchar(64) NOT NULL",
         "value_type enum('null','bool','int','float','string') NOT NULL",
-        "'rawtheapee_sample'",
-        'UNIQUE KEY uq_rawtheapee_profile_path (profile_path)',
+        "'rawtherapee_sample'",
+        'UNIQUE KEY uq_rawtherapee_profile_path (profile_path)',
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {
         $harness->assertTrue(str_contains($sql, $needle));

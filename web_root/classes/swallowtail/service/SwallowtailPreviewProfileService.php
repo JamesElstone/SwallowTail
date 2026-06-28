@@ -17,7 +17,7 @@ final class SwallowtailPreviewProfileService
 {
     private const DEFAULT_SOURCE_WIDTH = 6000;
     private const DEFAULT_SOURCE_HEIGHT = 4000;
-    private const STATUS_IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
+    private const STATUS_IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
@@ -27,6 +27,7 @@ final class SwallowtailPreviewProfileService
         private readonly SwallowtailProfileDataService $profileDataService = new SwallowtailProfileDataService(),
         private readonly SwallowtailCombinedProfileService $combinedProfileService = new SwallowtailCombinedProfileService(),
         private readonly SwallowtailPhotoAssetService $assetService = new SwallowtailPhotoAssetService(),
+        private readonly SwallowtailRawTherapeeProfileService $rawTherapeeProfileService = new SwallowtailRawTherapeeProfileService(),
     ) {
     }
 
@@ -55,6 +56,11 @@ final class SwallowtailPreviewProfileService
             : $this->defaultSettings($dimensions['width'], $dimensions['height']);
 
         $preview = $this->previewWorkflowState($photo, $baselineStatus, $userId);
+        $rawTherapeeProfiles = $this->rawTherapeeProfileService->availableProfiles();
+        $rawTherapeeProfileId = InterfaceDB::columnExists('photos', 'rawtherapee_profile_id')
+            ? max(0, (int)($photo['rawtherapee_profile_id'] ?? 0))
+            : 0;
+        $rawTherapeeDefaultProfileId = max(0, (int)($this->rawTherapeeProfileService->defaultProfileId() ?? 0));
 
         return [
             'photo' => $photo,
@@ -68,6 +74,9 @@ final class SwallowtailPreviewProfileService
             'preview_url' => (string)($preview['display_url'] ?? ''),
             'preview_status' => (string)($preview['status'] ?? ''),
             'preview_status_url' => (string)($preview['status_url'] ?? ''),
+            'rawtherapee_profiles' => $rawTherapeeProfiles,
+            'rawtherapee_profile_id' => $rawTherapeeProfileId,
+            'rawtherapee_default_profile_id' => $rawTherapeeDefaultProfileId,
         ];
     }
 
@@ -83,7 +92,7 @@ final class SwallowtailPreviewProfileService
         }
 
         $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
-        $baselineStatus = $this->profileDataService->requestUrgentProfile($photo, 'rawtheapee_profiles_current');
+        $baselineStatus = $this->profileDataService->requestUrgentProfile($photo, 'rawtherapee_profiles_current');
         $preview = $this->previewWorkflowState($photo, $baselineStatus, $userId);
 
         return [
@@ -104,6 +113,101 @@ final class SwallowtailPreviewProfileService
     public function enqueueFinal(int $photoId, int $userId, array $payload): array
     {
         return $this->enqueueProfiledRender($photoId, $userId, $payload, 'final');
+    }
+
+    public function changeBaselineProfile(int $photoId, int $userId, int $profileId): array
+    {
+        if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['You do not have permission to edit this photo.'],
+            ];
+        }
+
+        if (!$this->photoUiService->userCanEditPhoto($photoId, $userId)) {
+            return [
+                'success' => false,
+                'errors' => ['You do not have permission to edit this photo.'],
+            ];
+        }
+
+        if (!InterfaceDB::columnExists('photos', 'rawtherapee_profile_id')) {
+            return [
+                'success' => false,
+                'errors' => ['RawTherapee baseline profiles are not available yet.'],
+            ];
+        }
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return [
+                'success' => false,
+                'errors' => ['Photo was not found.'],
+            ];
+        }
+
+        $profileId = max(0, $profileId);
+        $profile = null;
+        if ($profileId > 0) {
+            $profile = $this->rawTherapeeProfileService->profileById($profileId);
+            if ($profile === null) {
+                return [
+                    'success' => false,
+                    'errors' => ['RawTherapee baseline profile was not available.'],
+                ];
+            }
+        }
+
+        $currentProfileId = max(0, (int)($photo['rawtherapee_profile_id'] ?? 0));
+        if ($currentProfileId === $profileId) {
+            return [
+                'success' => true,
+                'profile_id' => $profileId,
+                'job_id' => 0,
+                'baseline' => $this->profileDataService->status($photoId),
+            ];
+        }
+
+        $base = (string)($photo['storage_base_location'] ?? '');
+        $sha256 = (string)($photo['original_sha256'] ?? '');
+        $sourceProfilePath = $this->storageService->imagePath($base, $sha256, 'source_profile');
+        $profilePath = $profile === null ? null : trim((string)($profile['profile_path'] ?? ''));
+
+        InterfaceDB::transaction(function () use ($photoId, $profileId, $profile): void {
+            InterfaceDB::prepareExecute(
+                "UPDATE photos
+                 SET rawtherapee_profile_id = :profile_id
+                 WHERE id = :photo_id",
+                [
+                    'photo_id' => $photoId,
+                    'profile_id' => $profileId > 0 ? $profileId : null,
+                ]
+            );
+            $this->profileDataService->markBaselineQueued($photoId, $profile);
+            $this->queueService->obsoleteActiveJobsForPhoto(
+                $photoId,
+                ['original', 'thumbnail', 'preview', 'final'],
+                'RawTherapee baseline profile changed.'
+            );
+        });
+
+        if (is_file($sourceProfilePath)) {
+            @unlink($sourceProfilePath);
+        }
+
+        $jobId = $this->queueService->enqueueOriginalRefresh($photoId, $profilePath, $userId);
+        $this->queueService->enqueueRawConversionJobsForTypes($photoId, ['thumbnail'], 80);
+        $this->profileDataService->notifyUrgentProfile($photoId, 'baseline_profile_changed');
+        $photo = $this->photoLibraryService->photoById($photoId) ?? $photo;
+        $baseline = $this->profileDataService->status($photoId);
+
+        return [
+            'success' => true,
+            'profile_id' => $profileId,
+            'job_id' => $jobId ?? 0,
+            'baseline' => $baseline,
+            'preview' => $this->previewWorkflowState($photo, $baseline, $userId),
+        ];
     }
 
     private function enqueueProfiledRender(int $photoId, int $userId, array $payload, string $imageType): array
@@ -344,10 +448,10 @@ final class SwallowtailPreviewProfileService
 
     private function assetStatus(int $photoId, int $userId, string $imageType): array
     {
-        if ($imageType === 'rawtheapee_sample') {
+        if ($imageType === 'rawtherapee_sample') {
             return [
                 'success' => false,
-                'errors' => ['RawTheapee sample status requires a conversion job.'],
+                'errors' => ['RawTherapee sample status requires a conversion job.'],
             ];
         }
 
@@ -433,7 +537,7 @@ final class SwallowtailPreviewProfileService
         ];
 
         if ($status === 'succeeded') {
-            $asset = $imageType === 'rawtheapee_sample'
+            $asset = $imageType === 'rawtherapee_sample'
                 ? $this->assetService->assetForPhotoIdProfileSignature($photoId, $imageType, (string)($job['profile_signature'] ?? ''))
                 : $this->assetService->assetForPhotoId($photoId, $imageType);
             if ($asset !== null) {
@@ -891,10 +995,10 @@ final class SwallowtailPreviewProfileService
         $profileSignature = $this->normaliseProfileSignature((string)($asset['profile_signature'] ?? ''));
         $query = [
             'photo_id' => $photoId,
-            'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original', 'rawtheapee_sample'], true) ? $imageType : 'preview',
-            'v' => $imageType === 'rawtheapee_sample' ? $profileSignature : (string)($asset['sha256'] ?? ''),
+            'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original', 'rawtherapee_sample'], true) ? $imageType : 'preview',
+            'v' => $imageType === 'rawtherapee_sample' ? $profileSignature : (string)($asset['sha256'] ?? ''),
         ];
-        if ($imageType === 'rawtheapee_sample') {
+        if ($imageType === 'rawtherapee_sample') {
             $query['profile_signature'] = $profileSignature;
         }
 

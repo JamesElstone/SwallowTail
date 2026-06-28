@@ -332,11 +332,11 @@ class RawTherapeeRunnerTest(unittest.TestCase):
         profile_args = [result.command[index + 1] for index, value in enumerate(result.command) if value == "-p"]
         self.assertEqual([str(pp3)], profile_args)
 
-    def test_rawtheapee_sample_is_supported_as_isolated_output(self) -> None:
+    def test_rawtherapee_sample_is_supported_as_isolated_output(self) -> None:
         pp3 = self.root / "sample.pp3"
         output = self.root / "sample.jpg"
         pp3.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
-        sample = job(self.root, image_type="rawtheapee_sample", profile_path=str(pp3), output_path=str(output), priority=65)
+        sample = job(self.root, image_type="rawtherapee_sample", profile_path=str(pp3), output_path=str(output), priority=65)
 
         sample.validate()
         result = RawTherapeeRunner(
@@ -345,7 +345,7 @@ class RawTherapeeRunnerTest(unittest.TestCase):
 
         self.assertEqual(0, result.exit_code)
         self.assertIn("-o", result.command)
-        self.assertTrue(Path(result.temp_output_path).name.endswith("rawtheapee_sample.jpg"))
+        self.assertTrue(Path(result.temp_output_path).name.endswith("rawtherapee_sample.jpg"))
 
     def test_rawtherapee_nonzero_exit_is_reported(self) -> None:
         failing = Path(__file__).parent / "fixtures" / "fake_rawtherapee_fail.py"
@@ -875,6 +875,38 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         source_profile = final.with_name(f"{checksum}_source.pp3")
         self.assertTrue(worker.db.completed)
+        self.assertEqual(str(final), worker.db.output_path)
+        self.assertTrue(final.is_file())
+        self.assertEqual("[Version]\nAppVersion=5.12\n", source_profile.read_text(encoding="utf-8"))
+
+    def test_profiled_original_job_replaces_existing_source_profile(self) -> None:
+        class FakeDb:
+            def is_stale_preview(self, _job) -> bool:
+                return False
+
+            def complete_job(self, _job, output_path: str, _command, _stderr, _duration) -> None:
+                self.output_path = output_path
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                raise AssertionError("profiled original job should not fail")
+
+        checksum = "abcdef" + ("0" * 58)
+        final = self.root / "swallowtail-data" / "ab" / "cd" / f"{checksum}_original.jpg"
+        final.parent.mkdir(parents=True, exist_ok=True)
+        source_profile = final.with_name(f"{checksum}_source.pp3")
+        source_profile.write_text("[Version]\nAppVersion=old\n", encoding="utf-8")
+        profile = self.root / "baseline.pp3"
+        profile.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.db = FakeDb()
+        worker.runner = RawTherapeeRunner(worker.config.rawtherapee)
+        worker.redis = SimpleNamespace(pop_preempt=lambda: None)
+
+        worker.process_job(job(self.root, image_type="original", output_path=str(final), profile_path=str(profile)))
+
         self.assertEqual(str(final), worker.db.output_path)
         self.assertTrue(final.is_file())
         self.assertEqual("[Version]\nAppVersion=5.12\n", source_profile.read_text(encoding="utf-8"))

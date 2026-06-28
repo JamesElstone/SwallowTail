@@ -14,7 +14,7 @@ use Throwable;
 
 final class SwallowtailPhotoAssetService
 {
-    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample'];
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
@@ -29,7 +29,7 @@ final class SwallowtailPhotoAssetService
         if ($photoId <= 0 || $imageType === '' || !InterfaceDB::tableExists('photo_image_assets')) {
             return null;
         }
-        if ($imageType === 'rawtheapee_sample') {
+        if ($imageType === 'rawtherapee_sample') {
             return null;
         }
 
@@ -54,7 +54,7 @@ final class SwallowtailPhotoAssetService
         $profileSignature = $this->normaliseSha256($profileSignature);
         if (
             $photoId <= 0
-            || $imageType !== 'rawtheapee_sample'
+            || $imageType !== 'rawtherapee_sample'
             || $profileSignature === ''
             || !InterfaceDB::tableExists('photo_image_assets')
         ) {
@@ -163,7 +163,7 @@ final class SwallowtailPhotoAssetService
         $base = trim((string)($photo['storage_base_location'] ?? ''));
         $checksum = trim((string)($photo['original_sha256'] ?? ''));
         $imageType = $this->normaliseImageType($imageType);
-        if ($base === '' || $checksum === '' || $imageType === '' || $imageType === 'rawtheapee_sample') {
+        if ($base === '' || $checksum === '' || $imageType === '' || $imageType === 'rawtherapee_sample') {
             return null;
         }
 
@@ -184,7 +184,7 @@ final class SwallowtailPhotoAssetService
     private function assetFromRow(array $photo, string $imageType, array $row, bool $requireReadableFile): ?array
     {
         $profileSignature = $this->normaliseSha256((string)($row['profile_signature'] ?? ''));
-        $path = $imageType === 'rawtheapee_sample'
+        $path = $imageType === 'rawtherapee_sample'
             ? $this->absoluteVariantPathForPhoto($photo, $imageType, $profileSignature)
             : $this->absolutePathForPhoto($photo, $imageType);
         if ($path === null) {
@@ -216,7 +216,7 @@ final class SwallowtailPhotoAssetService
         $checksum = trim((string)($photo['original_sha256'] ?? ''));
         $imageType = $this->normaliseImageType($imageType);
         $profileSignature = $this->normaliseSha256($profileSignature);
-        if ($base === '' || $checksum === '' || $imageType !== 'rawtheapee_sample' || $profileSignature === '') {
+        if ($base === '' || $checksum === '' || $imageType !== 'rawtherapee_sample' || $profileSignature === '') {
             return null;
         }
 

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from swallowtail_metadata.config import DaylightSavingConfig, default_config
 from swallowtail_metadata.db import MetadataDatabase
 from swallowtail_metadata.exiftool import extract_properties, parse_metadata
-from swallowtail_metadata.profile import RawTheapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
+from swallowtail_metadata.profile import RawTherapeeProfileScanner, RawTherapeeBaselineRunner, parse_pp3_properties
 from swallowtail_metadata.redis_heartbeat import AssetNotification
 from swallowtail_metadata.worker import MetadataWorker
 
@@ -347,13 +347,13 @@ class MetadataParserTest(unittest.TestCase):
 
         self.assertEqual("Common Properties for Transformations", properties[0]["type"])
 
-    def test_rawtheapee_profile_scanner_recurses_and_labels_profiles(self) -> None:
-        root = Path(__file__).resolve().parent / ".tmp" / f"rawtheapee_profiles_{uuid.uuid4().hex}"
+    def test_rawtherapee_profile_scanner_recurses_and_labels_profiles(self) -> None:
+        root = Path(__file__).resolve().parent / ".tmp" / f"rawtherapee_profiles_{uuid.uuid4().hex}"
         profile = root / "Non-raw" / "Brighten.pp3"
         profile.parent.mkdir(parents=True, exist_ok=True)
         profile.write_text("[Exposure]\nBrightness=12\n", encoding="utf-8")
         try:
-            rows = RawTheapeeProfileScanner(str(root)).scan()
+            rows = RawTherapeeProfileScanner(str(root)).scan()
 
             self.assertEqual(1, len(rows))
             self.assertEqual(str(profile), rows[0].profile_path)
@@ -419,6 +419,24 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertEqual(1, connection.commits)
         self.assertTrue(connection.executed[0][0].strip().startswith("DELETE FROM photo_profile_data"))
         self.assertIn("revision = 0", connection.executed[0][0])
+
+    def test_replace_profile_data_stores_rawtherapee_baseline_metadata(self) -> None:
+        database, connection = self.database()
+        profile = {
+            "id": 77,
+            "profile_path": "/profiles/default.pp3",
+            "profile_hash": "b" * 64,
+        }
+
+        database.replace_profile_data(42, [], "/photos/abc_source.pp3", "RawTherapee 5.12", profile)
+
+        inserted_profile_values = [
+            params for sql, params in connection.executed
+            if "INSERT INTO photo_profile_data" in sql and len(params) == 5 and params[1] == "swallowtail"
+        ]
+        self.assertIn((42, "swallowtail", "rawtherapee_profile_id", "77", "int"), inserted_profile_values)
+        self.assertIn((42, "swallowtail", "rawtherapee_profile_path", "/profiles/default.pp3", "string"), inserted_profile_values)
+        self.assertIn((42, "swallowtail", "rawtherapee_profile_hash", "b" * 64, "string"), inserted_profile_values)
 
     def test_replace_profile_data_splits_large_sections_by_batch_limit(self) -> None:
         database, connection = self.database()
@@ -596,10 +614,10 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertIn("WHEN 'final' THEN 2", sql)
         self.assertIn("WHEN 'original' THEN 3", sql)
         self.assertIn("WHEN 'embedded' THEN 4", sql)
-        self.assertIn("WHEN 'rawtheapee_sample' THEN 5", sql)
+        self.assertIn("WHEN 'rawtherapee_sample' THEN 5", sql)
         self.assertLess(sql.index("WHEN 'thumbnail' THEN 0"), sql.index("job.completed_at DESC"))
 
-    def test_unrecorded_asset_backfill_matches_rawtheapee_signature_variants(self) -> None:
+    def test_unrecorded_asset_backfill_matches_rawtherapee_signature_variants(self) -> None:
         database, connection = self.database()
         database._table_exists = lambda _table_name: True
 
@@ -610,15 +628,15 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
             if "FROM photo_conversion_jobs job" in sql
         )
         self.assertIn("asset.asset_variant_key = job.profile_signature", sql)
-        self.assertIn("job.image_type <> 'rawtheapee_sample'", sql)
+        self.assertIn("job.image_type <> 'rawtherapee_sample'", sql)
 
-    def test_upsert_image_asset_uses_rawtheapee_profile_signature_as_variant_key(self) -> None:
+    def test_upsert_image_asset_uses_rawtherapee_profile_signature_as_variant_key(self) -> None:
         database, connection = self.database()
         database._table_exists = lambda _table_name: True
 
         database.upsert_image_asset(
             42,
-            "rawtheapee_sample",
+            "rawtherapee_sample",
             "a" * 64,
             123,
             456,
@@ -645,13 +663,13 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertEqual("b" * 64, raw_params[-2])
         self.assertEqual("", preview_params[-2])
 
-    def test_upsert_image_asset_skips_unsigned_rawtheapee_sample(self) -> None:
+    def test_upsert_image_asset_skips_unsigned_rawtherapee_sample(self) -> None:
         database, connection = self.database()
         database._table_exists = lambda _table_name: True
 
         database.upsert_image_asset(
             42,
-            "rawtheapee_sample",
+            "rawtherapee_sample",
             "a" * 64,
             123,
             456,
@@ -714,6 +732,41 @@ class RawTherapeeBaselineRunnerTest(unittest.TestCase):
             self.assertTrue(str(captured_env["XDG_CACHE_HOME"]).startswith(str(home)))
             self.assertTrue(baseline.is_file())
             self.assertEqual([], list(baseline.parent.glob(baseline.stem[0:16] + "_rt_*")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_generate_includes_baseline_profile_before_convert_flag(self) -> None:
+        root = Path(__file__).resolve().parent / ".tmp" / f"rt_{uuid.uuid4().hex[0:8]}"
+        source = root / "swallowtail-data" / "ab" / "cd" / ("abcdef" + ("0" * 58) + "_source.cr2")
+        baseline = source.with_name("abcdef" + ("0" * 58) + "_source.pp3")
+        profile = root / "profiles" / "baseline.pp3"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"II*\0CR2")
+        profile.write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+        captured_command = {}
+
+        def fake_run(command, **_kwargs):
+            if "-O" in command:
+                captured_command["command"] = command
+                scratch = Path(command[command.index("-O") + 1])
+                scratch.write_bytes(b"jpg")
+                scratch.with_suffix(scratch.suffix + ".pp3").write_text("[Version]\nAppVersion=5.12\n", encoding="utf-8")
+                return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return type("Result", (), {
+                "returncode": 0,
+                "stdout": "RawTherapee, version 5.12, command line.\n",
+                "stderr": "",
+            })()
+
+        try:
+            runner = RawTherapeeBaselineRunner("/usr/local/bin/rawtherapee-cli")
+            with patch("swallowtail_metadata.profile.subprocess.run", side_effect=fake_run):
+                runner.generate(source, baseline, profile)
+
+            command = captured_command["command"]
+            self.assertEqual("-p", command[command.index(str(profile)) - 1])
+            self.assertLess(command.index("-p"), command.index("-c"))
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

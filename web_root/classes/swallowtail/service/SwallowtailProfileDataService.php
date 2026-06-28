@@ -111,8 +111,26 @@ final class SwallowtailProfileDataService
             'error' => (string)($values['last_error'] ?? ''),
             'source_profile_path' => (string)($values['source_profile_path'] ?? ''),
             'rawtherapee_version' => (string)($values['rawtherapee_version'] ?? ''),
+            'rawtherapee_profile_id' => (int)($values['rawtherapee_profile_id'] ?? 0),
+            'rawtherapee_profile_path' => (string)($values['rawtherapee_profile_path'] ?? ''),
+            'rawtherapee_profile_hash' => (string)($values['rawtherapee_profile_hash'] ?? ''),
             'viewed_at' => (int)($values['viewed_at'] ?? 0),
         ];
+    }
+
+    public function markBaselineQueued(int $photoId, ?array $profile): void
+    {
+        if ($photoId <= 0 || !$this->tableAvailable()) {
+            return;
+        }
+
+        InterfaceDB::transaction(function () use ($photoId, $profile): void {
+            $this->setValue($photoId, self::STATUS_TYPE, 'status', 'queued', 'string');
+            $this->setValue($photoId, self::STATUS_TYPE, 'last_error', '', 'string');
+            $this->setValue($photoId, self::STATUS_TYPE, 'rawtherapee_profile_id', max(0, (int)($profile['id'] ?? 0)), 'int');
+            $this->setValue($photoId, self::STATUS_TYPE, 'rawtherapee_profile_path', (string)($profile['profile_path'] ?? ''), 'string');
+            $this->setValue($photoId, self::STATUS_TYPE, 'rawtherapee_profile_hash', (string)($profile['profile_hash'] ?? ''), 'string');
+        });
     }
 
     public function rows(int $photoId): array
@@ -405,6 +423,9 @@ final class SwallowtailProfileDataService
             'error' => '',
             'source_profile_path' => '',
             'rawtherapee_version' => '',
+            'rawtherapee_profile_id' => 0,
+            'rawtherapee_profile_path' => '',
+            'rawtherapee_profile_hash' => '',
             'viewed_at' => 0,
         ];
     }

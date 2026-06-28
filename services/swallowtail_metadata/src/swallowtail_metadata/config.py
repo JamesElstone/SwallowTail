@@ -26,7 +26,7 @@ class RedisConfig:
     profile_queue: str
     asset_queue: str
     data_integrity_queue: str
-    rawtheapee_profile_refresh_queue: str
+    rawtherapee_profile_refresh_queue: str
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class DaylightSavingConfig:
 class MetadataConfig:
     exiftool_binary: str
     rawtherapee_binary: str
-    rawtheapee_profile_root: str
+    rawtherapee_profile_root: str
     server_timezone: str
     daylight_saving: DaylightSavingConfig
 
@@ -89,13 +89,13 @@ def default_config() -> AppConfig:
             profile_queue="swallowtail:metadata:profile_urgent",
             asset_queue="swallowtail:metadata:asset_urgent",
             data_integrity_queue="swallowtail:metadata:data_integrity",
-            rawtheapee_profile_refresh_queue="swallowtail:metadata:rawtheapee_profiles",
+            rawtherapee_profile_refresh_queue="swallowtail:metadata:rawtherapee_profiles",
         ),
         worker=WorkerConfig(poll_min_seconds=5, poll_max_seconds=60, retry_delay_seconds=60, max_attempts=3),
         metadata=MetadataConfig(
             exiftool_binary="/usr/local/bin/exiftool",
             rawtherapee_binary="/usr/local/bin/rawtherapee-cli",
-            rawtheapee_profile_root="/usr/local/share/rawtherapee/profiles",
+            rawtherapee_profile_root="/usr/local/share/rawtherapee/profiles",
             server_timezone="Europe/London",
             daylight_saving=DaylightSavingConfig(enabled=False, start="03-31", end="10-31", offset_minutes=60),
         ),
@@ -185,8 +185,8 @@ def _apply_php_redis_config(config: AppConfig, swallowtail_config: Any) -> AppCo
             profile_queue=str(redis.get("metadata_profile_queue", config.redis.profile_queue)),
             asset_queue=str(redis.get("metadata_asset_queue", config.redis.asset_queue)),
             data_integrity_queue=str(redis.get("metadata_data_integrity_queue", config.redis.data_integrity_queue)),
-            rawtheapee_profile_refresh_queue=str(
-                redis.get("rawtheapee_profile_refresh_queue", config.redis.rawtheapee_profile_refresh_queue)
+            rawtherapee_profile_refresh_queue=str(
+                redis.get("rawtherapee_profile_refresh_queue", config.redis.rawtherapee_profile_refresh_queue)
             ),
         ),
     )
@@ -197,17 +197,17 @@ def _apply_php_timezone_config(config: AppConfig, swallowtail_config: Any) -> Ap
         return config
     timezone_config = swallowtail_config.get("timezone")
     timezone_config = timezone_config if isinstance(timezone_config, dict) else {}
-    rawtheapee_config = swallowtail_config.get("rawtheapee")
+    rawtherapee_config = swallowtail_config.get("rawtherapee")
     timezone = str(timezone_config.get("server") or config.metadata.server_timezone).strip()
     daylight_saving = _daylight_saving_config(timezone_config.get("daylight_saving"), config.metadata.daylight_saving)
-    profile_root = config.metadata.rawtheapee_profile_root
-    if isinstance(rawtheapee_config, dict):
-        profile_root = str(rawtheapee_config.get("profile_root", profile_root))
+    profile_root = config.metadata.rawtherapee_profile_root
+    if isinstance(rawtherapee_config, dict):
+        profile_root = str(rawtherapee_config.get("profile_root", profile_root))
     return replace(
         config,
         metadata=replace(
             config.metadata,
-            rawtheapee_profile_root=profile_root,
+            rawtherapee_profile_root=profile_root,
             server_timezone=timezone or config.metadata.server_timezone,
             daylight_saving=daylight_saving,
         ),

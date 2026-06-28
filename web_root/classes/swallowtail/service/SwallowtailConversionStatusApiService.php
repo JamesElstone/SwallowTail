@@ -15,7 +15,7 @@ use ResponseFramework;
 
 final class SwallowtailConversionStatusApiService
 {
-    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample', 'source_profile', 'thumbnail_profile', 'preview_profile', 'final_profile'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample', 'source_profile', 'thumbnail_profile', 'preview_profile', 'final_profile'];
 
     public function __construct(
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),

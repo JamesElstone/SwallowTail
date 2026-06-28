@@ -331,7 +331,7 @@ class ConversionWorker:
             return None
 
         destination = output.with_name(f"{checksum}_source.pp3")
-        if destination.is_file() and destination.stat().st_size > 0:
+        if destination.is_file() and destination.stat().st_size > 0 and not str(getattr(job, "profile_path", "") or "").strip():
             return destination
 
         temporary = destination.with_name(f".{destination.name}.moving-{uuid.uuid4().hex}")

@@ -101,40 +101,53 @@ final class SwallowtailPhotoLibraryService
             ];
         }
 
+        $columns = [
+            'original_filename',
+            'original_extension',
+            'original_bytes',
+            'original_sha256',
+            'storage_base_location',
+            'upload_state',
+            'conversion_state',
+            'uploaded_by_user_id',
+            'uploaded_via',
+            'upload_token_id',
+        ];
+        $values = [
+            ':original_filename',
+            ':original_extension',
+            ':original_bytes',
+            ':original_sha256',
+            ':storage_base_location',
+            "'uploaded'",
+            "'pending'",
+            ':uploaded_by_user_id',
+            ':uploaded_via',
+            ':upload_token_id',
+        ];
+        $params = [
+            'original_filename' => $this->normaliseFilename((string)($upload['original_filename'] ?? 'upload.raw')),
+            'original_extension' => strtolower(trim((string)($upload['extension'] ?? ''))),
+            'original_bytes' => max(0, (int)($upload['bytes'] ?? 0)),
+            'original_sha256' => $sha256,
+            'storage_base_location' => trim((string)($upload['storage_base_location'] ?? '')),
+            'uploaded_by_user_id' => $this->nullablePositiveInt($upload['uploaded_by_user_id'] ?? null),
+            'uploaded_via' => $this->normaliseUploadSource((string)($upload['uploaded_via'] ?? 'api')),
+            'upload_token_id' => $this->nullablePositiveInt($upload['upload_token_id'] ?? null),
+        ];
+
+        if (InterfaceDB::columnExists('photos', 'rawtherapee_profile_id')) {
+            $columns[] = 'rawtherapee_profile_id';
+            $values[] = ':rawtherapee_profile_id';
+            $params['rawtherapee_profile_id'] = (new SwallowtailRawTherapeeProfileService())->defaultProfileId();
+        }
+
         InterfaceDB::prepareExecute(
-            "INSERT INTO photos (
-                original_filename,
-                original_extension,
-                original_bytes,
-                original_sha256,
-                storage_base_location,
-                upload_state,
-                conversion_state,
-                uploaded_by_user_id,
-                uploaded_via,
-                upload_token_id
+            "INSERT INTO photos (" . implode(",\n                ", $columns) . "
             ) VALUES (
-                :original_filename,
-                :original_extension,
-                :original_bytes,
-                :original_sha256,
-                :storage_base_location,
-                'uploaded',
-                'pending',
-                :uploaded_by_user_id,
-                :uploaded_via,
-                :upload_token_id
+                " . implode(",\n                ", $values) . "
             )",
-            [
-                'original_filename' => $this->normaliseFilename((string)($upload['original_filename'] ?? 'upload.raw')),
-                'original_extension' => strtolower(trim((string)($upload['extension'] ?? ''))),
-                'original_bytes' => max(0, (int)($upload['bytes'] ?? 0)),
-                'original_sha256' => $sha256,
-                'storage_base_location' => trim((string)($upload['storage_base_location'] ?? '')),
-                'uploaded_by_user_id' => $this->nullablePositiveInt($upload['uploaded_by_user_id'] ?? null),
-                'uploaded_via' => $this->normaliseUploadSource((string)($upload['uploaded_via'] ?? 'api')),
-                'upload_token_id' => $this->nullablePositiveInt($upload['upload_token_id'] ?? null),
-            ]
+            $params
         );
 
         $photo = $this->photoByChecksum($sha256);

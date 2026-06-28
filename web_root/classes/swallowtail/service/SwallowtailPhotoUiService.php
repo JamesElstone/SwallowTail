@@ -16,7 +16,7 @@ use Throwable;
 
 final class SwallowtailPhotoUiService
 {
-    private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final', 'rawtheapee_sample'];
+    private const IMAGE_TYPES = ['preview', 'thumbnail', 'embedded', 'original', 'final', 'rawtherapee_sample'];
     private const DOWNLOAD_IMAGE_TYPES = ['original', 'final'];
 
     public function __construct(

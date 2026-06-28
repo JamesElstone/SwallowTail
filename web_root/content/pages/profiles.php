@@ -21,13 +21,13 @@ final class _profiles extends PageContextFramework
 
     public function subtitle(): string
     {
-        return 'Internal and RawTheapee conversion profiles.';
+        return 'Internal and RawTherapee conversion profiles.';
     }
 
     public function cards(): array
     {
         return [
-            'rawtheapee_profiles',
+            'rawtherapee_profiles',
             'internal_profiles',
             'combined_profile_preview',
         ];
