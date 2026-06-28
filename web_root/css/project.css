@@ -989,6 +989,10 @@
 .event-permission-section {
   display: grid;
   gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel-soft);
 }
 
 .event-permission-grid {
