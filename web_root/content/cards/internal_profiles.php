@@ -78,7 +78,11 @@ final class _internal_profilesCard extends CardBaseFramework
 
         return '<div class="settings-fieldset">
             ' . $this->filterForms($imageTypes, $imageType, $profileName, $profileNames, $csrfToken) . '
-            ' . $this->configuredTable($context)->render($context) . '
+            ' . $this->configuredTable($context)->render($context, [
+                'cards[]' => [$this->key()],
+                'internal_profiles_image_type' => $imageType,
+                'internal_profiles_profile_name' => $profileName,
+            ]) . '
             ' . $this->adjustmentEntryForm($imageType, $profileName, $csrfToken) . '
         </div>';
     }
@@ -166,14 +170,19 @@ final class _internal_profilesCard extends CardBaseFramework
 
     private function table(array $context): TableFramework
     {
+        $dashboard = $this->dashboard($context);
+        $imageType = (string)($dashboard['image_type'] ?? 'preview');
+        $profileName = (string)($dashboard['profile_name'] ?? 'default');
+
         return TableFramework::make($this->key(), $this->rows($context))
-            ->exports(false)
+            ->filename('internal-profiles-' . $imageType . '-' . $profileName)
+            ->exportLimit(5000)
             ->empty('No internal profile rows are available.')
             ->classes('profile-editor-table', 'table-scroll profile-editor-grid')
-            ->column('type', 'Type', html: fn(array $row): string => $this->typeCell($row), exportable: false)
-            ->column('key', 'Key', html: fn(array $row): string => $this->textInputCell($row, 'key'), exportable: false)
-            ->column('value', 'Value', html: fn(array $row): string => $this->valueCell($row), exportable: false)
-            ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect($row), exportable: false)
+            ->column('type', 'Type', html: fn(array $row): string => $this->typeCell($row))
+            ->column('key', 'Key', html: fn(array $row): string => $this->textInputCell($row, 'key'))
+            ->column('value', 'Value', html: fn(array $row): string => $this->valueCell($row))
+            ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect($row))
             ->column('actions', 'Actions', html: fn(array $row): string => $this->actionsCell($row), exportable: false);
     }
 
