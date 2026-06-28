@@ -270,7 +270,7 @@ $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile select subm
     $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh"'));
     $harness->assertTrue(str_contains($html, 'data-rawtheapee-display-url-field="true"'));
     $harness->assertTrue(str_contains($html, 'data-rawtheapee-display-type-field="true"'));
-    $harness->assertTrue(str_contains($html, 'Change random Photo'));
+    $harness->assertTrue(str_contains($html, 'Change Random Photo'));
     $harness->assertTrue(str_contains($html, 'Refresh Profiles'));
     $harness->assertTrue(str_contains($html, 'class="form-row rawtheapee-profile-form panel-soft"'));
     $harness->assertTrue(!str_contains($html, 'Show Profile Effect'));

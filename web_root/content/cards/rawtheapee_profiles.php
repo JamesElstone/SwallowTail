@@ -117,7 +117,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             <label for="rawtheapee-profile-id">Profile</label>
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
-                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="change_photo" data-processing-text="Changing" data-processing-state="disabled">Change random Photo</button>
+                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="change_photo" data-processing-text="Changing" data-processing-state="disabled">Change Random Photo</button>
                 <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh Profiles</button>
             </div>
         </form>';
