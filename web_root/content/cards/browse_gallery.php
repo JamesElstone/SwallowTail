@@ -14,7 +14,7 @@ use Swallowtail\Service\SwallowtailPhotoUiService;
 final class _browse_galleryCard extends CardBaseFramework
 {
     private const DEFAULT_PER_PAGE = 24;
-    private const PER_PAGE_OPTIONS = [9, 12, 24, 30, 40];
+    private const PER_PAGE_OPTIONS = [9, 12, 18, 24, 30, 40];
 
     public function key(): string
     {
