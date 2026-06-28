@@ -43,15 +43,12 @@ final class SwallowtailRawTheapeeProfileService
     {
         $profiles = $this->availableProfiles();
         $profileId = max(0, $profileId);
-        if ($profileId <= 0 && $profiles !== []) {
-            $profileId = (int)($profiles[0]['id'] ?? 0);
-        }
 
         $photoId = max(0, $photoId);
         $photo = $showPreview && $photoId > 0
             ? (new SwallowtailCombinedProfilePreviewService())->photoForUser($photoId, $userId)
             : null;
-        $asset = is_array($photo) ? $this->previewAssetForPhoto($photo) : null;
+        $asset = is_array($photo) ? $this->previewAssetForPhoto($photo, $profileId > 0) : null;
 
         return [
             'profiles' => $profiles,
@@ -222,7 +219,8 @@ final class SwallowtailRawTheapeeProfileService
         $outputPath = $storage->imagePath($base, $checksum, self::SAMPLE_IMAGE_TYPE);
         $profileSignature = $this->profileSignature($profile);
 
-        $jobId = (new SwallowtailConversionQueueService())->enqueueImageJob(
+        $queue = new SwallowtailConversionQueueService();
+        $jobId = $queue->enqueueImageJob(
             $photoId,
             self::SAMPLE_IMAGE_TYPE,
             $inputPath,
@@ -238,6 +236,8 @@ final class SwallowtailRawTheapeeProfileService
         if ($jobId === null) {
             return ['success' => false, 'message' => 'Sample conversion could not be queued.'];
         }
+
+        $queue->notifyQueuedJob($jobId, self::SAMPLE_IMAGE_TYPE, self::SAMPLE_PRIORITY);
 
         return [
             'success' => true,
@@ -258,10 +258,10 @@ final class SwallowtailRawTheapeeProfileService
         return (new \CardAccessFramework())->roleIdForUser($userId);
     }
 
-    private function previewAssetForPhoto(array $photo): ?array
+    private function previewAssetForPhoto(array $photo, bool $includeSample): ?array
     {
         $assetService = new SwallowtailPhotoAssetService();
-        $sampleAsset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
+        $sampleAsset = $includeSample ? $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE) : null;
         $previewAsset = $assetService->assetForPhoto($photo, 'preview');
         $thumbnailAsset = $assetService->assetForPhoto($photo, 'thumbnail');
         $asset = $sampleAsset ?? $previewAsset ?? $thumbnailAsset;

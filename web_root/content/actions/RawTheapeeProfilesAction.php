@@ -53,6 +53,17 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
                 $context['photo_id'] = $photoId;
             }
 
+            if ($profileId <= 0) {
+                $context['sample'] = [
+                    'success' => true,
+                    'photo_id' => $photoId,
+                    'profile_id' => 0,
+                    'current_profile' => true,
+                ];
+
+                return ActionResultFramework::success(['rawtheapee.profiles'], [], [], ['rawtheapee_profiles' => $context]);
+            }
+
             $result = $service->enqueueSample($photoId, $profileId, $userId);
             $context['sample'] = $result;
             return new ActionResultFramework(!empty($result['success']), ['rawtheapee.profiles'], [[

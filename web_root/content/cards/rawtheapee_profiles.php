@@ -89,13 +89,13 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
 
     private function controlForm(array $profiles, int $profileId, int $photoId, string $csrfToken): string
     {
-        $options = '';
+        $options = '<option value="0"' . ($profileId === 0 ? ' selected' : '') . '>-- Current Profile --</option>';
         foreach ($profiles as $profile) {
             $id = (int)($profile['id'] ?? 0);
             $options .= '<option value="' . HelperFramework::escape((string)$id) . '"' . ($id === $profileId ? ' selected' : '') . '>' . HelperFramework::escape((string)($profile['display_label'] ?? $profile['relative_path'] ?? 'Profile')) . '</option>';
         }
-        if ($options === '') {
-            $options = '<option value="0">No profiles found</option>';
+        if ($profiles === []) {
+            $options .= '<option value="0" disabled>No RawTheapee profiles found</option>';
         }
 
         return '<form method="post" action="?page=profiles" data-ajax="true" class="form-row rawtheapee-profile-form">
@@ -108,6 +108,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
                 <button class="button button-inline primary" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Queueing" data-processing-state="disabled">Show Profile Effect</button>
+                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="change_photo" data-processing-text="Changing" data-processing-state="disabled">Change random Photo</button>
                 <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh Profiles</button>
             </div>
         </form>';
@@ -174,6 +175,10 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
 
     private function profileLabel(array $profiles, int $profileId): string
     {
+        if ($profileId <= 0) {
+            return 'Current Profile';
+        }
+
         foreach ($profiles as $profile) {
             if ((int)($profile['id'] ?? 0) === $profileId) {
                 return (string)($profile['display_label'] ?? $profile['relative_path'] ?? 'Profile');
@@ -185,6 +190,10 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
 
     private function statusLabel(array $sample, ?array $asset, bool $showPreview): string
     {
+        if (!empty($sample['current_profile'])) {
+            return 'Ready';
+        }
+
         if ($showPreview && $asset !== null && (string)($asset['image_type'] ?? '') === SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE) {
             return 'Ready';
         }

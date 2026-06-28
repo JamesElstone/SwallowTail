@@ -445,6 +445,16 @@ final class SwallowtailConversionQueueService
         return $jobs;
     }
 
+    public function notifyQueuedJob(int $jobId, string $imageType, string|int $priority): void
+    {
+        $jobId = max(0, $jobId);
+        if ($jobId <= 0) {
+            return;
+        }
+
+        $this->notifyRedis($jobId, $imageType, $this->normalisePriority($priority));
+    }
+
     private function notifyRedis(int $jobId, string $imageType, int $priority): void
     {
         if ($this->redisNotifier instanceof Closure) {
