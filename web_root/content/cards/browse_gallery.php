@@ -41,6 +41,25 @@ final class _browse_galleryCard extends CardBaseFramework
         return 'Previews for photos you can view.';
     }
 
+    public function services(): array
+    {
+        return [
+            [
+                'key' => 'gallery',
+                'service' => SwallowtailPhotoUiService::class,
+                'method' => 'accessiblePhotos',
+                'params' => [
+                    'userId' => ':auth.user_id',
+                    'page' => ':page.' . $this->paginationPageField(),
+                    'perPage' => ':page.' . $this->perPageField(),
+                    'sort' => ':page.' . $this->sortField(),
+                    'direction' => ':page.' . $this->sortDirectionField(),
+                    'eventId' => ':page.' . $this->eventFilterField(),
+                ],
+            ],
+        ];
+    }
+
     public function handle(
         RequestFramework $request,
         PageServiceFramework $services,
@@ -68,14 +87,13 @@ final class _browse_galleryCard extends CardBaseFramework
 
     public function render(array $context): string
     {
-        $userId = $this->currentUserId();
-        $service = new SwallowtailPhotoUiService();
+        $userId = $this->contextUserId($context);
         $perPage = $this->perPage($context);
         $sort = $this->sort($context);
         $sortDirection = $this->sortDirection($context);
         $eventFilterId = $this->eventFilterId($context);
 
-        $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), $perPage, $sort, $sortDirection, $eventFilterId);
+        $gallery = $this->galleryServiceResult($context, $userId, $perPage, $sort, $sortDirection, $eventFilterId);
         $rows = (array)($gallery['rows'] ?? []);
         $pagination = (array)($gallery['pagination'] ?? []);
 
@@ -90,8 +108,9 @@ final class _browse_galleryCard extends CardBaseFramework
         $pageField = $this->paginationPageField();
         $perPageField = $this->perPageField();
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
-        $canAssignEvents = $this->canManageEvents() && $this->hasEditablePhotos($rows);
-        $canShowEvents = $this->canManageEvents() && ($rows !== [] || $eventFilterId > 0);
+        $canManageEvents = $this->canManageEvents($userId);
+        $canAssignEvents = $canManageEvents && $this->hasEditablePhotos($rows);
+        $canShowEvents = $canManageEvents && ($rows !== [] || $eventFilterId > 0);
 
         $html = $this->galleryControls($perPage, $sort, $sortDirection, $canShowEvents, $eventFilterId);
         $html .= '<div class="gallery-events-layout">';
@@ -132,6 +151,29 @@ final class _browse_galleryCard extends CardBaseFramework
         );
 
         return $html;
+    }
+
+    private function galleryServiceResult(
+        array $context,
+        int $userId,
+        int $perPage,
+        string $sort,
+        string $sortDirection,
+        int $eventFilterId
+    ): array {
+        $gallery = $context['services']['gallery'] ?? null;
+        if (is_array($gallery)) {
+            return $gallery;
+        }
+
+        return (new SwallowtailPhotoUiService())->accessiblePhotos(
+            $userId,
+            $this->paginationPage($context),
+            $perPage,
+            $sort,
+            $sortDirection,
+            $eventFilterId
+        );
     }
 
     private function photoTile(array $photo, bool $canAssignEvents = true): string
@@ -643,9 +685,16 @@ final class _browse_galleryCard extends CardBaseFramework
         return $sessionAuthenticationService->authenticatedUserId($currentDeviceId);
     }
 
-    private function canManageEvents(): bool
+    private function contextUserId(array $context): int
     {
-        $userId = $this->currentUserId();
+        $userId = (int)($context['auth']['user_id'] ?? 0);
+
+        return $userId > 0 ? $userId : $this->currentUserId();
+    }
+
+    private function canManageEvents(?int $userId = null): bool
+    {
+        $userId = $userId !== null ? max(0, $userId) : $this->currentUserId();
 
         return $userId > 0
             && in_array('event_permissions', (new CardAccessFramework())->allowedCardsForUser($userId, ['event_permissions']), true);

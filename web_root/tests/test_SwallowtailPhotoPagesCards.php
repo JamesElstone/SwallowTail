@@ -1653,6 +1653,22 @@ $harness->check(_gallery::class, 'browse gallery normalises page size and sort c
     $harness->assertSame('asc', (string)$toggled['page']['browse_gallery_sort_direction']);
 });
 
+$harness->check(_gallery::class, 'browse gallery declares data as a card service', function () use ($harness): void {
+    $services = (new _browse_galleryCard())->services();
+    $gallery = (array)($services[0] ?? []);
+    $params = (array)($gallery['params'] ?? []);
+
+    $harness->assertSame('gallery', (string)($gallery['key'] ?? ''));
+    $harness->assertSame(SwallowtailPhotoUiService::class, (string)($gallery['service'] ?? ''));
+    $harness->assertSame('accessiblePhotos', (string)($gallery['method'] ?? ''));
+    $harness->assertSame(':auth.user_id', (string)($params['userId'] ?? ''));
+    $harness->assertSame(':page.browse_gallery_page', (string)($params['page'] ?? ''));
+    $harness->assertSame(':page.browse_gallery_per_page', (string)($params['perPage'] ?? ''));
+    $harness->assertSame(':page.browse_gallery_sort', (string)($params['sort'] ?? ''));
+    $harness->assertSame(':page.browse_gallery_sort_direction', (string)($params['direction'] ?? ''));
+    $harness->assertSame(':page.browse_gallery_event_filter', (string)($params['eventId'] ?? ''));
+});
+
 $harness->check(_gallery::class, 'browse gallery pagination preserves sort state', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
 
