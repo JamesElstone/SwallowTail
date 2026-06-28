@@ -41,7 +41,12 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
             ]], [], ['rawtheapee_profiles' => $context]);
         }
 
-        if ($action === 'test') {
+        if ($action === 'test' || $action === 'change_photo') {
+            if ($action === 'change_photo') {
+                $photoId = 0;
+                $context['photo_id'] = 0;
+            }
+
             if ($photoId <= 0) {
                 $photo = $service->randomAccessibleThumbnailPhoto($userId);
                 $photoId = max(0, (int)($photo['id'] ?? 0));

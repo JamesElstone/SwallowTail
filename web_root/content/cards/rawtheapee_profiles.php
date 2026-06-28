@@ -71,7 +71,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
 
         return '<div class="form-grid">
-            ' . $this->controlForm($profiles, $profileId, $csrfToken) . '
+            ' . $this->controlForm($profiles, $profileId, $photoId, $csrfToken) . '
             ' . $this->sampleResult($sample) . '
             ' . $this->photoPreview($photoId, $photo, $asset, $showPreview) . '
         </div>';
@@ -82,7 +82,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         return (array)(($context['services'] ?? [])['rawtheapee_profiles_dashboard'] ?? []);
     }
 
-    private function controlForm(array $profiles, int $profileId, string $csrfToken): string
+    private function controlForm(array $profiles, int $profileId, int $photoId, string $csrfToken): string
     {
         $options = '';
         foreach ($profiles as $profile) {
@@ -98,11 +98,12 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             <input type="hidden" name="card_action" value="RawTheapeeProfiles">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
             <input type="hidden" name="rawtheapee_profiles_action" value="test">
+            <input type="hidden" name="rawtheapee_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
             <label for="rawtheapee-profile-id">Profile</label>
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
-                <button class="button button-inline primary" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Queueing" data-processing-state="disabled">Test</button>
-                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Refreshing" data-processing-state="disabled">Refresh Photo</button>
+                <button class="button button-inline primary" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Queueing" data-processing-state="disabled">Show Profile Effect</button>
+                <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="change_photo" data-processing-text="Changing" data-processing-state="disabled">Change random Photo</button>
                 <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh Profiles</button>
             </div>
         </form>';
@@ -141,7 +142,10 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
                     'type' => $type,
                     'v' => $version,
                 ])) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '"></span>
-                <span class="gallery-meta"><strong>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</strong></span>
+                <span class="gallery-meta">
+                    <strong>' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '</strong>
+                    <span class="badge info">' . HelperFramework::escape($type) . '</span>
+                </span>
             </span>
         </div>';
     }
