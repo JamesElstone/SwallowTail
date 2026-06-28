@@ -74,20 +74,36 @@ final class _internal_profilesCard extends CardBaseFramework
         $imageType = (string)($dashboard['image_type'] ?? 'preview');
         $profileNames = (array)($dashboard['profile_names'] ?? []);
         $profileName = (string)($dashboard['profile_name'] ?? 'default');
-        $rows = (array)($dashboard['rows'] ?? []);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $draft = !empty($state['draft']);
 
         return '<div class="settings-fieldset">
             ' . $this->filterForms($imageTypes, $imageType, $profileName, $profileNames, $csrfToken) . '
-            ' . $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === [])->render($context) . '
+            ' . $this->configuredTable($context)->render($context) . '
             ' . $this->adjustmentEntryForm($imageType, $profileName, $csrfToken) . '
         </div>';
+    }
+
+    public function tables(array $context): array
+    {
+        return [$this->configuredTable($context)];
     }
 
     private function dashboard(array $context): array
     {
         return (array)(($context['services'] ?? [])['internal_profiles_dashboard'] ?? []);
+    }
+
+    private function configuredTable(array $context): TableFramework
+    {
+        $state = (array)($context[$this->key()] ?? []);
+        $dashboard = $this->dashboard($context);
+        $imageType = (string)($dashboard['image_type'] ?? 'preview');
+        $profileName = (string)($dashboard['profile_name'] ?? 'default');
+        $rows = (array)($dashboard['rows'] ?? []);
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        $draft = !empty($state['draft']);
+
+        return $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === []);
     }
 
     private function filterForms(array $imageTypes, string $imageType, string $profileName, array $profileNames, string $csrfToken): string

@@ -59,6 +59,25 @@ $harness->check(_internal_profilesCard::class, 'internal profiles card declares 
     $harness->assertSame('dashboard', (string)($services[0]['method'] ?? ''));
 });
 
+$harness->check(_internal_profilesCard::class, 'internal profiles exposes framework table', function () use ($harness): void {
+    $card = new _internal_profilesCard();
+    $tables = $card->tables([
+        'page' => [
+            'csrf_token' => 'test-csrf',
+        ],
+        'services' => [
+            'internal_profiles_dashboard' => [
+                'image_type' => 'preview',
+                'profile_name' => 'default',
+                'rows' => [],
+            ],
+        ],
+    ]);
+
+    $harness->assertTrue(($tables[0] ?? null) instanceof TableFramework);
+    $harness->assertSame('internal_profiles', $tables[0]->key());
+});
+
 $harness->check(_internal_profilesCard::class, 'internal profile editor renders with table builder without pagination', function () use ($harness): void {
     $card = new _internal_profilesCard();
     $method = new ReflectionMethod($card, 'profileTable');
