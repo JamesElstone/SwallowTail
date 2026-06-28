@@ -21,6 +21,21 @@ final class _internal_profilesCard extends CardBaseFramework
         return 'Internal Profiles';
     }
 
+    public function services(): array
+    {
+        return [
+            [
+                'key' => 'internal_profiles_dashboard',
+                'service' => SwallowtailInternalProfilesService::class,
+                'method' => 'dashboard',
+                'params' => [
+                    'imageType' => ':internal_profiles.image_type',
+                    'profileName' => ':internal_profiles.profile_name',
+                ],
+            ],
+        ];
+    }
+
     public function helper(array $context): string
     {
         return 'Reusable PP3 overlays stored in internal_profile_data.';
@@ -32,47 +47,54 @@ final class _internal_profilesCard extends CardBaseFramework
         array $pageContext,
         ActionResultFramework $actionResult
     ): array {
-        $service = new SwallowtailInternalProfilesService();
         $current = (array)($pageContext[$this->key()] ?? []);
         $actionContext = (array)($actionResult->context()[$this->key()] ?? []);
-        $imageType = $service->normaliseImageType((string)$request->input('internal_profiles_image_type', (string)($actionContext['image_type'] ?? $current['image_type'] ?? 'preview')));
-        $names = $service->profileNames($imageType);
-        $profileName = $service->normaliseProfileName((string)$request->input('internal_profiles_profile_name', (string)($actionContext['profile_name'] ?? $current['profile_name'] ?? ($names[0] ?? 'default'))));
+        $state = array_replace($current, $actionContext);
+        $imageType = trim((string)$request->input('internal_profiles_image_type', (string)($state['image_type'] ?? '')));
+        $profileName = trim((string)$request->input('internal_profiles_profile_name', (string)($state['profile_name'] ?? '')));
 
-        $pageContext[$this->key()] = array_replace($current, $actionContext, [
-            'image_type' => $imageType,
-            'profile_name' => $profileName,
-        ]);
+        if ($imageType !== '') {
+            $state['image_type'] = $imageType;
+        }
+
+        if ($profileName !== '') {
+            $state['profile_name'] = $profileName;
+        }
+
+        $pageContext[$this->key()] = $state;
 
         return $pageContext;
     }
 
     public function render(array $context): string
     {
-        $service = new SwallowtailInternalProfilesService();
-        if (!$service->tableAvailable()) {
-            return '<div class="panel-soft warn">internal_profile_data is not available. Run database migrations.</div>';
-        }
-
         $state = (array)($context[$this->key()] ?? []);
-        $imageType = $service->normaliseImageType((string)($state['image_type'] ?? 'preview'));
-        $profileNames = $service->profileNames($imageType);
-        $profileName = $service->normaliseProfileName((string)($state['profile_name'] ?? ($profileNames[0] ?? 'default')));
-        $rows = $service->rows($imageType, $profileName);
+        $dashboard = $this->dashboard($context);
+        $imageTypes = (array)($dashboard['image_types'] ?? SwallowtailInternalProfilesService::IMAGE_TYPES);
+        $imageType = (string)($dashboard['image_type'] ?? 'preview');
+        $profileNames = (array)($dashboard['profile_names'] ?? []);
+        $profileName = (string)($dashboard['profile_name'] ?? 'default');
+        $rows = (array)($dashboard['rows'] ?? []);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $draft = !empty($state['draft']);
 
         return '<div class="settings-fieldset">
-            ' . $this->filterForms($service, $imageType, $profileName, $profileNames, $csrfToken) . '
+            ' . $this->filterForms($imageTypes, $imageType, $profileName, $profileNames, $csrfToken) . '
             ' . $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === [])->render($context) . '
             ' . $this->adjustmentEntryForm($imageType, $profileName, $csrfToken) . '
         </div>';
     }
 
-    private function filterForms(SwallowtailInternalProfilesService $service, string $imageType, string $profileName, array $profileNames, string $csrfToken): string
+    private function dashboard(array $context): array
+    {
+        return (array)(($context['services'] ?? [])['internal_profiles_dashboard'] ?? []);
+    }
+
+    private function filterForms(array $imageTypes, string $imageType, string $profileName, array $profileNames, string $csrfToken): string
     {
         $imageOptions = '';
-        foreach ($service->imageTypes() as $type) {
+        foreach ($imageTypes as $type) {
+            $type = (string)$type;
             $imageOptions .= '<option value="' . HelperFramework::escape($type) . '"' . ($type === $imageType ? ' selected' : '') . '>' . HelperFramework::escape($type) . '</option>';
         }
 

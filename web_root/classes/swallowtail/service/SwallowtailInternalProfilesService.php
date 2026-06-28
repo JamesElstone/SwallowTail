@@ -35,6 +35,25 @@ final class SwallowtailInternalProfilesService
         return self::VALUE_TYPES;
     }
 
+    public function dashboard(string $imageType = 'preview', string $profileName = ''): array
+    {
+        $imageType = trim($imageType) === ''
+            ? 'preview'
+            : $this->normaliseImageType($imageType);
+        $profileNames = $this->profileNames($imageType);
+        $profileName = $this->normaliseProfileName($profileName !== '' ? $profileName : (string)($profileNames[0] ?? 'default'));
+        $rows = $this->rows($imageType, $profileName);
+
+        return [
+            'image_types' => $this->imageTypes(),
+            'value_types' => $this->valueTypes(),
+            'image_type' => $imageType,
+            'profile_names' => $profileNames,
+            'profile_name' => $profileName,
+            'rows' => $rows,
+        ];
+    }
+
     public function normaliseImageType(string $imageType): string
     {
         $imageType = strtolower(trim($imageType));

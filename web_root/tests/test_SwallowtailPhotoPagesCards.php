@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailJobStatisticsService;
+use Swallowtail\Service\SwallowtailInternalProfilesService;
 use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
 use Swallowtail\Service\SwallowtailServiceStatusService;
@@ -47,6 +48,14 @@ $harness->check(_profiles::class, 'profiles page exposes profile management card
         'rawtheapee_profiles',
         'combined_profile_preview',
     ], $profiles->cards());
+});
+
+$harness->check(_internal_profilesCard::class, 'internal profiles card declares dashboard service', function () use ($harness): void {
+    $services = (new _internal_profilesCard())->services();
+
+    $harness->assertSame('internal_profiles_dashboard', (string)($services[0]['key'] ?? ''));
+    $harness->assertSame(SwallowtailInternalProfilesService::class, (string)($services[0]['service'] ?? ''));
+    $harness->assertSame('dashboard', (string)($services[0]['method'] ?? ''));
 });
 
 $harness->check(_internal_profilesCard::class, 'internal profile editor renders with table builder without pagination', function () use ($harness): void {
