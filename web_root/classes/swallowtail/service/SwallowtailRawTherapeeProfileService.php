@@ -454,7 +454,17 @@ final class SwallowtailRawTherapeeProfileService
         );
 
         if ($jobId === null) {
-            return ['success' => false, 'message' => 'Sample conversion could not be queued.'];
+            return [
+                'success' => false,
+                'message' => $this->sampleQueueFailureMessage(
+                    $photoId,
+                    $profileId,
+                    $profile,
+                    $inputPath,
+                    $outputPath,
+                    $profileSignature
+                ),
+            ];
         }
 
         $queue->notifyQueuedJob($jobId, self::SAMPLE_IMAGE_TYPE, self::SAMPLE_PRIORITY);
@@ -476,6 +486,175 @@ final class SwallowtailRawTherapeeProfileService
     private function roleIdForUser(int $userId): int
     {
         return (new \CardAccessFramework())->roleIdForUser($userId);
+    }
+
+    private function sampleQueueFailureMessage(
+        int $photoId,
+        int $profileId,
+        array $profile,
+        string $inputPath,
+        string $outputPath,
+        string $profileSignature
+    ): string {
+        $profilePath = (string)($profile['profile_path'] ?? '');
+        $details = [
+            'photo_id=' . (string)$photoId,
+            'profile_id=' . (string)$profileId,
+            'image_type=' . self::SAMPLE_IMAGE_TYPE,
+            'signature=' . $this->shortSignature($profileSignature),
+            'source=' . $this->pathDiagnostic($inputPath),
+            'profile=' . $this->pathDiagnostic($profilePath),
+            'jobs_table=' . $this->yesNo(InterfaceDB::tableExists('photo_conversion_jobs')),
+            'profile_signature_column=' . $this->yesNo(InterfaceDB::columnExists('photo_conversion_jobs', 'profile_signature')),
+        ];
+
+        $imageTypeColumn = $this->conversionJobColumnType('image_type');
+        if ($imageTypeColumn !== '') {
+            $details[] = 'image_type_column=' . $imageTypeColumn;
+            $details[] = 'rawtherapee_sample_allowed=' . $this->yesNo(str_contains($imageTypeColumn, self::SAMPLE_IMAGE_TYPE));
+        }
+
+        $priorityColumn = $this->conversionJobColumnType('priority');
+        if ($priorityColumn !== '') {
+            $details[] = 'priority_column=' . $priorityColumn;
+        }
+
+        foreach ($this->matchingQueuedJobDiagnostics($photoId, $profilePath, $inputPath, $outputPath) as $key => $value) {
+            $details[] = $key . '=' . $value;
+        }
+
+        return 'Sample conversion could not be queued. Diagnostics: ' . implode('; ', $details) . '.';
+    }
+
+    private function matchingQueuedJobDiagnostics(int $photoId, string $profilePath, string $inputPath, string $outputPath): array
+    {
+        if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
+            return [];
+        }
+
+        $profilePath = trim($profilePath);
+        $activeMatchingProfile = InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND " . ($profilePath === '' ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
+               AND status IN ('queued', 'processing')",
+            array_filter([
+                'photo_id' => $photoId,
+                'image_type' => self::SAMPLE_IMAGE_TYPE,
+                'profile_path' => $profilePath === '' ? null : $profilePath,
+            ], static fn(mixed $value): bool => $value !== null)
+        );
+        $exactQueued = InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND input_path = :input_path
+               AND output_path = :output_path
+               AND " . ($profilePath === '' ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
+               AND status = 'queued'",
+            array_filter([
+                'photo_id' => $photoId,
+                'image_type' => self::SAMPLE_IMAGE_TYPE,
+                'input_path' => $inputPath,
+                'output_path' => $outputPath,
+                'profile_path' => $profilePath === '' ? null : $profilePath,
+            ], static fn(mixed $value): bool => $value !== null)
+        );
+        $pathRows = InterfaceDB::fetchAll(
+            "SELECT id, image_type, status, profile_signature
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND input_path = :input_path
+               AND output_path = :output_path
+             ORDER BY id DESC
+             LIMIT 3",
+            [
+                'photo_id' => $photoId,
+                'input_path' => $inputPath,
+                'output_path' => $outputPath,
+            ]
+        );
+
+        return [
+            'active_same_profile' => (string)max(0, (int)$activeMatchingProfile),
+            'exact_queued_match' => (string)max(0, (int)$exactQueued),
+            'same_path_rows' => $this->queueRowsDiagnostic($pathRows),
+        ];
+    }
+
+    private function conversionJobColumnType(string $column): string
+    {
+        if (!InterfaceDB::tableExists('photo_conversion_jobs') || !InterfaceDB::columnExists('photo_conversion_jobs', $column)) {
+            return '';
+        }
+
+        if (InterfaceDB::driverName() === 'sqlite') {
+            $rows = InterfaceDB::fetchAll('PRAGMA table_info(photo_conversion_jobs)');
+            foreach ($rows as $row) {
+                if (strcasecmp((string)($row['name'] ?? ''), $column) === 0) {
+                    return strtolower(trim((string)($row['type'] ?? '')));
+                }
+            }
+
+            return '';
+        }
+
+        $type = InterfaceDB::fetchColumn(
+            "SELECT COLUMN_TYPE
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'photo_conversion_jobs'
+               AND COLUMN_NAME = :column
+             LIMIT 1",
+            ['column' => $column]
+        );
+
+        return strtolower(substr(trim((string)$type), 0, 240));
+    }
+
+    private function queueRowsDiagnostic(array $rows): string
+    {
+        if ($rows === []) {
+            return 'none';
+        }
+
+        $parts = [];
+        foreach ($rows as $row) {
+            $parts[] = '#' . (string)max(0, (int)($row['id'] ?? 0))
+                . '/' . trim((string)($row['image_type'] ?? ''))
+                . '/' . trim((string)($row['status'] ?? ''))
+                . '/' . $this->shortSignature((string)($row['profile_signature'] ?? ''));
+        }
+
+        return implode(',', $parts);
+    }
+
+    private function pathDiagnostic(string $path): string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return 'empty';
+        }
+
+        return basename($path)
+            . ':len=' . (string)strlen($path)
+            . ':exists=' . $this->yesNo(is_file($path))
+            . ':readable=' . $this->yesNo(is_readable($path));
+    }
+
+    private function shortSignature(string $signature): string
+    {
+        $signature = strtolower(trim($signature));
+
+        return preg_match('/^[a-f0-9]{64}$/', $signature) === 1 ? substr($signature, 0, 12) : 'none';
+    }
+
+    private function yesNo(bool $value): string
+    {
+        return $value ? 'yes' : 'no';
     }
 
     private function freshSampleAssetForPhoto(array $photo, array $profile): ?array
