@@ -238,6 +238,16 @@ final class SwallowtailEventManagementService
         if ($eventId <= 0 || $photoIds === []) {
             return;
         }
+        if ($actorUserId !== null) {
+            $photoUiService = new SwallowtailPhotoUiService();
+            $photoIds = array_values(array_filter(
+                $photoIds,
+                static fn(int $photoId): bool => $photoUiService->userCanEditPhoto($photoId, $actorUserId)
+            ));
+            if ($photoIds === []) {
+                throw new \RuntimeException('You do not have permission to tag those photos.');
+            }
+        }
 
         InterfaceDB::transaction(function () use ($photoIds, $eventId, $assigned, $actorUserId): void {
             foreach ($photoIds as $photoId) {

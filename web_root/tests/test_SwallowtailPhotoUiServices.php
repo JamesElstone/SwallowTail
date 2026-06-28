@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 use Swallowtail\Service\SwallowtailPhotoLibraryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailStorageService;
 use Swallowtail\Service\SwallowtailWebRawUploadService;
 
@@ -206,6 +207,7 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         'photo_profile_data',
         'photo_image_assets',
         'photo_conversion_jobs',
+        'photo_metadata',
         'event_permissions',
         'event_photos',
         'photos',
@@ -334,6 +336,20 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         upload_token_id INTEGER NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE photo_metadata (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'deferred',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NULL,
+        last_error TEXT NULL,
+        captured_at_local TEXT NULL,
+        captured_at_utc TEXT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (photo_id)
     )");
 
     InterfaceDB::execute("CREATE TABLE event_photos (
@@ -627,6 +643,9 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $viewerRows = $service->accessiblePhotos(903)['rows'];
     $noAccessRows = $service->accessiblePhotos(904)['rows'];
     $clampedGallery = $service->accessiblePhotos(901, 99, 2);
+    $adminFilteredGallery = $service->accessiblePhotos(901, 1, 1, 'uploaded', 'desc', (int)$event['id']);
+    $viewerFilteredGallery = $service->accessiblePhotos(903, 1, 24, 'uploaded', 'desc', (int)$event['id']);
+    $uploaderFilteredGallery = $service->accessiblePhotos(902, 1, 24, 'uploaded', 'desc', (int)$event['id']);
 
     $harness->assertSame(3, count($adminRows));
     $harness->assertSame(1, count($uploaderRows));
@@ -639,6 +658,194 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame(3, (int)$clampedGallery['pagination']['total_items']);
     $harness->assertSame(3, (int)$clampedGallery['pagination']['first_item']);
     $harness->assertSame(3, (int)$clampedGallery['pagination']['last_item']);
+    $harness->assertSame(1, count((array)$adminFilteredGallery['rows']));
+    $harness->assertSame('event.CR2', (string)$adminFilteredGallery['rows'][0]['original_filename']);
+    $harness->assertSame([(int)$event['id']], (array)$adminFilteredGallery['rows'][0]['event_ids']);
+    $harness->assertSame(1, (int)$adminFilteredGallery['pagination']['total_items']);
+    $harness->assertSame(1, count((array)$viewerFilteredGallery['rows']));
+    $harness->assertSame('event.CR2', (string)$viewerFilteredGallery['rows'][0]['original_filename']);
+    $harness->assertSame(0, count((array)$uploaderFilteredGallery['rows']));
+    $harness->assertSame(0, (int)$uploaderFilteredGallery['pagination']['total_items']);
+});
+
+$harness->check(SwallowtailEventManagementService::class, 'assigns and unassigns event photos only when actor can edit photo', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $library = new SwallowtailPhotoLibraryService();
+    $sourceEvent = $library->createEvent('Source Event');
+    $targetEvent = $library->createEvent('Target Event');
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            uploaded_by_user_id,
+            uploaded_via
+        ) VALUES (
+            'taggable.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            NULL,
+            'web'
+        )",
+        [
+            'sha256' => str_repeat('9', 64),
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+
+    $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'taggable.CR2'");
+    $library->assignPhotoToEvent($photoId, (int)$sourceEvent['id']);
+    $library->grantEventPermission((int)$sourceEvent['id'], 903, ['can_view' => true]);
+
+    $service = new SwallowtailEventManagementService();
+    $service->assignPhotosToEvent([$photoId], (int)$targetEvent['id'], true, 901);
+    $harness->assertSame(1, InterfaceDB::countWhere('event_photos', [
+        'photo_id' => $photoId,
+        'event_id' => (int)$targetEvent['id'],
+    ]));
+
+    $service->assignPhotosToEvent([$photoId], (int)$targetEvent['id'], false, 901);
+    $harness->assertSame(0, InterfaceDB::countWhere('event_photos', [
+        'photo_id' => $photoId,
+        'event_id' => (int)$targetEvent['id'],
+    ]));
+
+    $failed = false;
+    try {
+        $service->assignPhotosToEvent([$photoId], (int)$targetEvent['id'], true, 903);
+    } catch (RuntimeException) {
+        $failed = true;
+    }
+
+    $harness->assertSame(true, $failed);
+    $harness->assertSame(0, InterfaceDB::countWhere('event_photos', [
+        'photo_id' => $photoId,
+        'event_id' => (int)$targetEvent['id'],
+    ]));
+});
+
+$harness->check(SwallowtailPhotoUiService::class, 'sorts accessible gallery rows by upload filename and timestamp', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+
+    foreach ([
+        ['alpha.CR2', 'a', '2026-06-25 10:00:00', '2024-03-01 09:00:00'],
+        ['Beta.CR2', 'b', '2026-06-25 11:00:00', '2024-02-01 09:00:00'],
+        ['gamma.CR2', 'c', '2026-06-25 12:00:00', null],
+    ] as $photo) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location,
+                uploaded_by_user_id,
+                uploaded_via,
+                created_at
+            ) VALUES (
+                :filename,
+                'cr2',
+                100,
+                :sha256,
+                :storage_base_location,
+                902,
+                'web',
+                :created_at
+            )",
+            [
+                'filename' => $photo[0],
+                'sha256' => str_repeat($photo[1], 64),
+                'storage_base_location' => $baseLocation,
+                'created_at' => $photo[2],
+            ]
+        );
+
+        if ($photo[3] !== null) {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO photo_metadata (photo_id, status, captured_at_local, captured_at_utc)
+                 VALUES (
+                    (SELECT id FROM photos WHERE original_sha256 = :sha256 LIMIT 1),
+                    'ready',
+                    :captured_at,
+                    :captured_at
+                 )",
+                [
+                    'sha256' => str_repeat($photo[1], 64),
+                    'captured_at' => $photo[3],
+                ]
+            );
+        }
+    }
+
+    $filenames = static function (array $gallery): array {
+        return array_map(
+            static fn(array $row): string => (string)($row['original_filename'] ?? ''),
+            (array)($gallery['rows'] ?? [])
+        );
+    };
+
+    $service = new SwallowtailPhotoUiService();
+
+    $harness->assertSame(['gamma.CR2', 'Beta.CR2', 'alpha.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'uploaded', 'desc')));
+    $harness->assertSame(['alpha.CR2', 'Beta.CR2', 'gamma.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'uploaded', 'asc')));
+    $harness->assertSame(['alpha.CR2', 'Beta.CR2', 'gamma.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'filename', 'asc')));
+    $harness->assertSame(['gamma.CR2', 'Beta.CR2', 'alpha.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'filename', 'desc')));
+    $harness->assertSame(['Beta.CR2', 'alpha.CR2', 'gamma.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'timestamp', 'asc')));
+    $harness->assertSame(['alpha.CR2', 'Beta.CR2', 'gamma.CR2'], $filenames($service->accessiblePhotos(901, 1, 24, 'timestamp', 'desc')));
+});
+
+$harness->check(SwallowtailPhotoUiService::class, 'falls back to upload sorting when timestamp metadata is unavailable', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+
+    foreach ([
+        ['old.CR2', '1', '2026-06-25 10:00:00'],
+        ['new.CR2', '2', '2026-06-25 11:00:00'],
+    ] as $photo) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location,
+                uploaded_by_user_id,
+                uploaded_via,
+                created_at
+            ) VALUES (
+                :filename,
+                'cr2',
+                100,
+                :sha256,
+                :storage_base_location,
+                902,
+                'web',
+                :created_at
+            )",
+            [
+                'filename' => $photo[0],
+                'sha256' => str_repeat($photo[1], 64),
+                'storage_base_location' => $baseLocation,
+                'created_at' => $photo[2],
+            ]
+        );
+    }
+
+    InterfaceDB::execute('DROP TABLE IF EXISTS photo_metadata');
+
+    $rows = (array)(new SwallowtailPhotoUiService())->accessiblePhotos(901, 1, 24, 'timestamp', 'asc')['rows'];
+
+    $harness->assertSame(
+        ['old.CR2', 'new.CR2'],
+        array_map(static fn(array $row): string => (string)($row['original_filename'] ?? ''), $rows)
+    );
 });
 
 $harness->check(SwallowtailPhotoUiService::class, 'returns recent uploads from all accessible upload sources', function () use ($harness, $swallowtailUiCreateSchema): void {

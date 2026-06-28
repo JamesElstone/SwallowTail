@@ -15,6 +15,11 @@ final class _browse_galleryCard extends CardBaseFramework
 {
     private const DEFAULT_PER_PAGE = 24;
     private const PER_PAGE_OPTIONS = [9, 12, 18, 24, 30, 40];
+    private const SORT_OPTIONS = [
+        'uploaded' => 'Uploaded Order',
+        'timestamp' => 'Photo Timestamp',
+        'filename' => 'Original File Name',
+    ];
 
     public function key(): string
     {
@@ -46,6 +51,17 @@ final class _browse_galleryCard extends CardBaseFramework
         $pageContext['page'][$this->perPageField()] = $this->normalisePerPage(
             (int)$request->input($this->perPageField(), self::DEFAULT_PER_PAGE)
         );
+        $pageContext['page'][$this->eventFilterField()] = max(0, (int)$request->input($this->eventFilterField(), 0));
+        $pageContext['page'][$this->sortField()] = $this->normaliseSort(
+            (string)$request->input($this->sortField(), 'uploaded')
+        );
+        $sortDirection = $this->normaliseSortDirection(
+            (string)$request->input($this->sortDirectionField(), 'desc')
+        );
+        if ((string)$request->input($this->sortDirectionToggleField(), '') === '1') {
+            $sortDirection = $sortDirection === 'asc' ? 'desc' : 'asc';
+        }
+        $pageContext['page'][$this->sortDirectionField()] = $sortDirection;
 
         return $pageContext;
     }
@@ -55,13 +71,18 @@ final class _browse_galleryCard extends CardBaseFramework
         $userId = $this->currentUserId();
         $service = new SwallowtailPhotoUiService();
         $perPage = $this->perPage($context);
+        $sort = $this->sort($context);
+        $sortDirection = $this->sortDirection($context);
+        $eventFilterId = $this->eventFilterId($context);
 
-        $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), $perPage);
+        $gallery = $service->accessiblePhotos($userId, $this->paginationPage($context), $perPage, $sort, $sortDirection, $eventFilterId);
         $rows = (array)($gallery['rows'] ?? []);
         $pagination = (array)($gallery['pagination'] ?? []);
 
         if ($rows === []) {
-            return '<p class="helper">No accessible photos are available yet.</p>';
+            if ($eventFilterId <= 0) {
+                return '<p class="helper">No accessible photos are available yet.</p>';
+            }
         }
 
         $hasPendingPreviews = $this->hasPendingPreviews($rows);
@@ -70,10 +91,11 @@ final class _browse_galleryCard extends CardBaseFramework
         $perPageField = $this->perPageField();
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
         $canAssignEvents = $this->canManageEvents() && $this->hasEditablePhotos($rows);
+        $canShowEvents = $this->canManageEvents() && ($rows !== [] || $eventFilterId > 0);
 
-        $html = $this->galleryControls($perPage, $canAssignEvents);
+        $html = $this->galleryControls($perPage, $sort, $sortDirection, $canShowEvents, $eventFilterId);
         $html .= '<div class="gallery-events-layout">';
-        $html .= $canAssignEvents ? $this->eventAssignmentPane($context) : '';
+        $html .= $canShowEvents ? $this->eventAssignmentPane($context, $eventFilterId, $perPage, $sort, $sortDirection) : '';
         $html .= '<div class="gallery-grid"
             data-gallery-auto-refresh="true"
             data-gallery-events-grid
@@ -85,6 +107,9 @@ final class _browse_galleryCard extends CardBaseFramework
         foreach ($rows as $photo) {
             $html .= $this->photoTile((array)$photo, $canAssignEvents);
         }
+        if ($rows === []) {
+            $html .= '<p class="helper">No photos match this event filter.</p>';
+        }
         $html .= '</div></div>';
 
         $html .= $this->paginationControls(
@@ -95,6 +120,9 @@ final class _browse_galleryCard extends CardBaseFramework
             [
                 'cards[]' => 'browse_gallery',
                 $perPageField => $perPage,
+                $this->sortField() => $sort,
+                $this->sortDirectionField() => $sortDirection,
+                $this->eventFilterField() => $eventFilterId,
             ],
             'post',
             [],
@@ -125,13 +153,15 @@ final class _browse_galleryCard extends CardBaseFramework
         $statusUrlAttribute = $statusType !== null
             ? ' data-gallery-photo-status-url="' . HelperFramework::escape($this->photoStatusUrl($photoId, $statusType)) . '"'
             : '';
+        $eventIds = $this->photoEventIds($photo);
+        $eventIdsAttribute = ' data-gallery-event-ids="' . HelperFramework::escape(implode(',', $eventIds)) . '"';
         $preview = $previewType !== null
             ? '<img src="' . HelperFramework::escape($this->photoAssetUrl($photoId, $previewType)) . '" alt="' . HelperFramework::escape($filename) . '" loading="lazy">'
             : '<div class="gallery-placeholder">Preview pending</div>';
         $statusIndicator = $this->statusIndicator($status);
         $eventCheckbox = ($canAssignEvents && !empty($photo['effective_can_edit']))
             ? '<label class="gallery-event-select" aria-label="Select ' . HelperFramework::escape($filename) . ' for event assignment">
-            <input type="checkbox" name="photo_ids[]" value="' . HelperFramework::escape((string)$photoId) . '" form="gallery-event-assignment-form">
+            <input type="checkbox" name="photo_ids[]" value="' . HelperFramework::escape((string)$photoId) . '" data-gallery-event-photo-checkbox>
             <span></span>
         </label>'
             : '';
@@ -146,7 +176,7 @@ final class _browse_galleryCard extends CardBaseFramework
             </a>'
             : '';
 
-        return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . $statusUrlAttribute . '>
+        return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $eventIdsAttribute . $pendingAttribute . $statusUrlAttribute . '>
             <div class="gallery-thumb-shell">
                 <a class="gallery-view-link gallery-thumb-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '"' . $viewerPrefetchAttribute . '>
                     <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
@@ -283,8 +313,16 @@ final class _browse_galleryCard extends CardBaseFramework
         </label>';
     }
 
-    private function galleryControls(int $perPage, ?bool $canAssignEvents = null): string
+    private function galleryControls(
+        int $perPage,
+        string $sort = 'uploaded',
+        string $sortDirection = 'desc',
+        ?bool $canAssignEvents = null,
+        int $eventFilterId = 0
+    ): string
     {
+        $sort = $this->normaliseSort($sort);
+        $sortDirection = $this->normaliseSortDirection($sortDirection);
         $canAssignEvents ??= $this->canManageEvents();
 
         return '<div class="gallery-header-controls">
@@ -293,7 +331,10 @@ final class _browse_galleryCard extends CardBaseFramework
                 . $this->autoRefreshControl()
                 . $this->autoScrollControl()
             . '</div>
-            <div class="gallery-header-controls-right">' . $this->perPageControl($perPage) . '</div>
+            <div class="gallery-header-controls-right">'
+                . $this->sortControl($sort, $sortDirection, $perPage, $eventFilterId)
+                . $this->perPageControl($perPage, $sort, $sortDirection, $eventFilterId)
+            . '</div>
         </div>';
     }
 
@@ -303,10 +344,16 @@ final class _browse_galleryCard extends CardBaseFramework
             return '';
         }
 
-        return '<button class="button button-inline gallery-events-toggle" type="button" data-gallery-events-toggle aria-expanded="false">Assign Events</button>';
+        return '<button class="button button-inline primary gallery-events-toggle" type="button" data-gallery-events-toggle aria-expanded="false">Events</button>';
     }
 
-    private function eventAssignmentPane(array $context): string
+    private function eventAssignmentPane(
+        array $context,
+        int $eventFilterId,
+        int $perPage,
+        string $sort,
+        string $sortDirection
+    ): string
     {
         $events = (new SwallowtailEventManagementService())->eventOptionsForAssignment();
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
@@ -320,8 +367,8 @@ final class _browse_galleryCard extends CardBaseFramework
                     <span class="helper">' . HelperFramework::escape((string)((int)($event['photo_count'] ?? 0))) . ' photos</span>
                 </span>
                 <span class="actions-row">
-                    <button class="button button-inline primary" type="button" value="' . HelperFramework::escape((string)$eventId) . '" data-assignment-state="1" data-gallery-assignment-event>Tag</button>
-                    <button class="button button-inline" type="button" value="' . HelperFramework::escape((string)$eventId) . '" data-assignment-state="0" data-gallery-assignment-event>Untag</button>
+                    <button class="button button-inline primary" type="button" value="' . HelperFramework::escape((string)$eventId) . '" data-gallery-assignment-event aria-pressed="false">Tag Photos</button>
+                    ' . $this->eventFilterForm($eventId, 'Show Photos', $perPage, $sort, $sortDirection) . '
                 </span>
             </div>';
         }
@@ -330,30 +377,86 @@ final class _browse_galleryCard extends CardBaseFramework
             $eventRows = '<p class="helper">No active events are available.</p>';
         }
 
+        if ($eventFilterId > 0) {
+            $eventRows = '<div class="gallery-event-filter-row">'
+                . $this->eventFilterForm(0, 'All Photos', $perPage, $sort, $sortDirection)
+                . '</div>' . $eventRows;
+        }
+
         return '<aside class="gallery-events-pane" data-gallery-events-pane hidden>
             <div class="status-head">
                 <div>
                     <h3>Events</h3>
-                    <p class="helper"><span data-gallery-events-selected-count>0</span> selected</p>
                 </div>
                 <button class="button button-inline primary" type="button" data-gallery-event-create-toggle>Add Event</button>
             </div>
-            <form id="gallery-event-assignment-form" method="post" action="?page=gallery" data-ajax="true">
+            <form id="gallery-event-assignment-form" method="post" action="?page=gallery" data-gallery-event-immediate-form hidden>
                 <input type="hidden" name="card_action" value="EventPermissions">
                 <input type="hidden" name="event_permissions_action" value="assign_photos">
+                <input type="hidden" name="gallery_event_immediate" value="1">
                 <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
-                <input type="hidden" name="cards[]" value="browse_gallery">
                 <input type="hidden" name="assignment_event_id" value="" data-gallery-assignment-event-id>
                 <input type="hidden" name="assignment_state" value="1" data-gallery-assignment-state>
-                <div class="gallery-event-assignment-list">' . $eventRows . '</div>
-                <button class="button button-inline primary gallery-event-apply" type="submit" data-gallery-assignment-submit hidden disabled>Apply Selected Photos</button>
             </form>
+            <div class="gallery-event-assignment-list">' . $eventRows . '</div>
         </aside>';
     }
 
-    private function perPageControl(int $perPage): string
+    private function eventFilterForm(
+        int $eventId,
+        string $label,
+        int $perPage,
+        string $sort,
+        string $sortDirection
+    ): string {
+        return '<form method="post" data-ajax="true" class="gallery-event-filter-form">
+            <input type="hidden" name="cards[]" value="browse_gallery">
+            <input type="hidden" name="_pagination" value="1">
+            <input type="hidden" name="_invalidate_fact" value="' . HelperFramework::escape($this->galleryInvalidationFact()) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
+            <input type="hidden" name="' . HelperFramework::escape($this->perPageField()) . '" value="' . HelperFramework::escape((string)$this->normalisePerPage($perPage)) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->sortField()) . '" value="' . HelperFramework::escape($this->normaliseSort($sort)) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->sortDirectionField()) . '" value="' . HelperFramework::escape($this->normaliseSortDirection($sortDirection)) . '">
+            <button class="button button-inline" type="submit" name="' . HelperFramework::escape($this->eventFilterField()) . '" value="' . HelperFramework::escape((string)max(0, $eventId)) . '">' . HelperFramework::escape($label) . '</button>
+        </form>';
+    }
+
+    private function sortControl(string $sort, string $sortDirection, int $perPage, int $eventFilterId = 0): string
+    {
+        $sort = $this->normaliseSort($sort);
+        $sortDirection = $this->normaliseSortDirection($sortDirection);
+        $perPage = $this->normalisePerPage($perPage);
+        $options = '';
+
+        foreach (self::SORT_OPTIONS as $value => $label) {
+            $options .= '<option value="' . HelperFramework::escape($value) . '"'
+                . ($value === $sort ? ' selected' : '')
+                . '>' . HelperFramework::escape($label) . '</option>';
+        }
+
+        return '<form method="post" data-ajax="true" class="gallery-sort-form">
+            <input type="hidden" name="cards[]" value="browse_gallery">
+            <input type="hidden" name="_pagination" value="1">
+            <input type="hidden" name="_invalidate_fact" value="' . HelperFramework::escape($this->galleryInvalidationFact()) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
+            <input type="hidden" name="' . HelperFramework::escape($this->perPageField()) . '" value="' . HelperFramework::escape((string)$perPage) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->sortDirectionField()) . '" value="' . HelperFramework::escape($sortDirection) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->eventFilterField()) . '" value="' . HelperFramework::escape((string)max(0, $eventFilterId)) . '">
+            <label class="gallery-soft-control gallery-sort-control">
+                <span>Sort</span>
+                <select name="' . HelperFramework::escape($this->sortField()) . '" aria-label="Gallery sort order" data-submit-on-change="true">
+                    ' . $options . '
+                </select>
+                <button class="button button-inline gallery-sort-direction-toggle" type="submit" name="' . HelperFramework::escape($this->sortDirectionToggleField()) . '" value="1">' . HelperFramework::escape($this->sortDirectionLabel($sortDirection)) . '</button>
+            </label>
+        </form>';
+    }
+
+    private function perPageControl(int $perPage, string $sort = 'uploaded', string $sortDirection = 'desc', int $eventFilterId = 0): string
     {
         $perPage = $this->normalisePerPage($perPage);
+        $sort = $this->normaliseSort($sort);
+        $sortDirection = $this->normaliseSortDirection($sortDirection);
         $options = '';
 
         foreach (self::PER_PAGE_OPTIONS as $option) {
@@ -367,9 +470,12 @@ final class _browse_galleryCard extends CardBaseFramework
             <input type="hidden" name="_pagination" value="1">
             <input type="hidden" name="_invalidate_fact" value="' . HelperFramework::escape($this->galleryInvalidationFact()) . '">
             <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
-            <label class="gallery-page-size-control">
+            <input type="hidden" name="' . HelperFramework::escape($this->sortField()) . '" value="' . HelperFramework::escape($sort) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->sortDirectionField()) . '" value="' . HelperFramework::escape($sortDirection) . '">
+            <input type="hidden" name="' . HelperFramework::escape($this->eventFilterField()) . '" value="' . HelperFramework::escape((string)max(0, $eventFilterId)) . '">
+            <label class="gallery-soft-control gallery-page-size-control">
                 <span>Display</span>
-                <select name="' . HelperFramework::escape($this->perPageField()) . '" aria-label="Images per page">
+                <select name="' . HelperFramework::escape($this->perPageField()) . '" aria-label="Images per page" data-submit-on-change="true">
                     ' . $options . '
                 </select>
             </label>
@@ -386,14 +492,84 @@ final class _browse_galleryCard extends CardBaseFramework
         return $this->normalisePerPage((int)($context['page'][$this->perPageField()] ?? self::DEFAULT_PER_PAGE));
     }
 
+    private function sort(array $context): string
+    {
+        return $this->normaliseSort((string)($context['page'][$this->sortField()] ?? 'uploaded'));
+    }
+
+    private function sortDirection(array $context): string
+    {
+        return $this->normaliseSortDirection((string)($context['page'][$this->sortDirectionField()] ?? 'desc'));
+    }
+
+    private function eventFilterId(array $context): int
+    {
+        return max(0, (int)($context['page'][$this->eventFilterField()] ?? 0));
+    }
+
     private function perPageField(): string
     {
         return $this->key() . '_per_page';
     }
 
+    private function sortField(): string
+    {
+        return $this->key() . '_sort';
+    }
+
+    private function sortDirectionField(): string
+    {
+        return $this->key() . '_sort_direction';
+    }
+
+    private function sortDirectionToggleField(): string
+    {
+        return $this->key() . '_sort_direction_toggle';
+    }
+
+    private function eventFilterField(): string
+    {
+        return $this->key() . '_event_filter';
+    }
+
     private function normalisePerPage(int $perPage): int
     {
         return in_array($perPage, self::PER_PAGE_OPTIONS, true) ? $perPage : self::DEFAULT_PER_PAGE;
+    }
+
+    private function normaliseSort(string $sort): string
+    {
+        $sort = strtolower(trim($sort));
+
+        return array_key_exists($sort, self::SORT_OPTIONS) ? $sort : 'uploaded';
+    }
+
+    private function normaliseSortDirection(string $direction): string
+    {
+        $direction = strtolower(trim($direction));
+
+        return $direction === 'asc' ? 'asc' : 'desc';
+    }
+
+    private function sortDirectionLabel(string $direction): string
+    {
+        return $this->normaliseSortDirection($direction) === 'asc' ? 'A->Z' : 'Z->A';
+    }
+
+    private function photoEventIds(array $photo): array
+    {
+        $eventIds = $photo['event_ids'] ?? [];
+        if (is_string($eventIds)) {
+            $eventIds = explode(',', $eventIds);
+        }
+        if (!is_array($eventIds)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', $eventIds),
+            static fn(int $eventId): bool => $eventId > 0
+        )));
     }
 
     private function photoAssetUrl(int $photoId, string $type): string

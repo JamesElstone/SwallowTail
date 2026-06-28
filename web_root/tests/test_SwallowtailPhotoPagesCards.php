@@ -1077,6 +1077,7 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
         'single_jpeg_ready' => true,
         'effective_can_edit' => true,
         'effective_can_download_single_jpeg' => true,
+        'event_ids' => [7, 9],
     ]);
 
     $harness->assertTrue(str_contains($html, '?page=view&amp;photo_id=42'));
@@ -1087,6 +1088,8 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
     $harness->assertTrue(str_contains($html, 'gallery-edit-link'));
     $harness->assertTrue(str_contains($html, 'gallery-download-link'));
     $harness->assertTrue(str_contains($html, 'gallery-event-select'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-event-ids="7,9"'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-event-photo-checkbox'));
     $harness->assertTrue(str_contains($html, '/api/photo-download.php?kind=photo&amp;photo_id=42'));
     $harness->assertTrue(str_contains($html, 'data-gallery-viewer-prefetch-url="/api/photo-imaging.php?photo_id=42&amp;type=original&amp;v=' . str_repeat('a', 64) . '"'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
@@ -1189,11 +1192,13 @@ $harness->check(_gallery::class, 'browse gallery event controls require editable
         'effective_can_edit' => true,
     ]]));
 
-    $hiddenControls = (string)$controlsMethod->invoke($card, 24, false);
-    $shownControls = (string)$controlsMethod->invoke($card, 24, true);
+    $hiddenControls = (string)$controlsMethod->invoke($card, 24, 'uploaded', 'desc', false);
+    $shownControls = (string)$controlsMethod->invoke($card, 24, 'uploaded', 'desc', true);
 
     $harness->assertTrue(!str_contains($hiddenControls, 'data-gallery-events-toggle'));
     $harness->assertTrue(str_contains($shownControls, 'data-gallery-events-toggle'));
+    $harness->assertTrue(str_contains($shownControls, '>Events</button>'));
+    $harness->assertTrue(!str_contains($shownControls, 'Assign Events'));
 });
 
 $harness->check(_gallery::class, 'browse gallery pagination renders first and last controls', function () use ($harness): void {
@@ -1407,9 +1412,17 @@ $harness->check(_gallery::class, 'browse gallery renders page size selector', fu
     $method = new ReflectionMethod($card, 'galleryControls');
     $method->setAccessible(true);
 
-    $html = (string)$method->invoke($card, 30);
+    $html = (string)$method->invoke($card, 30, 'filename', 'asc');
 
-    $harness->assertTrue(str_contains($html, 'class="gallery-footer-controls"'));
+    $harness->assertTrue(str_contains($html, 'class="gallery-header-controls"'));
+    $harness->assertTrue(str_contains($html, 'class="gallery-sort-form"'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_sort"'));
+    $harness->assertTrue(str_contains($html, '<option value="uploaded">Uploaded Order</option>'));
+    $harness->assertTrue(str_contains($html, '<option value="timestamp">Photo Timestamp</option>'));
+    $harness->assertTrue(str_contains($html, '<option value="filename" selected>Original File Name</option>'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_sort_direction" value="asc"'));
+    $harness->assertTrue(str_contains($html, 'name="browse_gallery_sort_direction_toggle" value="1"'));
+    $harness->assertTrue(str_contains($html, '>A-&gt;Z</button>'));
     $harness->assertTrue(str_contains($html, 'name="browse_gallery_per_page"'));
     $harness->assertTrue(str_contains($html, 'name="_pagination" value="1"'));
     $harness->assertTrue(str_contains($html, 'name="_invalidate_fact" value="browse.gallery"'));
@@ -1417,22 +1430,52 @@ $harness->check(_gallery::class, 'browse gallery renders page size selector', fu
     $harness->assertTrue(str_contains($html, '<option value="30" selected>30</option>'));
     $harness->assertTrue(str_contains($html, '<option value="40">40</option>'));
     $harness->assertTrue(str_contains($html, 'name="browse_gallery_page" value="1"'));
+    $harness->assertTrue(str_contains($html, 'data-submit-on-change="true"'));
     $harness->assertTrue(str_contains($html, 'data-gallery-auto-refresh-toggle'));
     $harness->assertTrue(str_contains($html, 'data-gallery-auto-scroll-toggle'));
 });
 
-$harness->check(_gallery::class, 'browse gallery normalises page size context', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery renders descending sort direction label', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'galleryControls');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, 24, 'uploaded', 'desc');
+
+    $harness->assertTrue(str_contains($html, '>Z-&gt;A</button>'));
+});
+
+$harness->check(_gallery::class, 'browse gallery normalises page size and sort context', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $services = new PageServiceFramework(new AppService(''));
 
     $accepted = $card->handle(
-        new RequestFramework([], ['browse_gallery_page' => '3', 'browse_gallery_per_page' => '40'], ['REQUEST_METHOD' => 'POST'], [], []),
+        new RequestFramework([], [
+            'browse_gallery_page' => '3',
+            'browse_gallery_per_page' => '40',
+            'browse_gallery_sort' => 'timestamp',
+            'browse_gallery_sort_direction' => 'asc',
+            'browse_gallery_event_filter' => '7',
+        ], ['REQUEST_METHOD' => 'POST'], [], []),
         $services,
         ['page' => []],
         ActionResultFramework::none()
     );
     $fallback = $card->handle(
-        new RequestFramework([], ['browse_gallery_per_page' => '96'], ['REQUEST_METHOD' => 'POST'], [], []),
+        new RequestFramework([], [
+            'browse_gallery_per_page' => '96',
+            'browse_gallery_sort' => 'unknown',
+            'browse_gallery_sort_direction' => 'sideways',
+        ], ['REQUEST_METHOD' => 'POST'], [], []),
+        $services,
+        ['page' => []],
+        ActionResultFramework::none()
+    );
+    $toggled = $card->handle(
+        new RequestFramework([], [
+            'browse_gallery_sort_direction' => 'desc',
+            'browse_gallery_sort_direction_toggle' => '1',
+        ], ['REQUEST_METHOD' => 'POST'], [], []),
         $services,
         ['page' => []],
         ActionResultFramework::none()
@@ -1440,7 +1483,25 @@ $harness->check(_gallery::class, 'browse gallery normalises page size context', 
 
     $harness->assertSame(3, (int)$accepted['page']['browse_gallery_page']);
     $harness->assertSame(40, (int)$accepted['page']['browse_gallery_per_page']);
+    $harness->assertSame('timestamp', (string)$accepted['page']['browse_gallery_sort']);
+    $harness->assertSame('asc', (string)$accepted['page']['browse_gallery_sort_direction']);
+    $harness->assertSame(7, (int)$accepted['page']['browse_gallery_event_filter']);
     $harness->assertSame(24, (int)$fallback['page']['browse_gallery_per_page']);
+    $harness->assertSame('uploaded', (string)$fallback['page']['browse_gallery_sort']);
+    $harness->assertSame('desc', (string)$fallback['page']['browse_gallery_sort_direction']);
+    $harness->assertSame('asc', (string)$toggled['page']['browse_gallery_sort_direction']);
+});
+
+$harness->check(_gallery::class, 'browse gallery pagination preserves sort state', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to read gallery card source.');
+    }
+
+    $harness->assertTrue(str_contains($source, '$this->sortField() => $sort'));
+    $harness->assertTrue(str_contains($source, '$this->sortDirectionField() => $sortDirection'));
+    $harness->assertTrue(str_contains($source, '$this->eventFilterField() => $eventFilterId'));
 });
 
 $harness->check(_gallery::class, 'browse gallery status icons match upload icon stroke', function () use ($harness): void {
@@ -1495,15 +1556,30 @@ $harness->check(_gallery::class, 'browse gallery event assignment markup is hidd
     $harness->assertTrue(str_contains($source, 'data-gallery-events-pane hidden'));
     $harness->assertTrue(str_contains($source, 'data-gallery-event-create-toggle'));
     $harness->assertTrue(str_contains($source, '>Add Event<'));
+    $harness->assertTrue(str_contains($source, '>Tag Photos<'));
+    $harness->assertTrue(str_contains($source, '>Show Photos<'));
+    $harness->assertTrue(!str_contains($source, '>Assign Events<'));
+    $harness->assertTrue(!str_contains($source, '>Tag<'));
+    $harness->assertTrue(!str_contains($source, '>Untag<'));
+    $harness->assertTrue(!str_contains($source, 'data-gallery-events-selected-count'));
     $harness->assertTrue(str_contains($source, 'class="gallery-event-select"'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-event-photo-checkbox'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-event-ids'));
     $harness->assertTrue(str_contains($source, 'data-gallery-assignment-event-id'));
-    $harness->assertTrue(str_contains($source, 'data-gallery-assignment-submit hidden disabled'));
+    $harness->assertTrue(str_contains($source, 'data-gallery-event-immediate-form'));
+    $harness->assertTrue(str_contains($source, 'gallery_event_immediate'));
+    $harness->assertTrue(str_contains($source, 'eventFilterField'));
     $harness->assertTrue(str_contains($css, '.gallery-event-select'));
     $harness->assertTrue(str_contains($css, '.gallery-event-create-backdrop'));
     $harness->assertTrue(str_contains($css, '.gallery-event-create-window'));
     $harness->assertTrue(str_contains($css, '.gallery-grid.is-assigning-events.has-selected-event .gallery-event-select'));
     $harness->assertTrue(str_contains($js, 'data-gallery-events-toggle'));
     $harness->assertTrue(str_contains($js, 'data-gallery-event-create-toggle'));
+    $harness->assertTrue(str_contains($js, 'Close Events'));
+    $harness->assertTrue(str_contains($js, 'setGalleryAssignmentEvent'));
+    $harness->assertTrue(str_contains($js, 'updateGalleryEventCheckboxStates'));
+    $harness->assertTrue(str_contains($js, 'submitGalleryEventCheckbox'));
+    $harness->assertTrue(str_contains($js, 'currentEventId === eventId ?'));
     $harness->assertTrue(str_contains($js, 'galleryEventCreateForm'));
     $harness->assertTrue(str_contains($js, 'is-assigning-events'));
     $harness->assertTrue(str_contains($js, 'has-selected-event'));

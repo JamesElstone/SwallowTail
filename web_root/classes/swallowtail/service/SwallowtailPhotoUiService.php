@@ -25,7 +25,14 @@ final class SwallowtailPhotoUiService
     ) {
     }
 
-    public function accessiblePhotos(int $userId, int $page = 1, int $perPage = 24): array
+    public function accessiblePhotos(
+        int $userId,
+        int $page = 1,
+        int $perPage = 24,
+        string $sort = 'uploaded',
+        string $direction = 'desc',
+        ?int $eventId = null
+    ): array
     {
 
         if ($userId <= 0) {
@@ -34,8 +41,23 @@ final class SwallowtailPhotoUiService
 
         $page = max(1, $page);
         $perPage = max(1, min(96, $perPage));
+        $sort = $this->normaliseGallerySort($sort);
+        $direction = $this->normaliseSortDirection($direction);
         $params = [];
         $where = $this->accessWhereSql($userId, $params, 'photo');
+        $eventId = max(0, (int)($eventId ?? 0));
+        if ($eventId > 0) {
+            $params['gallery_event_filter_id'] = $eventId;
+            $where .= " AND EXISTS (
+                SELECT 1
+                FROM event_photos gallery_filter_event_photo
+                WHERE gallery_filter_event_photo.photo_id = photo.id
+                  AND gallery_filter_event_photo.event_id = :gallery_event_filter_id
+                LIMIT 1
+            )";
+        }
+        $joinSql = '';
+        $orderBySql = $this->galleryOrderBySql($sort, $direction, $joinSql);
 
         $total = (int)InterfaceDB::fetchColumn(
             "SELECT COUNT(*)
@@ -57,11 +79,17 @@ final class SwallowtailPhotoUiService
                         ON event.id = event_photo.event_id
                     WHERE event_photo.photo_id = photo.id
                 ) AS event_names,
+                (
+                    SELECT GROUP_CONCAT(event_photo.event_id)
+                    FROM event_photos event_photo
+                    WHERE event_photo.photo_id = photo.id
+                ) AS event_ids,
                 " . $this->effectiveCanEditSql($userId, $params, 'photo') . " AS effective_can_edit,
                 " . $this->effectiveCanDownloadSingleJpegSql($userId, $params, 'photo') . " AS effective_can_download_single_jpeg
              FROM photos photo
+             " . $joinSql . "
              WHERE " . $where . "
-             ORDER BY photo.created_at DESC, photo.id DESC
+             ORDER BY " . $orderBySql . "
              LIMIT " . (string)$perPage . " OFFSET " . (string)$offset,
             $params
         );
@@ -279,6 +307,56 @@ final class SwallowtailPhotoUiService
         return $images;
     }
 
+    private function galleryOrderBySql(string $sort, string $direction, string &$joinSql): string
+    {
+
+        $direction = $this->normaliseSortDirection($direction);
+
+        if ($sort === 'filename') {
+            return 'LOWER(photo.original_filename) ' . $direction
+                . ', photo.original_filename ' . $direction
+                . ', photo.id ' . $direction;
+        }
+
+        if ($sort === 'timestamp' && $this->canSortByPhotoTimestamp()) {
+            $joinSql = 'LEFT JOIN photo_metadata metadata ON metadata.photo_id = photo.id';
+            $timestampSql = 'COALESCE(metadata.captured_at_utc, metadata.captured_at_local)';
+
+            return 'CASE WHEN ' . $timestampSql . ' IS NULL THEN 1 ELSE 0 END ASC'
+                . ', ' . $timestampSql . ' ' . $direction
+                . ', photo.id ' . $direction;
+        }
+
+        return 'photo.created_at ' . $direction . ', photo.id ' . $direction;
+    }
+
+    private function canSortByPhotoTimestamp(): bool
+    {
+
+        try {
+            return InterfaceDB::tableExists('photo_metadata')
+                && InterfaceDB::columnsExists('photo_metadata', ['photo_id', 'captured_at_utc', 'captured_at_local']);
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function normaliseGallerySort(string $sort): string
+    {
+
+        $sort = strtolower(trim($sort));
+
+        return in_array($sort, ['uploaded', 'timestamp', 'filename'], true) ? $sort : 'uploaded';
+    }
+
+    private function normaliseSortDirection(string $direction): string
+    {
+
+        $direction = strtolower(trim($direction));
+
+        return $direction === 'asc' ? 'ASC' : 'DESC';
+    }
+
     private function accessWhereSql(int $userId, array &$params, string $photoAlias): string
     {
 
@@ -398,6 +476,7 @@ final class SwallowtailPhotoUiService
         $row['thumbnail_ready'] = !$row['preview_ready'] && $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
         $row['effective_can_download_single_jpeg'] = (int)($row['effective_can_download_single_jpeg'] ?? 0) === 1;
+        $row['event_ids'] = $this->normaliseEventIds((string)($row['event_ids'] ?? ''));
         $downloadAsset = !empty($row['effective_can_download_single_jpeg'])
             ? $this->assetService->assetForPhotoWithFinalFallback($row, 'final')
             : null;
@@ -439,6 +518,15 @@ final class SwallowtailPhotoUiService
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
 
         return $row;
+    }
+
+    private function normaliseEventIds(string $eventIds): array
+    {
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', explode(',', $eventIds)),
+            static fn(int $eventId): bool => $eventId > 0
+        )));
     }
 
     private function pagination(int $total, int $page, int $perPage): array

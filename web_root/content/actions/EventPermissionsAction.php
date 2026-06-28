@@ -113,6 +113,10 @@ final class EventPermissionsAction implements ActionInterfaceFramework
 
         $this->eventService->assignPhotosToEvent($photoIds, $eventId, $assigned, $userId);
 
+        if ((string)$request->input('gallery_event_immediate', '0') === '1') {
+            return $this->success('', [], [], []);
+        }
+
         return $this->success('Photo event tags updated.', ['event_id' => (int)$request->input('event_id', 0)], [], ['browse.gallery']);
     }
 

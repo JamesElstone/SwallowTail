@@ -4950,54 +4950,18 @@
         if (galleryEventsToggle instanceof HTMLButtonElement) {
             event.preventDefault();
             const card = galleryEventsToggle.closest('[data-page-stack-card], .card, body');
-            const pane = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-pane]') : null;
-            const grid = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-grid]') : null;
-            if (pane instanceof HTMLElement && grid instanceof HTMLElement) {
-                const open = pane.hidden;
-                pane.hidden = !open;
-                grid.classList.toggle('is-assigning-events', open);
-                galleryEventsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-                updateGalleryEventSelectionCount(card);
+            if (card instanceof HTMLElement || card === document.body) {
+                const pane = card.querySelector('[data-gallery-events-pane]');
+                setGalleryEventsPaneOpen(card, pane instanceof HTMLElement ? pane.hidden : false);
             }
             return;
         }
 
-        const assignmentButton = event.target instanceof Element ? event.target.closest('[data-assignment-state]') : null;
+        const assignmentButton = event.target instanceof Element ? event.target.closest('[data-gallery-assignment-event]') : null;
         if (assignmentButton instanceof HTMLButtonElement) {
-            if (assignmentButton.hasAttribute('data-gallery-assignment-event')) {
-                event.preventDefault();
-            }
-
-            const form = assignmentButton.form;
-            const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
-            const stateInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-state]') : null;
-            if (eventInput instanceof HTMLInputElement) {
-                eventInput.value = assignmentButton.value;
-            }
-            if (stateInput instanceof HTMLInputElement) {
-                stateInput.value = assignmentButton.dataset.assignmentState === '0' ? '0' : '1';
-            }
-
-            if (assignmentButton.hasAttribute('data-gallery-assignment-event')) {
-                const card = assignmentButton.closest('[data-page-stack-card], .card, body');
-                const grid = card instanceof HTMLElement ? card.querySelector('[data-gallery-events-grid]') : null;
-                if (grid instanceof HTMLElement) {
-                    grid.classList.add('has-selected-event');
-                }
-
-                if (form instanceof HTMLFormElement) {
-                    form.querySelectorAll('[data-gallery-assignment-event]').forEach((button) => {
-                        if (button instanceof HTMLButtonElement) {
-                            const selected = button === assignmentButton;
-                            button.classList.toggle('is-selected', selected);
-                            button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-                        }
-                    });
-                }
-
-                updateGalleryEventSelectionCount(card);
-                return;
-            }
+            event.preventDefault();
+            toggleGalleryAssignmentEvent(assignmentButton);
+            return;
         }
 
         const userCreateModeButton = event.target instanceof Element ? event.target.closest('[data-user-create-mode-button]') : null;
@@ -5084,10 +5048,11 @@
         }
 
         const galleryEventCheckbox = event.target instanceof Element
-            ? event.target.closest('.gallery-event-select input[type="checkbox"]')
+            ? event.target.closest('[data-gallery-event-photo-checkbox]')
             : null;
         if (galleryEventCheckbox instanceof HTMLInputElement) {
-            updateGalleryEventSelectionCount(galleryEventCheckbox.closest('[data-page-stack-card], .card, body'));
+            void submitGalleryEventCheckbox(galleryEventCheckbox);
+            return;
         }
 
         const select = event.target;
@@ -5119,30 +5084,190 @@
         }
     });
 
-    function updateGalleryEventSelectionCount(root) {
+    function setGalleryEventsPaneOpen(root, open) {
         if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
             root = document;
         }
 
-        const count = root.querySelectorAll
-            ? root.querySelectorAll('.gallery-event-select input[type="checkbox"]:checked').length
-            : 0;
-        const label = root.querySelector ? root.querySelector('[data-gallery-events-selected-count]') : null;
-        if (label instanceof HTMLElement) {
-            label.textContent = String(count);
+        const pane = root.querySelector ? root.querySelector('[data-gallery-events-pane]') : null;
+        const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
+        const toggle = root.querySelector ? root.querySelector('[data-gallery-events-toggle]') : null;
+        if (pane instanceof HTMLElement) {
+            pane.hidden = !open;
+        }
+        if (grid instanceof HTMLElement) {
+            grid.classList.toggle('is-assigning-events', open);
+        }
+        if (toggle instanceof HTMLButtonElement) {
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            toggle.classList.toggle('primary', !open);
+            toggle.textContent = open ? 'Close Events' : 'Events';
+        }
+        if (!open) {
+            setGalleryAssignmentEvent(root, '');
+            return;
         }
 
-        const eventInput = root.querySelector ? root.querySelector('[data-gallery-assignment-event-id]') : null;
-        const hasSelectedEvent = eventInput instanceof HTMLInputElement && eventInput.value !== '';
+        updateGalleryEventCheckboxStates(root);
+    }
+
+    function toggleGalleryAssignmentEvent(button) {
+        const root = button.closest('[data-page-stack-card], .card, body');
+        if (!(root instanceof HTMLElement)) {
+            return;
+        }
+
+        const eventId = String(button.value || '').trim();
+        const currentEventId = galleryAssignmentEventId(root);
+        setGalleryAssignmentEvent(root, currentEventId === eventId ? '' : eventId);
+    }
+
+    function setGalleryAssignmentEvent(root, eventId) {
+        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+            root = document;
+        }
+
+        eventId = String(eventId || '').trim();
+        const form = root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
+        const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
+        if (eventInput instanceof HTMLInputElement) {
+            eventInput.value = eventId;
+        }
+
         const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
         if (grid instanceof HTMLElement) {
-            grid.classList.toggle('has-selected-event', hasSelectedEvent);
+            grid.classList.toggle('has-selected-event', eventId !== '');
         }
 
-        const submit = root.querySelector ? root.querySelector('[data-gallery-assignment-submit]') : null;
-        if (submit instanceof HTMLButtonElement) {
-            submit.hidden = !hasSelectedEvent;
-            submit.disabled = !hasSelectedEvent || count === 0;
+        if (root.querySelectorAll) {
+            root.querySelectorAll('[data-gallery-assignment-event]').forEach((button) => {
+                if (!(button instanceof HTMLButtonElement)) {
+                    return;
+                }
+
+                const selected = eventId !== '' && String(button.value || '').trim() === eventId;
+                button.classList.toggle('is-selected', selected);
+                button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            });
+        }
+
+        updateGalleryEventCheckboxStates(root);
+    }
+
+    function galleryAssignmentEventId(root) {
+        const form = root && root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
+        const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
+
+        return eventInput instanceof HTMLInputElement ? String(eventInput.value || '').trim() : '';
+    }
+
+    function updateGalleryEventCheckboxStates(root) {
+        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+            root = document;
+        }
+
+        const eventId = galleryAssignmentEventId(root);
+        if (!root.querySelectorAll) {
+            return;
+        }
+
+        root.querySelectorAll('[data-gallery-event-photo-checkbox]').forEach((checkbox) => {
+            if (!(checkbox instanceof HTMLInputElement)) {
+                return;
+            }
+
+            const tile = checkbox.closest('[data-gallery-photo-id]');
+            const eventIds = galleryTileEventIds(tile);
+            checkbox.checked = eventId !== '' && eventIds.includes(eventId);
+        });
+    }
+
+    function galleryTileEventIds(tile) {
+        if (!(tile instanceof HTMLElement)) {
+            return [];
+        }
+
+        return String(tile.dataset.galleryEventIds || '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value !== '');
+    }
+
+    function setGalleryTileEventId(tile, eventId, assigned) {
+        if (!(tile instanceof HTMLElement) || eventId === '') {
+            return;
+        }
+
+        const ids = galleryTileEventIds(tile).filter((id) => id !== eventId);
+        if (assigned) {
+            ids.push(eventId);
+        }
+
+        tile.dataset.galleryEventIds = Array.from(new Set(ids)).join(',');
+    }
+
+    async function submitGalleryEventCheckbox(checkbox) {
+        const root = checkbox.closest('[data-page-stack-card], .card, body');
+        if (!(root instanceof HTMLElement)) {
+            return;
+        }
+
+        const form = root.querySelector('[data-gallery-event-immediate-form]');
+        const eventId = galleryAssignmentEventId(root);
+        const tile = checkbox.closest('[data-gallery-photo-id]');
+        const photoId = checkbox.value;
+        if (!(form instanceof HTMLFormElement) || !(tile instanceof HTMLElement) || eventId === '' || photoId === '') {
+            checkbox.checked = !checkbox.checked;
+            return;
+        }
+
+        const assigned = checkbox.checked;
+        const previous = !assigned;
+        const formData = new FormData(form);
+        formData.set('_ajax', '1');
+        formData.set('assignment_event_id', eventId);
+        formData.set('assignment_state', assigned ? '1' : '0');
+        formData.delete('photo_ids');
+        formData.delete('photo_ids[]');
+        formData.append('photo_ids[]', photoId);
+
+        const payload = formDataToJsonPayload(formData);
+        const ajaxNonce = requiresAjaxNonce('POST', payload) ? reserveAjaxNonce() : null;
+        if (ajaxNonce) {
+            payload.ajax_nonce = ajaxNonce;
+        }
+
+        checkbox.disabled = true;
+        let nonceCompleted = false;
+        try {
+            const response = await sendAjax(formRequestUrl(form), {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!response || response.success === false) {
+                completeAjaxNonce(ajaxNonce, response?.ajax_nonce);
+                nonceCompleted = true;
+                throw createAjaxError(200, response);
+            }
+            completeAjaxNonce(ajaxNonce, response?.ajax_nonce);
+            nonceCompleted = true;
+            setGalleryTileEventId(tile, eventId, assigned);
+        } catch (error) {
+            if (!nonceCompleted) {
+                restoreAjaxNonce(ajaxNonce);
+            }
+            checkbox.checked = previous;
+            const flashHtml = error && error.payload && typeof error.payload.flash_html === 'string'
+                ? error.payload.flash_html
+                : renderErrorFlashHtml(error ? error.payload : null);
+            if (flashHtml !== '') {
+                replaceFlash(flashHtml);
+            }
+            handleAjaxSecurityFailure(error ? error.payload : null);
+            console.error(error);
+        } finally {
+            checkbox.disabled = false;
         }
     }
 
