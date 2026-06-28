@@ -130,19 +130,14 @@ final class _statisticsCard extends CardBaseFramework
     private function formatDuration(float $seconds): string
     {
         $seconds = max(0.0, $seconds);
-        if ($seconds < 1.0) {
-            return number_format($seconds, 3) . 's';
-        }
-
         if ($seconds < 60.0) {
             return number_format($seconds, 1) . 's';
         }
 
-        $wholeSeconds = (int)round($seconds);
-        $minutes = intdiv($wholeSeconds, 60);
-        $remainingSeconds = $wholeSeconds % 60;
+        $minutes = (int)floor($seconds / 60.0);
+        $remainingSeconds = $seconds - ($minutes * 60);
         if ($minutes < 60) {
-            return $remainingSeconds > 0 ? $minutes . 'm ' . $remainingSeconds . 's' : $minutes . 'm';
+            return $remainingSeconds > 0.0 ? $minutes . 'm ' . number_format($remainingSeconds, 1) . 's' : $minutes . 'm';
         }
 
         $hours = intdiv($minutes, 60);

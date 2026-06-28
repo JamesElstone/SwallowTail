@@ -14,7 +14,7 @@ use Swallowtail\Service\SwallowtailPhotoUiService;
 final class _browse_galleryCard extends CardBaseFramework
 {
     private const DEFAULT_PER_PAGE = 24;
-    private const PER_PAGE_OPTIONS = [24, 30, 40];
+    private const PER_PAGE_OPTIONS = [9, 12, 24, 30, 40];
 
     public function key(): string
     {
@@ -71,7 +71,8 @@ final class _browse_galleryCard extends CardBaseFramework
         $page = max(1, (int)($pagination['page'] ?? $this->paginationPage($context)));
         $canAssignEvents = $this->canManageEvents() && $this->hasEditablePhotos($rows);
 
-        $html = '<div class="gallery-events-layout">';
+        $html = $this->galleryControls($perPage, $canAssignEvents);
+        $html .= '<div class="gallery-events-layout">';
         $html .= $canAssignEvents ? $this->eventAssignmentPane($context) : '';
         $html .= '<div class="gallery-grid"
             data-gallery-auto-refresh="true"
@@ -98,7 +99,7 @@ final class _browse_galleryCard extends CardBaseFramework
             'post',
             [],
             'button primary',
-            $this->galleryControls($perPage, $canAssignEvents),
+            '',
             'gallery-pagination-controls'
         );
 
@@ -261,7 +262,7 @@ final class _browse_galleryCard extends CardBaseFramework
     {
         $canAssignEvents ??= $this->canManageEvents();
 
-        return '<div class="gallery-footer-controls">'
+        return '<div class="gallery-header-controls">'
             . $this->perPageControl($perPage)
             . $this->autoRefreshControl()
             . $this->autoScrollControl()

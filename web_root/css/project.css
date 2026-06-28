@@ -498,7 +498,7 @@
   column-gap: 10px;
 }
 
-.gallery-footer-controls {
+.gallery-header-controls {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -511,8 +511,7 @@
 }
 
 .gallery-pagination-controls > .helper,
-.gallery-pagination-controls > .actions-row,
-.gallery-pagination-controls .gallery-footer-controls {
+.gallery-pagination-controls > .actions-row {
   display: inline-flex;
   align-items: center;
 }
