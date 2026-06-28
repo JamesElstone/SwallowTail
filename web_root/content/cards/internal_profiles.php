@@ -140,7 +140,7 @@ final class _internal_profilesCard extends CardBaseFramework
                 <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '">
                 <label for="internal-profiles-new-profile-name">Add a new profile</label>
                 <div class="input-action-row">
-                    <input class="input" id="internal-profiles-new-profile-name" name="internal_profiles_new_profile_name" type="text" value="' . HelperFramework::escape($profileName) . '">
+                    <input class="input" id="internal-profiles-new-profile-name" name="internal_profiles_new_profile_name" type="text" value="">
                     <button class="button button-inline" type="submit">Add</button>
                 </div>
             </form>

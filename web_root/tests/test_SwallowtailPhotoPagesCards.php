@@ -233,6 +233,18 @@ $harness->check(_internal_profilesCard::class, 'internal profile adjustment acti
     $harness->assertTrue(!str_contains($html, 'Add Row For Image Type'));
 });
 
+$harness->check(_internal_profilesCard::class, 'internal profile add profile field starts empty', function () use ($harness): void {
+    $card = new _internal_profilesCard();
+    $method = new ReflectionMethod($card, 'filterForms');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, ['preview'], 'preview', 'default', ['default'], 'test-csrf');
+
+    $harness->assertTrue(str_contains($html, 'id="internal-profiles-new-profile-name"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_new_profile_name" type="text" value=""'));
+    $harness->assertTrue(!str_contains($html, 'id="internal-profiles-new-profile-name" name="internal_profiles_new_profile_name" type="text" value="default"'));
+});
+
 $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profiles card declares dashboard service', function () use ($harness): void {
     $services = (new _rawtheapee_profilesCard())->services();
 
