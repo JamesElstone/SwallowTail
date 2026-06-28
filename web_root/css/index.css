@@ -307,6 +307,11 @@ body.sidebar-collapsed .layout {
   overflow: hidden;
 }
 
+.brand-mark.brand-mark-is-image {
+  background: none;
+  box-shadow: none;
+}
+
 .brand-mark-image {
   width: 100%;
   height: 100%;
