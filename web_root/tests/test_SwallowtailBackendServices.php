@@ -5755,6 +5755,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $conversionProfileSignaturePath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_007_conversion_profile_signature.sql';
     $photoImageAssetsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_26_008_photo_image_assets.sql';
     $rawTherapeeSampleVariantsPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_28_001_rawtherapee_sample_asset_variants.sql';
+    $fixRawTherapeeSampleEnumPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'migrations' . DIRECTORY_SEPARATOR . '2026_06_29_001_fix_rawtherapee_sample_enum.sql';
     $sql = file_get_contents($path);
     $conversionSql = file_get_contents($conversionPath);
     $hardeningSql = file_get_contents($hardeningPath);
@@ -5779,12 +5780,13 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
     $conversionProfileSignatureSql = file_get_contents($conversionProfileSignaturePath);
     $photoImageAssetsSql = file_get_contents($photoImageAssetsPath);
     $rawTherapeeSampleVariantsSql = file_get_contents($rawTherapeeSampleVariantsPath);
+    $fixRawTherapeeSampleEnumSql = file_get_contents($fixRawTherapeeSampleEnumPath);
 
-    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTherapeeProfileDataSql) || !is_string($eventEditPermissionSql) || !is_string($conversionProfileSignatureSql) || !is_string($photoImageAssetsSql) || !is_string($rawTherapeeSampleVariantsSql)) {
+    if (!is_string($sql) || !is_string($conversionSql) || !is_string($hardeningSql) || !is_string($tokenCidrsSql) || !is_string($durationSql) || !is_string($embeddedSql) || !is_string($quickHashSql) || !is_string($storageMigrationSql) || !is_string($removeQuickHashSql) || !is_string($metadataSql) || !is_string($conversionPrioritySql) || !is_string($profileDataSql) || !is_string($internalProfileDataSql) || !is_string($profileRevisionSql) || !is_string($thumbnailImageTypeSql) || !is_string($reassertPreviewFinalSql) || !is_string($fixPreviewProfileDataSql) || !is_string($widenProfileSectionsSql) || !is_string($internalProfileDataEnabledSql) || !is_string($rawTherapeeProfileDataSql) || !is_string($eventEditPermissionSql) || !is_string($conversionProfileSignatureSql) || !is_string($photoImageAssetsSql) || !is_string($rawTherapeeSampleVariantsSql) || !is_string($fixRawTherapeeSampleEnumSql)) {
         throw new RuntimeException('SwallowTail migration could not be read.');
     }
 
-    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTherapeeProfileDataSql . "\n" . $eventEditPermissionSql . "\n" . $conversionProfileSignatureSql . "\n" . $photoImageAssetsSql . "\n" . $rawTherapeeSampleVariantsSql;
+    $sql .= "\n" . $conversionSql . "\n" . $hardeningSql . "\n" . $tokenCidrsSql . "\n" . $durationSql . "\n" . $embeddedSql . "\n" . $quickHashSql . "\n" . $storageMigrationSql . "\n" . $removeQuickHashSql . "\n" . $metadataSql . "\n" . $conversionPrioritySql . "\n" . $profileDataSql . "\n" . $internalProfileDataSql . "\n" . $profileRevisionSql . "\n" . $thumbnailImageTypeSql . "\n" . $reassertPreviewFinalSql . "\n" . $fixPreviewProfileDataSql . "\n" . $widenProfileSectionsSql . "\n" . $internalProfileDataEnabledSql . "\n" . $rawTherapeeProfileDataSql . "\n" . $eventEditPermissionSql . "\n" . $conversionProfileSignatureSql . "\n" . $photoImageAssetsSql . "\n" . $rawTherapeeSampleVariantsSql . "\n" . $fixRawTherapeeSampleEnumSql;
 
     foreach ([
         'CREATE TABLE IF NOT EXISTS events',
@@ -5861,6 +5863,7 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         "MODIFY type varchar(64) NOT NULL",
         "value_type enum('null','bool','int','float','string') NOT NULL",
         "'rawtherapee_sample'",
+        "WHERE image_type = 'rawtheapee_sample'",
         'UNIQUE KEY uq_rawtherapee_profile_path (profile_path)',
         "CHECK (original_extension = 'cr2')",
     ] as $needle) {

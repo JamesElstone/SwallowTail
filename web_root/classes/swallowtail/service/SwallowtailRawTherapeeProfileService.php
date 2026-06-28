@@ -439,6 +439,20 @@ final class SwallowtailRawTherapeeProfileService
             ];
         }
 
+        if (!$this->conversionJobImageTypeAllowsSample()) {
+            return [
+                'success' => false,
+                'message' => $this->sampleQueueFailureMessage(
+                    $photoId,
+                    $profileId,
+                    $profile,
+                    $inputPath,
+                    $outputPath,
+                    $profileSignature
+                ),
+            ];
+        }
+
         $queue = new SwallowtailConversionQueueService();
         $jobId = $queue->enqueueImageJob(
             $photoId,
@@ -486,6 +500,16 @@ final class SwallowtailRawTherapeeProfileService
     private function roleIdForUser(int $userId): int
     {
         return (new \CardAccessFramework())->roleIdForUser($userId);
+    }
+
+    private function conversionJobImageTypeAllowsSample(): bool
+    {
+        $columnType = $this->conversionJobColumnType('image_type');
+        if (!str_starts_with($columnType, 'enum(')) {
+            return true;
+        }
+
+        return str_contains($columnType, self::SAMPLE_IMAGE_TYPE);
     }
 
     private function sampleQueueFailureMessage(
