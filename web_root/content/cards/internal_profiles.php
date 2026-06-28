@@ -95,15 +95,7 @@ final class _internal_profilesCard extends CardBaseFramework
 
     private function configuredTable(array $context): TableFramework
     {
-        $state = (array)($context[$this->key()] ?? []);
-        $dashboard = $this->dashboard($context);
-        $imageType = (string)($dashboard['image_type'] ?? 'preview');
-        $profileName = (string)($dashboard['profile_name'] ?? 'default');
-        $rows = (array)($dashboard['rows'] ?? []);
-        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $draft = !empty($state['draft']);
-
-        return $this->profileTable($rows, $imageType, $profileName, $csrfToken, $draft || $rows === []);
+        return $this->table($context);
     }
 
     private function filterForms(array $imageTypes, string $imageType, string $profileName, array $profileNames, string $csrfToken): string
@@ -142,7 +134,7 @@ final class _internal_profilesCard extends CardBaseFramework
                 <input type="hidden" name="internal_profiles_action" value="add_profile">
                 <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
                 <input type="hidden" name="internal_profiles_image_type" value="' . HelperFramework::escape($imageType) . '">
-                <label for="internal-profiles-new-profile-name">New profile name</label>
+                <label for="internal-profiles-new-profile-name">Add a new profile</label>
                 <div class="input-action-row">
                     <input class="input" id="internal-profiles-new-profile-name" name="internal_profiles_new_profile_name" type="text" value="' . HelperFramework::escape($profileName) . '">
                     <button class="button button-inline" type="submit">Add</button>
@@ -172,18 +164,9 @@ final class _internal_profilesCard extends CardBaseFramework
         return 'Add adjustment entry for ' . $imageType . ' : ' . $profileName;
     }
 
-    private function profileTable(array $rows, string $imageType, string $profileName, string $csrfToken, bool $includeDraft): TableFramework
+    private function table(array $context): TableFramework
     {
-        if ($includeDraft) {
-            $rows[] = $this->draftRow($imageType, $profileName);
-        }
-
-        $rows = array_map(
-            fn(array $row): array => $this->normaliseTableRow($row, $csrfToken),
-            $rows
-        );
-
-        return TableFramework::make($this->key(), $rows)
+        return TableFramework::make($this->key(), $this->rows($context))
             ->exports(false)
             ->empty('No internal profile rows are available.')
             ->classes('profile-editor-table', 'table-scroll profile-editor-grid')
@@ -192,6 +175,25 @@ final class _internal_profilesCard extends CardBaseFramework
             ->column('value', 'Value', html: fn(array $row): string => $this->valueCell($row), exportable: false)
             ->column('value_type', 'Value Type', html: fn(array $row): string => $this->valueTypeSelect($row), exportable: false)
             ->column('actions', 'Actions', html: fn(array $row): string => $this->actionsCell($row), exportable: false);
+    }
+
+    private function rows(array $context): array
+    {
+        $state = (array)($context[$this->key()] ?? []);
+        $dashboard = $this->dashboard($context);
+        $imageType = (string)($dashboard['image_type'] ?? 'preview');
+        $profileName = (string)($dashboard['profile_name'] ?? 'default');
+        $rows = (array)($dashboard['rows'] ?? []);
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+
+        if (!empty($state['draft']) || $rows === []) {
+            $rows[] = $this->draftRow($imageType, $profileName);
+        }
+
+        return array_map(
+            fn(array $row): array => $this->normaliseTableRow($row, $csrfToken),
+            $rows
+        );
     }
 
     private function draftRow(string $imageType, string $profileName): array
