@@ -29,6 +29,8 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
         $context = [
             'profile_id' => $profileId,
             'photo_id' => $photoId,
+            'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtheapee_display_url', '')),
+            'display_type' => $this->normaliseDisplayType((string)$request->input('rawtheapee_display_type', 'none')),
         ];
 
         $action = (string)$request->input('rawtheapee_profiles_action', 'test');
@@ -45,6 +47,8 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
             if ($action === 'change_photo') {
                 $photoId = 0;
                 $context['photo_id'] = 0;
+                $context['display_url'] = '';
+                $context['display_type'] = 'none';
             }
 
             if ($photoId <= 0) {
@@ -88,5 +92,19 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
     private function canAccess(int $userId): bool
     {
         return in_array('rawtheapee_profiles', (new CardAccessFramework())->allowedCardsForUser($userId, ['rawtheapee_profiles']), true);
+    }
+
+    private function normaliseDisplayUrl(string $displayUrl): string
+    {
+        $displayUrl = trim($displayUrl);
+
+        return str_starts_with($displayUrl, '/api/photo-imaging.php?') ? $displayUrl : '';
+    }
+
+    private function normaliseDisplayType(string $displayType): string
+    {
+        $displayType = strtolower(trim($displayType));
+
+        return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
     }
 }

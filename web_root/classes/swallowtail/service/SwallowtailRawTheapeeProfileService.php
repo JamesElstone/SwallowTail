@@ -39,16 +39,53 @@ final class SwallowtailRawTheapeeProfileService
         );
     }
 
-    public function dashboard(int $profileId = 0, int $photoId = 0, int $userId = 0, bool $showPreview = false): array
+    public function dashboard(
+        int $profileId = 0,
+        int $photoId = 0,
+        int $userId = 0,
+        bool $showPreview = false,
+        string $displayUrl = '',
+        string $displayType = ''
+    ): array
     {
         $profiles = $this->availableProfiles();
         $profileId = max(0, $profileId);
 
         $photoId = max(0, $photoId);
-        $photo = $showPreview && $photoId > 0
+        if ($photoId <= 0) {
+            $photo = $this->randomAccessibleThumbnailPhoto($userId);
+            $photoId = max(0, (int)($photo['id'] ?? 0));
+        }
+
+        $photo = $photoId > 0
             ? (new SwallowtailCombinedProfilePreviewService())->photoForUser($photoId, $userId)
             : null;
-        $asset = is_array($photo) ? $this->previewAssetForPhoto($photo, $profileId > 0) : null;
+        $displayUrl = $this->normaliseDisplayUrl($displayUrl);
+        $displayType = $this->normaliseDisplayType($displayType);
+        $asset = null;
+        $statusUrl = '';
+        $status = 'Ready';
+
+        if (is_array($photo)) {
+            if ($profileId <= 0) {
+                $current = (new SwallowtailPreviewProfileService())->currentProfilePreviewState($photoId, $userId);
+                $displayUrl = (string)($current['display_url'] ?? '');
+                $displayType = $this->normaliseDisplayType((string)($current['display_type'] ?? ''));
+                $statusUrl = (string)($current['status_url'] ?? '');
+                $status = !empty($current['ready']) ? 'Ready' : 'Queued';
+            } else {
+                $profile = $this->profileById($profileId);
+                $sampleAsset = is_array($profile) ? $this->freshSampleAssetForPhoto($photo, $profile) : null;
+                if ($sampleAsset !== null) {
+                    $asset = $sampleAsset;
+                    $displayUrl = $this->assetUrl($photoId, $sampleAsset);
+                    $displayType = 'rawtheapee';
+                    $status = 'Ready';
+                } else {
+                    $status = 'Queued';
+                }
+            }
+        }
 
         return [
             'profiles' => $profiles,
@@ -56,7 +93,11 @@ final class SwallowtailRawTheapeeProfileService
             'photo_id' => $photoId,
             'photo' => $photo,
             'asset' => $asset,
-            'show_preview' => $showPreview,
+            'display_url' => $displayUrl,
+            'display_type' => $displayType,
+            'status_url' => $statusUrl,
+            'status' => $status,
+            'show_preview' => $photo !== null,
         ];
     }
 
@@ -218,6 +259,20 @@ final class SwallowtailRawTheapeeProfileService
         $inputPath = $storage->imagePath($base, $checksum, 'source');
         $outputPath = $storage->imagePath($base, $checksum, self::SAMPLE_IMAGE_TYPE);
         $profileSignature = $this->profileSignature($profile);
+        $assetService = new SwallowtailPhotoAssetService();
+        $existingAsset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
+        if ($existingAsset !== null && $assetService->isFreshForSignature($existingAsset, $profileSignature)) {
+            return [
+                'success' => true,
+                'job_id' => 0,
+                'photo_id' => $photoId,
+                'profile_id' => $profileId,
+                'ready' => true,
+                'message' => 'RawTheapee sample is ready.',
+                'status_url' => '',
+                'image_url' => $this->assetUrl($photoId, $existingAsset),
+            ];
+        }
 
         $queue = new SwallowtailConversionQueueService();
         $jobId = $queue->enqueueImageJob(
@@ -258,15 +313,38 @@ final class SwallowtailRawTheapeeProfileService
         return (new \CardAccessFramework())->roleIdForUser($userId);
     }
 
-    private function previewAssetForPhoto(array $photo, bool $includeSample): ?array
+    private function freshSampleAssetForPhoto(array $photo, array $profile): ?array
     {
         $assetService = new SwallowtailPhotoAssetService();
-        $sampleAsset = $includeSample ? $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE) : null;
-        $previewAsset = $assetService->assetForPhoto($photo, 'preview');
-        $thumbnailAsset = $assetService->assetForPhoto($photo, 'thumbnail');
-        $asset = $sampleAsset ?? $previewAsset ?? $thumbnailAsset;
+        $asset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
+        if ($asset === null || !$assetService->isFreshForSignature($asset, $this->profileSignature($profile))) {
+            return null;
+        }
 
         return is_array($asset) ? $asset : null;
+    }
+
+    private function assetUrl(int $photoId, array $asset): string
+    {
+        return '/api/photo-imaging.php?' . http_build_query([
+            'photo_id' => $photoId,
+            'type' => (string)($asset['image_type'] ?? 'preview'),
+            'v' => (string)($asset['sha256'] ?? ''),
+        ]);
+    }
+
+    private function normaliseDisplayUrl(string $displayUrl): string
+    {
+        $displayUrl = trim($displayUrl);
+
+        return str_starts_with($displayUrl, '/api/photo-imaging.php?') ? $displayUrl : '';
+    }
+
+    private function normaliseDisplayType(string $displayType): string
+    {
+        $displayType = strtolower(trim($displayType));
+
+        return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
     }
 
     private function randomOrderSql(): string

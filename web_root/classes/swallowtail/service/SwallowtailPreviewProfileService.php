@@ -71,6 +71,31 @@ final class SwallowtailPreviewProfileService
         ];
     }
 
+    public function currentProfilePreviewState(int $photoId, int $userId): ?array
+    {
+        if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
+            return null;
+        }
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return null;
+        }
+
+        $this->queueService->boostQueuedJobsForViewedPhoto($photoId);
+        $baselineStatus = $this->profileDataService->requestUrgentProfile($photo, 'rawtheapee_profiles_current');
+        $preview = $this->previewWorkflowState($photo, $baselineStatus, $userId);
+
+        return [
+            'photo' => $photo,
+            'ready' => !empty($preview['ready']),
+            'status' => (string)($preview['status'] ?? ''),
+            'display_type' => (string)($preview['display_type'] ?? ''),
+            'display_url' => (string)($preview['display_url'] ?? ''),
+            'status_url' => (string)($preview['status_url'] ?? ''),
+        ];
+    }
+
     public function enqueuePreview(int $photoId, int $userId, array $payload): array
     {
         return $this->enqueueProfiledRender($photoId, $userId, $payload, 'preview');

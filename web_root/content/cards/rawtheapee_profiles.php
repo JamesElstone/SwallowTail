@@ -33,6 +33,8 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
                     'photoId' => ':rawtheapee_profiles.photo_id',
                     'userId' => ':auth.user_id',
                     'showPreview' => ':rawtheapee_profiles.sample.success',
+                    'displayUrl' => ':rawtheapee_profiles.display_url',
+                    'displayType' => ':rawtheapee_profiles.display_type',
                 ],
             ],
         ];
@@ -50,6 +52,8 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         $requestContext = [
             'profile_id' => max(0, (int)$request->input('rawtheapee_profile_id', (int)($actionContext['profile_id'] ?? $current['profile_id'] ?? 0))),
             'photo_id' => max(0, (int)$request->input('rawtheapee_photo_id', (int)($actionContext['photo_id'] ?? $current['photo_id'] ?? 0))),
+            'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtheapee_display_url', (string)($actionContext['display_url'] ?? $current['display_url'] ?? ''))),
+            'display_type' => $this->normaliseDisplayType((string)$request->input('rawtheapee_display_type', (string)($actionContext['display_type'] ?? $current['display_type'] ?? 'none'))),
         ];
 
         $pageContext[$this->key()] = array_replace($current, $requestContext, $actionContext);
@@ -67,18 +71,21 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         $photoId = max(0, (int)($dashboard['photo_id'] ?? 0));
         $photo = is_array($dashboard['photo'] ?? null) ? (array)$dashboard['photo'] : null;
         $asset = is_array($dashboard['asset'] ?? null) ? (array)$dashboard['asset'] : null;
+        $displayUrl = (string)($dashboard['display_url'] ?? '');
+        $displayType = (string)($dashboard['display_type'] ?? 'none');
         $showPreview = !empty($dashboard['show_preview']);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $profileLabel = $this->profileLabel($profiles, $profileId);
-        $status = $this->statusLabel($sample, $asset, $showPreview);
-        $imageShown = $this->imageShownLabel($asset, $showPreview);
+        $status = (string)($dashboard['status'] ?? $this->statusLabel($sample, $asset, $showPreview));
+        $imageShown = $this->imageShownLabel($displayType, $showPreview);
+        $statusUrl = (string)($sample['status_url'] ?? $dashboard['status_url'] ?? '');
 
-        return '<div class="rawtheapee-profile-layout" data-rawtheapee-profile-panel="true" data-rawtheapee-profile-status-url="' . HelperFramework::escape((string)($sample['status_url'] ?? '')) . '">
+        return '<div class="rawtheapee-profile-layout" data-rawtheapee-profile-panel="true" data-rawtheapee-profile-status-url="' . HelperFramework::escape($statusUrl) . '">
             <div class="rawtheapee-profile-controls">
-                ' . $this->controlForm($profiles, $profileId, $photoId, $csrfToken) . '
+                ' . $this->controlForm($profiles, $profileId, $photoId, $displayUrl, $displayType, $csrfToken) . '
                 ' . $this->details($status, $sample, $photo, $profileLabel, $imageShown) . '
             </div>
-            ' . $this->photoPreview($photoId, $photo, $asset, $showPreview) . '
+            ' . $this->photoPreview($photoId, $photo, $displayUrl, $displayType, $showPreview) . '
         </div>';
     }
 
@@ -87,7 +94,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         return (array)(($context['services'] ?? [])['rawtheapee_profiles_dashboard'] ?? []);
     }
 
-    private function controlForm(array $profiles, int $profileId, int $photoId, string $csrfToken): string
+    private function controlForm(array $profiles, int $profileId, int $photoId, string $displayUrl, string $displayType, string $csrfToken): string
     {
         $options = '<option value="0"' . ($profileId === 0 ? ' selected' : '') . '>-- Current Profile --</option>';
         foreach ($profiles as $profile) {
@@ -104,10 +111,11 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
             <input type="hidden" name="rawtheapee_profiles_action" value="test">
             <input type="hidden" name="rawtheapee_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
+            <input type="hidden" name="rawtheapee_display_url" value="' . HelperFramework::escape($displayUrl) . '" data-rawtheapee-display-url-field="true">
+            <input type="hidden" name="rawtheapee_display_type" value="' . HelperFramework::escape($displayType) . '" data-rawtheapee-display-type-field="true">
             <label for="rawtheapee-profile-id">Profile</label>
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
-                <button class="button button-inline primary" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="test" data-processing-text="Queueing" data-processing-state="disabled">Show Profile Effect</button>
                 <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="change_photo" data-processing-text="Changing" data-processing-state="disabled">Change random Photo</button>
                 <button class="button button-inline" type="submit" data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh" data-processing-text="Refreshing" data-processing-state="disabled">Refresh Profiles</button>
             </div>
@@ -143,7 +151,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         </dl>';
     }
 
-    private function photoPreview(int $photoId, ?array $photo, ?array $asset, bool $showPreview): string
+    private function photoPreview(int $photoId, ?array $photo, string $displayUrl, string $displayType, bool $showPreview): string
     {
         if (!$showPreview) {
             return '<div class="rawtheapee-profile-preview"><div class="panel-soft">Press Test to see</div></div>';
@@ -153,21 +161,14 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             return '<div class="rawtheapee-profile-preview"><div class="panel-soft warn">No accessible photo is available.</div></div>';
         }
 
-        if ($asset === null) {
-            return '<div class="rawtheapee-profile-preview"><div class="panel-soft warn">No preview image is available.</div></div>';
+        if ($displayUrl === '') {
+            return '<div class="rawtheapee-profile-preview"><div class="panel-soft warn">No preview image is available yet.</div></div>';
         }
-
-        $type = (string)($asset['image_type'] ?? 'thumbnail');
-        $version = (string)($asset['sha256'] ?? '');
 
         return '<div class="rawtheapee-profile-preview">
             <figure class="rawtheapee-profile-preview-frame">
                 <span class="rawtheapee-profile-image-shell">
-                    <img class="rawtheapee-profile-image" data-rawtheapee-profile-image="true" src="/api/photo-imaging.php?' . HelperFramework::escape(http_build_query([
-                        'photo_id' => $photoId,
-                        'type' => $type,
-                        'v' => $version,
-                    ])) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '">
+                    <img class="rawtheapee-profile-image" data-rawtheapee-profile-image="true" data-rawtheapee-profile-image-type="' . HelperFramework::escape($displayType) . '" src="' . HelperFramework::escape($displayUrl) . '" alt="' . HelperFramework::escape((string)($photo['original_filename'] ?? 'Photo')) . '">
                 </span>
             </figure>
         </div>';
@@ -201,21 +202,29 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         return !empty($sample['success']) ? 'Queued' : 'Ready';
     }
 
-    private function imageShownLabel(?array $asset, bool $showPreview): string
+    private function imageShownLabel(string $displayType, bool $showPreview): string
     {
-        if (!$showPreview || $asset === null) {
+        if (!$showPreview) {
             return 'none';
         }
 
-        $type = strtolower(trim((string)($asset['image_type'] ?? '')));
-        if ($type === SwallowtailRawTheapeeProfileService::SAMPLE_IMAGE_TYPE) {
-            return 'rawtheapee';
-        }
-        if (in_array($type, ['thumbnail', 'preview'], true)) {
-            return $type;
-        }
+        $displayType = $this->normaliseDisplayType($displayType);
 
-        return $type !== '' ? $type : 'none';
+        return $displayType !== 'none' ? $displayType : 'none';
+    }
+
+    private function normaliseDisplayUrl(string $displayUrl): string
+    {
+        $displayUrl = trim($displayUrl);
+
+        return str_starts_with($displayUrl, '/api/photo-imaging.php?') ? $displayUrl : '';
+    }
+
+    private function normaliseDisplayType(string $displayType): string
+    {
+        $displayType = strtolower(trim($displayType));
+
+        return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
     }
 
 }

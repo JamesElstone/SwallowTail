@@ -29,6 +29,27 @@
     setText(panel.querySelector('[data-rawtheapee-profile-image-shown="true"]'), text);
   }
 
+  function setDisplayFields(panel, url, type) {
+    const urlField = panel.querySelector('[data-rawtheapee-display-url-field="true"]');
+    const typeField = panel.querySelector('[data-rawtheapee-display-type-field="true"]');
+
+    if (urlField instanceof HTMLInputElement) {
+      urlField.value = String(url || '');
+    }
+
+    if (typeField instanceof HTMLInputElement) {
+      typeField.value = String(type || 'none');
+    }
+  }
+
+  function syncDisplayFields(panel, image) {
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+
+    setDisplayFields(panel, image.getAttribute('src') || '', String(image.dataset.rawtheapeeProfileImageType || 'none'));
+  }
+
   function imageLoaded(image) {
     return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
   }
@@ -40,11 +61,29 @@
 
     if (imageLoaded(image)) {
       setStatus(panel, 'Ready');
+      syncDisplayFields(panel, image);
       return;
     }
 
     setStatus(panel, 'Loading');
-    image.addEventListener('load', () => setStatus(panel, 'Ready'), { once: true });
+    image.addEventListener('load', () => {
+      syncDisplayFields(panel, image);
+      setStatus(panel, 'Ready');
+    }, { once: true });
+  }
+
+  function resolvedImagePayload(payload) {
+    const rawTheapeeUrl = String(payload.rawtheapee_sample_url || '').trim();
+    if (rawTheapeeUrl !== '') {
+      return { type: 'rawtheapee', url: rawTheapeeUrl };
+    }
+
+    const previewUrl = String(payload.preview_url || '').trim();
+    if (previewUrl !== '') {
+      return { type: 'preview', url: previewUrl };
+    }
+
+    return { type: 'none', url: '' };
   }
 
   async function pollStatus(panel, url, attempt) {
@@ -65,13 +104,25 @@
       const status = String(payload.status || '').toLowerCase();
       setStatus(panel, statusLabel(status));
 
-      const imageUrl = String(payload.rawtheapee_sample_url || '').trim();
+      const resolved = resolvedImagePayload(payload);
       const image = panel.querySelector('[data-rawtheapee-profile-image="true"]');
-      if ((status === 'succeeded' || payload.ready === true) && imageUrl !== '' && image instanceof HTMLImageElement) {
+      if ((status === 'succeeded' || payload.ready === true) && resolved.url !== '' && image instanceof HTMLImageElement) {
+        if ((image.getAttribute('src') || '') === resolved.url && imageLoaded(image)) {
+          image.dataset.rawtheapeeProfileImageType = resolved.type;
+          setImageShown(panel, resolved.type);
+          setDisplayFields(panel, resolved.url, resolved.type);
+          setStatus(panel, 'Ready');
+          return;
+        }
+
         setStatus(panel, 'Loading');
-        setImageShown(panel, 'rawtheapee');
-        image.addEventListener('load', () => setStatus(panel, 'Ready'), { once: true });
-        image.src = imageUrl;
+        setImageShown(panel, resolved.type);
+        image.dataset.rawtheapeeProfileImageType = resolved.type;
+        image.addEventListener('load', () => {
+          setDisplayFields(panel, resolved.url, resolved.type);
+          setStatus(panel, 'Ready');
+        }, { once: true });
+        image.src = resolved.url;
         return;
       }
 
@@ -102,6 +153,7 @@
     }
 
     if (image instanceof HTMLImageElement) {
+      syncDisplayFields(panel, image);
       bindImageLoad(panel, image);
     }
   }

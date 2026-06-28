@@ -236,9 +236,11 @@ $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profiles card decla
     $harness->assertSame('rawtheapee_profiles_dashboard', (string)($services[0]['key'] ?? ''));
     $harness->assertSame(SwallowtailRawTheapeeProfileService::class, (string)($services[0]['service'] ?? ''));
     $harness->assertSame('dashboard', (string)($services[0]['method'] ?? ''));
+    $harness->assertSame(':rawtheapee_profiles.display_url', (string)($services[0]['params']['displayUrl'] ?? ''));
+    $harness->assertSame(':rawtheapee_profiles.display_type', (string)($services[0]['params']['displayType'] ?? ''));
 });
 
-$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form always submits an action', function () use ($harness): void {
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile select submits current display state', function () use ($harness): void {
     $card = new _rawtheapee_profilesCard();
     $method = new ReflectionMethod($card, 'controlForm');
     $method->setAccessible(true);
@@ -246,26 +248,29 @@ $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form a
     $html = (string)$method->invoke($card, [[
         'id' => 7,
         'display_label' => 'Portrait.pp3',
-    ]], 7, 'test-csrf');
+    ]], 7, 12, '/api/photo-imaging.php?photo_id=12&type=preview', 'preview', 'test-csrf');
 
+    $harness->assertTrue(str_contains($html, '-- Current Profile --'));
     $harness->assertTrue(str_contains($html, 'name="rawtheapee_profiles_action" value="test"'));
-    $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="test"'));
     $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh"'));
-    $harness->assertTrue(str_contains($html, 'Refresh Photo'));
+    $harness->assertTrue(str_contains($html, 'data-rawtheapee-display-url-field="true"'));
+    $harness->assertTrue(str_contains($html, 'data-rawtheapee-display-type-field="true"'));
+    $harness->assertTrue(str_contains($html, 'Change random Photo'));
     $harness->assertTrue(str_contains($html, 'Refresh Profiles'));
+    $harness->assertTrue(!str_contains($html, 'Show Profile Effect'));
     $harness->assertTrue(!str_contains($html, 'type="submit" name="rawtheapee_profiles_action"'));
-    $harness->assertTrue(!str_contains($html, 'name="rawtheapee_photo_id"'));
 });
 
-$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee preview waits for test action', function () use ($harness): void {
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee preview renders selected display url', function () use ($harness): void {
     $card = new _rawtheapee_profilesCard();
     $method = new ReflectionMethod($card, 'photoPreview');
     $method->setAccessible(true);
 
-    $html = (string)$method->invoke($card, 0, null, null, false);
+    $html = (string)$method->invoke($card, 12, ['original_filename' => 'test.cr2'], '/api/photo-imaging.php?photo_id=12&type=preview', 'preview', true);
 
-    $harness->assertTrue(str_contains($html, 'Press Test to see'));
-    $harness->assertTrue(!str_contains($html, '/api/photo-imaging.php'));
+    $harness->assertTrue(str_contains($html, 'data-rawtheapee-profile-image="true"'));
+    $harness->assertTrue(str_contains($html, 'data-rawtheapee-profile-image-type="preview"'));
+    $harness->assertTrue(str_contains($html, '/api/photo-imaging.php?photo_id=12&amp;type=preview'));
 });
 
 $harness->check(_view::class, 'view page exposes picture viewer card', function () use ($harness): void {
