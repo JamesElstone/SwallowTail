@@ -8,6 +8,7 @@
 declare(strict_types=1);
 
 use Swallowtail\Service\SwallowtailCombinedProfileService;
+use Swallowtail\Service\SwallowtailCombinedProfilePreviewService;
 use Swallowtail\Service\SwallowtailConversionQueueService;
 use Swallowtail\Service\SwallowtailConversionStatusApiService;
 use Swallowtail\Service\SwallowtailDataIntegrityCheckService;
@@ -3833,6 +3834,53 @@ $harness->check(SwallowtailCombinedProfileService::class, 'requests metadata pro
     } finally {
         \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
     }
+});
+
+$harness->check(SwallowtailCombinedProfilePreviewService::class, 'selects accessible example photos without derivative assets', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $swallowtailCreateSpiceBushUserSchema();
+    InterfaceDB::execute('DROP TABLE IF EXISTS photo_image_assets');
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO users (id, display_name, role_id, account_status)
+         VALUES (44, 'Preview User', 0, 'active')"
+    );
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state,
+            uploaded_by_user_id
+        ) VALUES
+            (910, 'example-preview.CR2', 'cr2', 100, :example_sha, '/storage', 'uploaded', 'processed', 44),
+            (911, 'removed-preview.CR2', 'cr2', 100, :removed_sha, '/storage', 'removed', 'processed', 44),
+            (912, 'other-user.CR2', 'cr2', 100, :other_sha, '/storage', 'uploaded', 'processed', 45)",
+        [
+            'example_sha' => str_repeat('a', 64),
+            'removed_sha' => str_repeat('b', 64),
+            'other_sha' => str_repeat('c', 64),
+        ]
+    );
+
+    $service = new SwallowtailCombinedProfilePreviewService();
+    $randomPhoto = $service->randomAccessiblePhoto(44);
+    $explicitPhoto = $service->photoForUser(910, 44);
+    $removedPhoto = $service->photoForUser(911, 44);
+    $otherUserPhoto = $service->photoForUser(912, 44);
+
+    $harness->assertTrue(is_array($randomPhoto));
+    $harness->assertSame(910, (int)($randomPhoto['id'] ?? 0));
+    $harness->assertSame('example-preview.CR2', (string)($randomPhoto['original_filename'] ?? ''));
+    $harness->assertTrue(!array_key_exists('preview_ready', $randomPhoto));
+    $harness->assertTrue(!array_key_exists('thumbnail_ready', $randomPhoto));
+    $harness->assertSame(910, (int)($explicitPhoto['id'] ?? 0));
+    $harness->assertSame(null, $removedPhoto);
+    $harness->assertSame(null, $otherUserPhoto);
 });
 
 $harness->check(SwallowtailPreviewProfileService::class, 'uses thumbnail as temporary display without marking preview ready', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {

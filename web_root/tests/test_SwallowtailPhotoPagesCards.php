@@ -72,6 +72,7 @@ $harness->check(_combined_profile_previewCard::class, 'combined profile preview 
                 'photo_id' => 42,
                 'photo' => [
                     'id' => 42,
+                    'original_filename' => 'IMG_0042.CR2',
                 ],
                 'content' => "[Version]\nAppVersion=5.10",
             ],
@@ -79,6 +80,8 @@ $harness->check(_combined_profile_previewCard::class, 'combined profile preview 
     ]);
 
     $harness->assertTrue(str_contains($html, 'name="combined_profile_photo_id" value="42"'));
+    $harness->assertTrue(str_contains($html, 'IMG_0042.CR2'));
+    $harness->assertTrue(str_contains($html, 'ID 42'));
     $harness->assertTrue(str_contains($html, '<option value="final" selected>final</option>'));
     $harness->assertTrue(str_contains($html, "[Version]\nAppVersion=5.10"));
 });

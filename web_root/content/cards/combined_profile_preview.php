@@ -60,15 +60,22 @@ final class _combined_profile_previewCard extends CardBaseFramework
         $imageTypes = (array)($dashboard['image_types'] ?? SwallowtailCombinedProfilePreviewService::IMAGE_TYPES);
         $imageType = (string)($dashboard['image_type'] ?? 'preview');
         $photoId = max(0, (int)($dashboard['photo_id'] ?? 0));
+        $photo = is_array($dashboard['photo'] ?? null) ? (array)$dashboard['photo'] : null;
 
-        if ($photoId <= 0 || !is_array($dashboard['photo'] ?? null)) {
+        if ($photoId <= 0 || $photo === null) {
             return '<div class="panel-soft warn">No accessible photo is available.</div>';
         }
 
         $content = (string)($dashboard['content'] ?? '');
+        $filename = trim((string)($photo['original_filename'] ?? ''));
 
         return '<div class="form-grid">
             ' . $this->filterForm($imageTypes, $imageType, $photoId) . '
+            <div class="form-row full panel-soft">
+                <strong>Example Photo</strong>
+                <span>' . HelperFramework::escape($filename !== '' ? $filename : 'Photo ' . (string)$photoId) . '</span>
+                <span>ID ' . HelperFramework::escape((string)$photoId) . '</span>
+            </div>
             <div class="form-row full">
                 <textarea class="input preformatted-panel" readonly rows="22">' . HelperFramework::escape($content) . '</textarea>
             </div>
