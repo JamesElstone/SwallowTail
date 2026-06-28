@@ -398,9 +398,13 @@ final class SwallowtailPhotoUiService
         $row['thumbnail_ready'] = !$row['preview_ready'] && $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
         $row['effective_can_download_single_jpeg'] = (int)($row['effective_can_download_single_jpeg'] ?? 0) === 1;
+        $downloadAsset = !empty($row['effective_can_download_single_jpeg'])
+            ? $this->assetService->assetForPhotoWithFinalFallback($row, 'final')
+            : null;
         $originalAsset = !empty($row['effective_can_download_single_jpeg'])
             ? $this->assetService->assetForPhoto($row, 'original')
             : null;
+        $row['single_jpeg_ready'] = $downloadAsset !== null;
         $row['original_ready'] = $originalAsset !== null;
         $row['original_asset_sha256'] = is_array($originalAsset) ? (string)($originalAsset['sha256'] ?? '') : '';
 

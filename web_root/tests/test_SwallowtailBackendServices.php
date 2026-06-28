@@ -3892,6 +3892,66 @@ $harness->check(SwallowtailDownloadService::class, 'single final JPEG download u
     $harness->assertSame('Single-Download-final.jpg', (string)($download['filename'] ?? ''));
 });
 
+$harness->check(SwallowtailDownloadService::class, 'single final JPEG download waits for current final signature', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+
+    $baseLocation = swallowtail_backend_storage_tmp_root();
+    $sha256 = str_repeat('6', 64);
+    $storage = new SwallowtailStorageService();
+    $finalPath = $storage->imagePath($baseLocation, $sha256, 'final');
+    $storage->ensureDirectoryForPath($finalPath);
+    file_put_contents($finalPath, "\xFF\xD8\xFF\xD9", LOCK_EX);
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            id,
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            603,
+            'Stale Single Download.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            'uploaded',
+            'ready'
+        )",
+        [
+            'sha256' => $sha256,
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+    swallowtail_backend_record_asset(603, 'final', $finalPath, str_repeat('6', 64), str_repeat('a', 64));
+    InterfaceDB::execute(
+        "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+            (603, 0, 'swallowtail', 'status', 'processed', 'string')"
+    );
+    swallowtail_backend_enable_final_profile_overlay('stale-single-download');
+
+    $library = new SwallowtailPhotoLibraryService();
+    $event = $library->createEvent('Stale Single Final Download Event');
+    $library->assignPhotoToEvent(603, (int)$event['id']);
+    $library->grantEventPermission((int)$event['id'], 303, [
+        'can_view' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+
+    try {
+        (new SwallowtailDownloadService($storage))->singleJpeg(303, 603);
+    } catch (RuntimeException $exception) {
+        $harness->assertSame('No final JPEG is available for that photo yet.', $exception->getMessage());
+        return;
+    }
+
+    throw new RuntimeException('Stale final JPEG was downloadable.');
+});
+
 $harness->check(SwallowtailPreviewProfileService::class, 'polls active final job even when an older final image exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 

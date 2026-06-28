@@ -1074,6 +1074,7 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
         'preview_ready' => true,
         'original_ready' => true,
         'original_asset_sha256' => str_repeat('a', 64),
+        'single_jpeg_ready' => true,
         'effective_can_edit' => true,
         'effective_can_download_single_jpeg' => true,
     ]);
@@ -1102,13 +1103,14 @@ $harness->check(_gallery::class, 'browse gallery hides download link without sin
         'conversion_state' => 'ready',
         'preview_ready' => true,
         'effective_can_download_single_jpeg' => false,
+        'single_jpeg_ready' => true,
     ]);
 
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
     $harness->assertTrue(!str_contains($html, 'data-gallery-viewer-prefetch-url'));
 });
 
-$harness->check(_gallery::class, 'browse gallery hides download link until conversion is complete', function () use ($harness): void {
+$harness->check(_gallery::class, 'browse gallery shows download link when final jpeg is ready during processing', function () use ($harness): void {
     $card = new _browse_galleryCard();
     $method = new ReflectionMethod($card, 'photoTile');
     $method->setAccessible(true);
@@ -1120,10 +1122,32 @@ $harness->check(_gallery::class, 'browse gallery hides download link until conve
         'preview_ready' => true,
         'original_ready' => true,
         'original_asset_sha256' => str_repeat('b', 64),
+        'single_jpeg_ready' => true,
         'effective_can_download_single_jpeg' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
+    $harness->assertTrue(str_contains($html, 'gallery-download-link'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-viewer-prefetch-url="/api/photo-imaging.php?photo_id=42&amp;type=original&amp;v=' . str_repeat('b', 64) . '"'));
+});
+
+$harness->check(_gallery::class, 'browse gallery hides download link until final jpeg is ready', function () use ($harness): void {
+    $card = new _browse_galleryCard();
+    $method = new ReflectionMethod($card, 'photoTile');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, [
+        'id' => 42,
+        'original_filename' => 'IMG_0042.CR2',
+        'conversion_state' => 'ready',
+        'preview_ready' => true,
+        'original_ready' => true,
+        'original_asset_sha256' => str_repeat('b', 64),
+        'single_jpeg_ready' => false,
+        'effective_can_download_single_jpeg' => true,
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'gallery-status-ready'));
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
     $harness->assertTrue(!str_contains($html, 'data-gallery-viewer-prefetch-url'));
 });

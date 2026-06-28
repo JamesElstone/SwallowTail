@@ -88,6 +88,11 @@ final class SwallowtailPhotoAssetService
 
         $asset = $this->assetForPhoto($photo, 'final', $requireReadableFile);
         if ($asset !== null) {
+            $photoId = max(0, (int)($photo['id'] ?? 0));
+            if (!$this->isFreshForSignature($asset, $this->combinedProfileService->profileSignature($photoId, 'final'))) {
+                return null;
+            }
+
             $asset['requested_image_type'] = 'final';
             $asset['effective_image_type'] = 'final';
             $asset['final_equivalent_original'] = false;

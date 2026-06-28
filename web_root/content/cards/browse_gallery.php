@@ -263,7 +263,8 @@ final class _browse_galleryCard extends CardBaseFramework
 
     private function canShowDownloadLink(array $photo, string $status): bool
     {
-        return !empty($photo['effective_can_download_single_jpeg']) && $status === 'ready';
+        return !empty($photo['effective_can_download_single_jpeg'])
+            && !empty($photo['single_jpeg_ready']);
     }
 
     private function autoRefreshControl(): string
