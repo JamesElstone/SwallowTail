@@ -7,6 +7,7 @@
  */
 declare(strict_types=1);
 
+use Swallowtail\Service\SwallowtailCombinedProfilePreviewService;
 use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailJobStatisticsService;
 use Swallowtail\Service\SwallowtailInternalProfilesService;
@@ -49,6 +50,37 @@ $harness->check(_profiles::class, 'profiles page exposes profile management card
         'rawtheapee_profiles',
         'combined_profile_preview',
     ], $profiles->cards());
+});
+
+$harness->check(_combined_profile_previewCard::class, 'combined profile preview card declares dashboard service', function () use ($harness): void {
+    $services = (new _combined_profile_previewCard())->services();
+
+    $harness->assertSame('combined_profile_preview_dashboard', (string)($services[0]['key'] ?? ''));
+    $harness->assertSame(SwallowtailCombinedProfilePreviewService::class, (string)($services[0]['service'] ?? ''));
+    $harness->assertSame('dashboard', (string)($services[0]['method'] ?? ''));
+    $harness->assertSame(':combined_profile_preview.photo_id', (string)($services[0]['params']['photoId'] ?? ''));
+    $harness->assertSame(':combined_profile_preview.image_type', (string)($services[0]['params']['imageType'] ?? ''));
+    $harness->assertSame(':auth.user_id', (string)($services[0]['params']['userId'] ?? ''));
+});
+
+$harness->check(_combined_profile_previewCard::class, 'combined profile preview renders service dashboard data', function () use ($harness): void {
+    $html = (new _combined_profile_previewCard())->render([
+        'services' => [
+            'combined_profile_preview_dashboard' => [
+                'image_types' => ['preview', 'final'],
+                'image_type' => 'final',
+                'photo_id' => 42,
+                'photo' => [
+                    'id' => 42,
+                ],
+                'content' => "[Version]\nAppVersion=5.10",
+            ],
+        ],
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'name="combined_profile_photo_id" value="42"'));
+    $harness->assertTrue(str_contains($html, '<option value="final" selected>final</option>'));
+    $harness->assertTrue(str_contains($html, "[Version]\nAppVersion=5.10"));
 });
 
 $harness->check(_internal_profilesCard::class, 'internal profiles card declares dashboard service', function () use ($harness): void {

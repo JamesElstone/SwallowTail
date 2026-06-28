@@ -21,6 +21,22 @@ final class _combined_profile_previewCard extends CardBaseFramework
         return 'Combined Profile Preview';
     }
 
+    public function services(): array
+    {
+        return [
+            [
+                'key' => 'combined_profile_preview_dashboard',
+                'service' => SwallowtailCombinedProfilePreviewService::class,
+                'method' => 'dashboard',
+                'params' => [
+                    'photoId' => ':combined_profile_preview.photo_id',
+                    'imageType' => ':combined_profile_preview.image_type',
+                    'userId' => ':auth.user_id',
+                ],
+            ],
+        ];
+    }
+
     public function helper(array $context): string
     {
         return 'View the combined photo PP3 plus internal overlays.';
@@ -40,35 +56,35 @@ final class _combined_profile_previewCard extends CardBaseFramework
 
     public function render(array $context): string
     {
-        $service = new SwallowtailCombinedProfilePreviewService();
-        $userId = $this->currentUserId();
-        $state = (array)($context[$this->key()] ?? []);
-        $imageType = $service->normaliseImageType((string)($state['image_type'] ?? 'preview'));
-        $photoId = max(0, (int)($state['photo_id'] ?? 0));
-        $photo = $photoId > 0 ? $service->photoForUser($photoId, $userId) : null;
-        if ($photo === null) {
-            $photo = $service->randomAccessiblePhoto($userId);
-            $photoId = max(0, (int)($photo['id'] ?? 0));
-        }
+        $dashboard = $this->dashboard($context);
+        $imageTypes = (array)($dashboard['image_types'] ?? SwallowtailCombinedProfilePreviewService::IMAGE_TYPES);
+        $imageType = (string)($dashboard['image_type'] ?? 'preview');
+        $photoId = max(0, (int)($dashboard['photo_id'] ?? 0));
 
-        if ($photoId <= 0 || $photo === null) {
+        if ($photoId <= 0 || !is_array($dashboard['photo'] ?? null)) {
             return '<div class="panel-soft warn">No accessible photo is available.</div>';
         }
 
-        $content = $service->combinedContent($photoId, $imageType);
+        $content = (string)($dashboard['content'] ?? '');
 
         return '<div class="form-grid">
-            ' . $this->filterForm($service, $imageType, $photoId) . '
+            ' . $this->filterForm($imageTypes, $imageType, $photoId) . '
             <div class="form-row full">
                 <textarea class="input preformatted-panel" readonly rows="22">' . HelperFramework::escape($content) . '</textarea>
             </div>
         </div>';
     }
 
-    private function filterForm(SwallowtailCombinedProfilePreviewService $service, string $imageType, int $photoId): string
+    private function dashboard(array $context): array
+    {
+        return (array)(($context['services'] ?? [])['combined_profile_preview_dashboard'] ?? []);
+    }
+
+    private function filterForm(array $imageTypes, string $imageType, int $photoId): string
     {
         $options = '';
-        foreach ($service->imageTypes() as $type) {
+        foreach ($imageTypes as $type) {
+            $type = (string)$type;
             $options .= '<option value="' . HelperFramework::escape($type) . '"' . ($type === $imageType ? ' selected' : '') . '>' . HelperFramework::escape($type) . '</option>';
         }
 
@@ -80,14 +96,5 @@ final class _combined_profile_previewCard extends CardBaseFramework
             <label for="combined-profile-image-type">Image type</label>
             <select id="combined-profile-image-type" name="combined_profile_image_type">' . $options . '</select>
         </form>';
-    }
-
-    protected function currentUserId(): int
-    {
-        $session = new SessionAuthenticationService();
-        $session->startSession();
-        $deviceId = trim((string)AntiFraudService::instance()->requestValue('Client-Device-ID'));
-
-        return $session->authenticatedUserId($deviceId);
     }
 }

@@ -25,6 +25,26 @@ final class SwallowtailCombinedProfilePreviewService
         return in_array($imageType, self::IMAGE_TYPES, true) ? $imageType : 'preview';
     }
 
+    public function dashboard(int $photoId, string $imageType, int $userId): array
+    {
+        $imageType = $this->normaliseImageType($imageType);
+        $photoId = max(0, $photoId);
+        $photo = $photoId > 0 ? $this->photoForUser($photoId, $userId) : null;
+
+        if ($photo === null) {
+            $photo = $this->randomAccessiblePhoto($userId);
+            $photoId = max(0, (int)($photo['id'] ?? 0));
+        }
+
+        return [
+            'image_types' => $this->imageTypes(),
+            'image_type' => $imageType,
+            'photo_id' => $photoId,
+            'photo' => $photo,
+            'content' => $photoId > 0 && $photo !== null ? $this->combinedContent($photoId, $imageType) : '',
+        ];
+    }
+
     public function randomAccessiblePhoto(int $userId): ?array
     {
         if ($userId <= 0) {
