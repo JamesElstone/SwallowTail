@@ -2022,6 +2022,7 @@ $harness->check(SwallowtailRawTherapeeProfileService::class, 'queues sample jobs
     $outputPath = is_array($job) ? (string)($job['output_path'] ?? '') : '';
 
     $harness->assertTrue(!empty($result['success']));
+    $harness->assertSame(0, (int)InterfaceDB::fetchColumn("SELECT COUNT(*) FROM rawtherapee_profile_data WHERE is_default = 1"));
     $harness->assertSame($expectedSignature, $jobSignature);
     $harness->assertTrue(preg_match('/^[a-f0-9]{64}$/', $jobSignature) === 1);
     $harness->assertTrue(str_ends_with($outputPath, '_rawtherapee_sample_' . $expectedSignature . '.jpg'));

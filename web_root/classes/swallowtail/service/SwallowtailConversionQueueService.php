@@ -423,26 +423,32 @@ final class SwallowtailConversionQueueService
             $insertParams
         );
 
-        $jobId = InterfaceDB::fetchColumn(
-            "SELECT id
+        $insertLookupSql = "SELECT id
              FROM photo_conversion_jobs
              WHERE photo_id = :photo_id
                AND image_type = :image_type
                AND input_path = :input_path
                AND output_path = :output_path
                AND " . ($profilePath === null ? 'profile_path IS NULL' : 'profile_path = :profile_path') . "
-               " . $profileSignatureSql . "
+               %s
                AND status = 'queued'
              ORDER BY id DESC
-             LIMIT 1",
-            array_filter([
-                'photo_id' => $photoId,
-                'image_type' => $imageType,
-                'input_path' => $inputPath,
-                'output_path' => $outputPath,
-                'profile_path' => $profilePath,
-            ] + $profileSignatureParams, static fn(mixed $value): bool => $value !== null)
+             LIMIT 1";
+        $insertLookupParams = array_filter([
+            'photo_id' => $photoId,
+            'image_type' => $imageType,
+            'input_path' => $inputPath,
+            'output_path' => $outputPath,
+            'profile_path' => $profilePath,
+        ], static fn(mixed $value): bool => $value !== null);
+
+        $jobId = InterfaceDB::fetchColumn(
+            sprintf($insertLookupSql, $profileSignatureSql),
+            $insertLookupParams + $profileSignatureParams
         );
+        if ($jobId === false && $profileSignatureSql !== '') {
+            $jobId = InterfaceDB::fetchColumn(sprintf($insertLookupSql, ''), $insertLookupParams);
+        }
 
         return $this->nullablePositiveInt($jobId);
     }
