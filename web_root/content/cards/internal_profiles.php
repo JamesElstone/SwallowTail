@@ -338,7 +338,8 @@ final class _internal_profilesCard extends CardBaseFramework
     private function moveButton(int $id, string $formId, string $direction, string $label): string
     {
         return '<button class="button button-inline" type="submit" form="' . HelperFramework::escape($formId) . '" formaction="?page=profiles" name="internal_profiles_move" value="' . HelperFramework::escape($direction) . '"
-            onclick="this.form.internal_profiles_action.value=\'move_profile\'; this.form.internal_profiles_move_direction.value=\'' . HelperFramework::escape($direction) . '\';"
+            data-submit-field="internal_profiles_action" data-submit-value="move_profile"
+            data-internal-profile-move-direction="' . HelperFramework::escape($direction) . '"
             title="Move ' . HelperFramework::escape($direction) . '">' . HelperFramework::escape($label) . '</button>';
     }
 }

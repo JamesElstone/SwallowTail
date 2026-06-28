@@ -177,6 +177,11 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $harness->assertTrue(str_contains($html, 'name="internal_profile_type"'));
     $harness->assertTrue(str_contains($html, 'form="internal-profile-row-42-'));
     $harness->assertTrue(str_contains($html, 'name="internal_profiles_action" value="save_row"'));
+    $harness->assertTrue(str_contains($html, 'name="internal_profiles_move_direction" value=""'));
+    $harness->assertTrue(str_contains($html, 'data-submit-field="internal_profiles_action" data-submit-value="move_profile"'));
+    $harness->assertTrue(str_contains($html, 'data-internal-profile-move-direction="up"'));
+    $harness->assertTrue(str_contains($html, 'data-internal-profile-move-direction="down"'));
+    $harness->assertTrue(!str_contains($html, 'onclick='));
     $harness->assertTrue(str_contains($html, 'name="internal_profile_value"'));
     $harness->assertTrue(str_contains($html, 'data-validate-boolean'));
     $harness->assertTrue(str_contains($html, '<option value="true" selected>true</option>'));
@@ -195,6 +200,19 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $targetMatches = [];
     $harness->assertSame(1, preg_match('/data-validate-type-target="([^"]+)"/', $html, $targetMatches));
     $harness->assertTrue(str_contains($html, 'data-validate-type-control="' . $targetMatches[1] . '"'));
+});
+
+$harness->check(_internal_profilesCard::class, 'internal profile move buttons are prepared by project javascript', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'project.js');
+
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to read project javascript source.');
+    }
+
+    $harness->assertTrue(str_contains($source, 'data-internal-profile-move-direction'));
+    $harness->assertTrue(str_contains($source, "actionField.value = 'move_profile'"));
+    $harness->assertTrue(str_contains($source, 'directionField.value = direction'));
+    $harness->assertTrue(str_contains($source, "direction !== 'up' && direction !== 'down'"));
 });
 
 $harness->check(_internal_profilesCard::class, 'internal profile adjustment action names selected image and profile', function () use ($harness): void {

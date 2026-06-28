@@ -114,7 +114,43 @@
     root.querySelectorAll('[data-rawtheapee-profile-panel="true"]').forEach(initialiseRawTheapeeProfilePanel);
   }
 
+  function prepareInternalProfileMove(button) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const direction = String(button.dataset.internalProfileMoveDirection || '').trim();
+    if (direction !== 'up' && direction !== 'down') {
+      return;
+    }
+
+    const form = button.form;
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const actionField = form.elements.namedItem('internal_profiles_action');
+    const directionField = form.elements.namedItem('internal_profiles_move_direction');
+
+    if (actionField instanceof HTMLInputElement) {
+      actionField.value = 'move_profile';
+    }
+
+    if (directionField instanceof HTMLInputElement) {
+      directionField.value = direction;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => initialise(document));
+
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    prepareInternalProfileMove(target.closest('[data-internal-profile-move-direction]'));
+  });
 
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
