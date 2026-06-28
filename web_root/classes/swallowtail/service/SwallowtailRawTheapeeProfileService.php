@@ -11,6 +11,7 @@ namespace Swallowtail\Service;
 
 use AppConfigurationStore;
 use InterfaceDB;
+use RoleAssignmentService;
 
 final class SwallowtailRawTheapeeProfileService
 {
@@ -36,6 +37,30 @@ final class SwallowtailRawTheapeeProfileService
              WHERE is_available = 1
              ORDER BY display_label, relative_path"
         );
+    }
+
+    public function dashboard(int $profileId = 0, int $photoId = 0, int $userId = 0, bool $showPreview = false): array
+    {
+        $profiles = $this->availableProfiles();
+        $profileId = max(0, $profileId);
+        if ($profileId <= 0 && $profiles !== []) {
+            $profileId = (int)($profiles[0]['id'] ?? 0);
+        }
+
+        $photoId = max(0, $photoId);
+        $photo = $showPreview && $photoId > 0
+            ? (new SwallowtailCombinedProfilePreviewService())->photoForUser($photoId, $userId)
+            : null;
+        $asset = is_array($photo) ? $this->previewAssetForPhoto($photo) : null;
+
+        return [
+            'profiles' => $profiles,
+            'profile_id' => $profileId,
+            'photo_id' => $photoId,
+            'photo' => $photo,
+            'asset' => $asset,
+            'show_preview' => $showPreview,
+        ];
     }
 
     public function profileById(int $profileId): ?array
@@ -104,19 +129,58 @@ final class SwallowtailRawTheapeeProfileService
         return '';
     }
 
-    public function randomAccessiblePhoto(int $userId): ?array
+    public function randomAccessibleThumbnailPhoto(int $userId): ?array
     {
         if ($userId <= 0) {
             return null;
         }
 
-        $gallery = (new SwallowtailPhotoUiService())->accessiblePhotos($userId, 1, 96);
-        $rows = array_values(array_filter((array)($gallery['rows'] ?? []), static fn(mixed $row): bool => is_array($row)));
-        if ($rows === []) {
-            return null;
+        $params = [
+            'thumbnail_image_type' => 'thumbnail',
+        ];
+        $where = "photo.upload_state = 'uploaded'";
+        $roleId = $this->roleIdForUser($userId);
+
+        if ($roleId !== RoleAssignmentService::ADMIN_ROLE_ID) {
+            $params['access_upload_user_id'] = $userId;
+            $params['access_grantee_user_id'] = $userId;
+            $params['access_grantee_role_id'] = $roleId;
+            $where .= "
+                AND (
+                    photo.uploaded_by_user_id = :access_upload_user_id
+                    OR EXISTS (
+                        SELECT 1
+                        FROM event_photos access_event_photo
+                        INNER JOIN event_permissions access_permission
+                            ON access_permission.event_id = access_event_photo.event_id
+                        WHERE access_event_photo.photo_id = photo.id
+                          AND access_permission.can_view = 1
+                          AND (
+                              (access_permission.grantee_type = 'user' AND access_permission.grantee_id = :access_grantee_user_id)
+                              OR
+                              (access_permission.grantee_type = 'role' AND access_permission.grantee_id = :access_grantee_role_id)
+                          )
+                          AND (access_permission.expires_at IS NULL OR access_permission.expires_at > CURRENT_TIMESTAMP)
+                        LIMIT 1
+                    )
+                )";
         }
 
-        return (array)$rows[array_rand($rows)];
+        $row = InterfaceDB::fetchOne(
+            "SELECT photo.*
+             FROM photos photo
+             INNER JOIN photo_image_assets thumbnail_asset
+                ON thumbnail_asset.photo_id = photo.id
+               AND thumbnail_asset.image_type = :thumbnail_image_type
+               AND thumbnail_asset.bytes > 0
+               AND thumbnail_asset.sha256 <> ''
+             WHERE " . $where . "
+             ORDER BY " . $this->randomOrderSql() . "
+             LIMIT 1",
+            $params
+        );
+
+        return is_array($row) ? $row : null;
     }
 
     public function requestRefresh(): bool
@@ -187,5 +251,26 @@ final class SwallowtailRawTheapeeProfileService
             ]),
             'image_url' => '',
         ];
+    }
+
+    private function roleIdForUser(int $userId): int
+    {
+        return (new \CardAccessFramework())->roleIdForUser($userId);
+    }
+
+    private function previewAssetForPhoto(array $photo): ?array
+    {
+        $assetService = new SwallowtailPhotoAssetService();
+        $sampleAsset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
+        $previewAsset = $assetService->assetForPhoto($photo, 'preview');
+        $thumbnailAsset = $assetService->assetForPhoto($photo, 'thumbnail');
+        $asset = $sampleAsset ?? $previewAsset ?? $thumbnailAsset;
+
+        return is_array($asset) ? $asset : null;
+    }
+
+    private function randomOrderSql(): string
+    {
+        return InterfaceDB::driverName() === 'sqlite' ? 'RANDOM()' : 'RAND()';
     }
 }

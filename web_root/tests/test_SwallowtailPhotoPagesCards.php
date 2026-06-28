@@ -12,6 +12,7 @@ use Swallowtail\Service\SwallowtailJobStatisticsService;
 use Swallowtail\Service\SwallowtailInternalProfilesService;
 use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
+use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
 use Swallowtail\Service\SwallowtailServiceStatusService;
 use Swallowtail\Service\SwallowtailStatisticsService;
 use Swallowtail\Service\SwallowtailStoragePermissionRepairService;
@@ -160,6 +161,14 @@ $harness->check(_internal_profilesCard::class, 'internal profile adjustment acti
     $harness->assertTrue(!str_contains($html, 'Add Row For Image Type'));
 });
 
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profiles card declares dashboard service', function () use ($harness): void {
+    $services = (new _rawtheapee_profilesCard())->services();
+
+    $harness->assertSame('rawtheapee_profiles_dashboard', (string)($services[0]['key'] ?? ''));
+    $harness->assertSame(SwallowtailRawTheapeeProfileService::class, (string)($services[0]['service'] ?? ''));
+    $harness->assertSame('dashboard', (string)($services[0]['method'] ?? ''));
+});
+
 $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form always submits an action', function () use ($harness): void {
     $card = new _rawtheapee_profilesCard();
     $method = new ReflectionMethod($card, 'controlForm');
@@ -168,12 +177,26 @@ $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile test form a
     $html = (string)$method->invoke($card, [[
         'id' => 7,
         'display_label' => 'Portrait.pp3',
-    ]], 7, 42, 'test-csrf');
+    ]], 7, 'test-csrf');
 
     $harness->assertTrue(str_contains($html, 'name="rawtheapee_profiles_action" value="test"'));
     $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="test"'));
     $harness->assertTrue(str_contains($html, 'data-submit-field="rawtheapee_profiles_action" data-submit-value="refresh"'));
+    $harness->assertTrue(str_contains($html, 'Refresh Photo'));
+    $harness->assertTrue(str_contains($html, 'Refresh Profiles'));
     $harness->assertTrue(!str_contains($html, 'type="submit" name="rawtheapee_profiles_action"'));
+    $harness->assertTrue(!str_contains($html, 'name="rawtheapee_photo_id"'));
+});
+
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee preview waits for test action', function () use ($harness): void {
+    $card = new _rawtheapee_profilesCard();
+    $method = new ReflectionMethod($card, 'photoPreview');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, 0, null, null, false);
+
+    $harness->assertTrue(str_contains($html, 'Press Test to see'));
+    $harness->assertTrue(!str_contains($html, '/api/photo-imaging.php'));
 });
 
 $harness->check(_view::class, 'view page exposes picture viewer card', function () use ($harness): void {

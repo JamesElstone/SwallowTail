@@ -42,6 +42,12 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
         }
 
         if ($action === 'test') {
+            if ($photoId <= 0) {
+                $photo = $service->randomAccessibleThumbnailPhoto($userId);
+                $photoId = max(0, (int)($photo['id'] ?? 0));
+                $context['photo_id'] = $photoId;
+            }
+
             $result = $service->enqueueSample($photoId, $profileId, $userId);
             $context['sample'] = $result;
             return new ActionResultFramework(!empty($result['success']), ['rawtheapee.profiles'], [[
