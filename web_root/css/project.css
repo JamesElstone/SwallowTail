@@ -947,6 +947,136 @@
   font-size: 0.84rem;
 }
 
+.rawtheapee-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 20px;
+  align-items: stretch;
+  min-width: 0;
+  min-height: clamp(360px, 58vh, 720px);
+}
+
+.rawtheapee-profile-controls {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+  min-width: 0;
+}
+
+.rawtheapee-profile-form {
+  padding-bottom: 0;
+}
+
+.rawtheapee-profile-form .input-action-row {
+  align-items: flex-start;
+}
+
+.rawtheapee-profile-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.rawtheapee-profile-details div {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.rawtheapee-profile-details dt {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.rawtheapee-profile-details dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rawtheapee-profile-details dd::before {
+  content: ": ";
+}
+
+.rawtheapee-profile-preview {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.rawtheapee-profile-preview > .panel-soft {
+  align-self: start;
+  margin-bottom: 0;
+}
+
+.rawtheapee-profile-preview-frame {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+
+.rawtheapee-profile-image-shell {
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rawtheapee-profile-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: top center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.card.card-maximized .rawtheapee-profile-layout {
+  height: 100%;
+  min-height: 0;
+}
+
+.card.card-maximized .rawtheapee-profile-image-shell {
+  height: 100%;
+}
+
+.card.card-maximized .rawtheapee-profile-image {
+  max-height: 100%;
+}
+
+@media (max-width: 720px) {
+  .rawtheapee-profile-layout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .rawtheapee-profile-preview {
+    min-height: 280px;
+  }
+
+  .rawtheapee-profile-details div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .rawtheapee-profile-details dd::before {
+    content: "";
+  }
+}
+
 .event-permissions {
   display: grid;
   gap: 18px;
