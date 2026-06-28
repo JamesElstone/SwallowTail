@@ -52,6 +52,18 @@ final class SwallowtailCombinedProfileService
         return hash('sha256', implode("\n", array_column($this->profileSignatureRows($photoId, $imageType), 'part')));
     }
 
+    public function profileSignaturesMatch(int $photoId, string $leftImageType, string $rightImageType): bool
+    {
+        if ($photoId <= 0) {
+            return false;
+        }
+
+        $left = $this->normaliseSha256($this->profileSignature($photoId, $leftImageType));
+        $right = $this->normaliseSha256($this->profileSignature($photoId, $rightImageType));
+
+        return $left !== '' && $left === $right;
+    }
+
     public function photoProfileContent(int $photoId): string
     {
         if ($photoId <= 0) {
@@ -104,6 +116,13 @@ final class SwallowtailCombinedProfileService
         }
 
         return substr($imageType, 0, 32);
+    }
+
+    private function normaliseSha256(string $value): string
+    {
+        $value = strtolower(trim($value));
+
+        return preg_match('/^[a-f0-9]{64}$/', $value) === 1 ? $value : '';
     }
 
     private function requestProfileDataIfMissing(int $photoId, string $imageType): void

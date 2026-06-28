@@ -489,6 +489,12 @@ final class SwallowtailDataIntegrityCheckService
             return 'skipped';
         }
 
+        if ($imageType === 'final' && $this->assetService->finalMatchesOriginalProfile($photo)) {
+            $asset = $this->assetService->assetForPhotoWithFinalFallback($photo, 'final');
+
+            return $asset === null ? 'skipped' : 'already_fresh';
+        }
+
         $asset = $this->assetService->assetForPhoto($photo, $imageType);
         if ($asset !== null && $this->assetService->isFreshForSignature($asset, $profileSignature)) {
             return 'already_fresh';

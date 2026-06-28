@@ -403,6 +403,34 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         UNIQUE (photo_id, image_type)
     )");
 
+    InterfaceDB::execute("CREATE TABLE photo_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        photo_id INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0,
+        type TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        value TEXT NULL,
+        value_type TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (photo_id, type, `key`, revision)
+    )");
+
+    InterfaceDB::execute("CREATE TABLE internal_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        image_type TEXT NOT NULL,
+        profile_name TEXT NOT NULL,
+        `order` INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        type TEXT NOT NULL,
+        `key` TEXT NOT NULL,
+        value TEXT NULL,
+        value_type TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (image_type, profile_name, type, `key`)
+    )");
+
     InterfaceDB::execute("CREATE TABLE photo_audit (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
@@ -795,5 +823,78 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
     $harness->assertSame($finalAbsolute, (string)$viewerFinal['path']);
     $harness->assertSame('final', (string)$viewerFinal['image_type']);
     $harness->assertSame(null, $denied);
+});
+
+$harness->check(SwallowtailPhotoUiService::class, 'resolves final downloads to original asset when profiles match', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+    $sha256 = str_repeat('f', 64);
+    $storage = new SwallowtailStorageService();
+    $originalAbsolute = $storage->imagePath($baseLocation, $sha256, 'original');
+    $storage->ensureDirectoryForPath($originalAbsolute);
+    file_put_contents($originalAbsolute, "\xff\xd8\xff\xd9", LOCK_EX);
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            uploaded_by_user_id,
+            uploaded_via,
+            upload_state,
+            conversion_state
+        ) VALUES (
+            'fallback.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            902,
+            'web',
+            'uploaded',
+            'ready'
+        )",
+        [
+            'sha256' => $sha256,
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+    $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'fallback.CR2'");
+    swallowtail_ui_record_asset($photoId, 'original', $originalAbsolute, str_repeat('a', 64));
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+            (:photo_id_status, 0, 'swallowtail', 'status', 'processed', 'string'),
+            (:photo_id_version, 0, 'Version', 'AppVersion', '5.12', 'float')",
+        [
+            'photo_id_status' => $photoId,
+            'photo_id_version' => $photoId,
+        ]
+    );
+
+    $library = new SwallowtailPhotoLibraryService();
+    $event = $library->createEvent('Final Fallback Asset Gallery');
+    $eventId = (int)($event['id'] ?? 0);
+    $library->assignPhotoToEvent($photoId, $eventId);
+    $library->grantEventPermission($eventId, 903, [
+        'can_view' => true,
+        'can_download_single_jpeg' => true,
+    ]);
+
+    $service = new SwallowtailPhotoUiService();
+    $asset = $service->photoAsset($photoId, 903, 'final');
+    $details = $service->photoDetails($photoId, 903);
+
+    $harness->assertTrue(is_array($asset));
+    $harness->assertSame($originalAbsolute, (string)$asset['path']);
+    $harness->assertSame('final', (string)$asset['image_type']);
+    $harness->assertSame('original', (string)$asset['source_image_type']);
+    $harness->assertSame('original', (string)$asset['effective_image_type']);
+    $harness->assertSame(true, (bool)($asset['final_equivalent_original'] ?? false));
+    $harness->assertTrue(str_ends_with((string)$asset['filename'], '_final.jpg'));
+    $harness->assertTrue(is_array($details));
+    $harness->assertSame(true, (bool)($details['final_ready'] ?? false));
 });
 

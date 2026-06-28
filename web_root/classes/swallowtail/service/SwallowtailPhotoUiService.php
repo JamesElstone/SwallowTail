@@ -173,7 +173,9 @@ final class SwallowtailPhotoUiService
             return null;
         }
 
-        $info = $this->assetService->assetForPhoto($photo, $type);
+        $info = $type === 'final'
+            ? $this->assetService->assetForPhotoWithFinalFallback($photo, $type)
+            : $this->assetService->assetForPhoto($photo, $type);
         if ($info === null) {
             return null;
         }
@@ -181,7 +183,10 @@ final class SwallowtailPhotoUiService
         return [
             'path' => (string)$info['absolute_path'],
             'content_type' => 'image/jpeg',
-            'image_type' => (string)$info['image_type'],
+            'image_type' => $type,
+            'source_image_type' => (string)($info['image_type'] ?? $type),
+            'effective_image_type' => (string)($info['effective_image_type'] ?? ($info['image_type'] ?? $type)),
+            'final_equivalent_original' => !empty($info['final_equivalent_original']),
             'filename' => $this->assetFilename((string)($photo['original_filename'] ?? 'photo'), $type),
             'bytes' => (int)$info['bytes'],
             'sha256' => (string)$info['sha256'],
@@ -420,7 +425,7 @@ final class SwallowtailPhotoUiService
         $row['thumbnail_ready'] = $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
         $row['original_ready'] = $this->assetService->assetForPhoto($row, 'original') !== null;
         $row['embedded_ready'] = $this->assetService->assetForPhoto($row, 'embedded') !== null;
-        $row['final_ready'] = $this->assetService->assetForPhoto($row, 'final') !== null;
+        $row['final_ready'] = $this->assetService->assetForPhotoWithFinalFallback($row, 'final') !== null;
         $row['jpeg_ready'] = $row['final_ready'];
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
 

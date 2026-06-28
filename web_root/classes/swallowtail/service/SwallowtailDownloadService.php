@@ -183,9 +183,13 @@ final class SwallowtailDownloadService
                 continue;
             }
 
-            $info = in_array($imageType, ['source', 'final_profile'], true)
-                ? $this->localStoredFileInfo($row, $imageType)
-                : $this->assetService->assetForPhoto($row, $imageType);
+            if ($imageType === 'final') {
+                $info = $this->assetService->assetForPhotoWithFinalFallback($row, $imageType);
+            } else {
+                $info = in_array($imageType, ['source', 'final_profile'], true)
+                    ? $this->localStoredFileInfo($row, $imageType)
+                    : $this->assetService->assetForPhoto($row, $imageType);
+            }
             if ($info === null) {
                 continue;
             }

@@ -119,6 +119,22 @@ final class SwallowtailPreviewProfileService
         $settings = $this->normaliseSettings($payload, $dimensions['width'], $dimensions['height']);
         $this->profileDataService->recordChangedRows($photoId, $this->profileRowsForSettings($settings));
         $profileSignature = $this->combinedProfileService->profileSignature($photoId, $imageType);
+
+        if ($imageType === 'final' && $this->assetService->finalMatchesOriginalProfile($photo)) {
+            $asset = $this->assetService->assetForPhotoWithFinalFallback($photo, 'final');
+
+            return [
+                'success' => true,
+                'job_id' => 0,
+                'settings' => $settings,
+                'final_url' => $asset === null ? '' : $this->previewUrl($photoId, $asset),
+                'final_ready' => $asset !== null,
+                'final_status' => $asset === null ? 'pending' : 'loaded',
+                'final_equivalent_original' => $asset !== null,
+                'status_url' => $this->statusUrl($photoId, 0, 'final'),
+            ];
+        }
+
         $profilePath = $this->writeProfile($photo, $imageType);
 
         $jobId = $imageType === 'final'
@@ -216,23 +232,30 @@ final class SwallowtailPreviewProfileService
         if ($canViewFinal && $baselineReady) {
             $finalProfileSignature = $this->combinedProfileService->profileSignature($photoId, 'final');
         }
-        $job = $canViewFinal
+        $finalEquivalentOriginal = $canViewFinal
+            && $baselineReady
+            && $this->assetService->finalMatchesOriginalProfile($photo);
+        $job = $canViewFinal && !$finalEquivalentOriginal
             ? $this->activeFinalJob($photoId, $baselineReady ? $finalProfileSignature : '')
             : null;
-        $displayAsset = $this->pictureViewerDisplayAsset($photo, $userId);
+        $displayAsset = $this->pictureViewerDisplayAsset($photo, $userId, $finalEquivalentOriginal);
         $displayType = is_array($displayAsset) ? (string)($displayAsset['image_type'] ?? '') : '';
-        $finalFresh = $displayType === 'final'
+        $finalFresh = $finalEquivalentOriginal
+            ? is_array($displayAsset)
+                && !empty($displayAsset['final_equivalent_original'])
+            : $displayType === 'final'
             && $job === null
             && $baselineReady
             && $finalProfileSignature !== ''
             && $this->assetService->isFreshForSignature($displayAsset, $finalProfileSignature);
+        $finalReady = $finalFresh && ($finalEquivalentOriginal || $displayType === 'final');
         $state = [
             'success' => true,
             'photo_id' => $photoId,
             'display_type' => $displayType,
             'display_url' => is_array($displayAsset) ? $this->previewUrl($photoId, $displayAsset) : '',
-            'final_ready' => $displayType === 'final' && $finalFresh,
-            'final_status' => ($displayType === 'final' && $finalFresh) || !$canViewFinal ? 'loaded' : 'queued',
+            'final_ready' => $finalReady,
+            'final_status' => $finalReady || !$canViewFinal ? 'loaded' : 'queued',
             'state_url' => $this->pictureViewerStateUrl($photoId),
         ];
 
@@ -241,6 +264,10 @@ final class SwallowtailPreviewProfileService
         }
 
         if (!$baselineReady) {
+            return $state;
+        }
+
+        if ($finalEquivalentOriginal) {
             return $state;
         }
 
@@ -307,7 +334,9 @@ final class SwallowtailPreviewProfileService
             ];
         }
 
-        $asset = $this->assetService->assetForPhoto($photo, $imageType);
+        $asset = $imageType === 'final'
+            ? $this->assetService->assetForPhotoWithFinalFallback($photo, $imageType)
+            : $this->assetService->assetForPhoto($photo, $imageType);
         if ($asset === null) {
             (new SwallowtailPhotoAssetNotificationService())->notifyPhotoAsset(
                 $photo,
@@ -514,11 +543,13 @@ final class SwallowtailPreviewProfileService
         return null;
     }
 
-    private function pictureViewerDisplayAsset(array $photo, int $userId): ?array
+    private function pictureViewerDisplayAsset(array $photo, int $userId, bool $useFinalFallback = false): ?array
     {
         $photoId = max(0, (int)($photo['id'] ?? 0));
         foreach (['final', 'preview', 'embedded'] as $type) {
-            $asset = $this->assetService->assetForPhoto($photo, $type);
+            $asset = $useFinalFallback && $type === 'final'
+                ? $this->assetService->assetForPhotoWithFinalFallback($photo, $type)
+                : $this->assetService->assetForPhoto($photo, $type);
             if ($asset !== null && $this->photoUiService->userCanViewImageType($photoId, $userId, $type)) {
                 return $asset;
             }

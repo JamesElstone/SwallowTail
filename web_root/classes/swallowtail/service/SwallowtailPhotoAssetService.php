@@ -18,6 +18,7 @@ final class SwallowtailPhotoAssetService
 
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
+        private readonly SwallowtailCombinedProfileService $combinedProfileService = new SwallowtailCombinedProfileService(),
     ) {
     }
 
@@ -65,6 +66,43 @@ final class SwallowtailPhotoAssetService
         }
 
         return $row;
+    }
+
+    public function assetForPhotoWithFinalFallback(array $photo, string $imageType, bool $requireReadableFile = true): ?array
+    {
+        $imageType = $this->normaliseImageType($imageType);
+        if ($imageType !== 'final') {
+            return $this->assetForPhoto($photo, $imageType, $requireReadableFile);
+        }
+
+        if ($this->finalMatchesOriginalProfile($photo)) {
+            $asset = $this->assetForPhoto($photo, 'original', $requireReadableFile);
+            if ($asset !== null) {
+                $asset['requested_image_type'] = 'final';
+                $asset['effective_image_type'] = 'original';
+                $asset['final_equivalent_original'] = true;
+
+                return $asset;
+            }
+        }
+
+        $asset = $this->assetForPhoto($photo, 'final', $requireReadableFile);
+        if ($asset !== null) {
+            $asset['requested_image_type'] = 'final';
+            $asset['effective_image_type'] = 'final';
+            $asset['final_equivalent_original'] = false;
+        }
+
+        return $asset;
+    }
+
+    public function finalMatchesOriginalProfile(array $photo): bool
+    {
+        $photoId = max(0, (int)($photo['id'] ?? 0));
+
+        return $photoId > 0
+            && !$this->hasEditedProfileRevisions($photoId)
+            && $this->combinedProfileService->profileSignaturesMatch($photoId, 'original', 'final');
     }
 
     public function assetForPhotoId(int $photoId, string $imageType, bool $requireReadableFile = true): ?array
@@ -117,5 +155,22 @@ final class SwallowtailPhotoAssetService
         $value = strtolower(trim($value));
 
         return preg_match('/^[a-f0-9]{64}$/', $value) === 1 ? $value : '';
+    }
+
+    private function hasEditedProfileRevisions(int $photoId): bool
+    {
+        if ($photoId <= 0 || !InterfaceDB::tableExists('photo_profile_data')) {
+            return false;
+        }
+
+        return (bool)InterfaceDB::fetchColumn(
+            "SELECT 1
+             FROM photo_profile_data
+             WHERE photo_id = :photo_id
+               AND type <> 'swallowtail'
+               AND revision > 0
+             LIMIT 1",
+            ['photo_id' => $photoId]
+        );
     }
 }
