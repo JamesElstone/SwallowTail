@@ -953,16 +953,14 @@
   gap: 20px;
   align-items: stretch;
   min-width: 0;
-  min-height: clamp(360px, 58vh, 720px);
 }
 
 .rawtheapee-profile-controls {
   display: grid;
   align-content: start;
   gap: 24px;
-  flex: 0 1 42%;
+  flex: 1 1 0;
   min-width: 0;
-  max-width: 520px;
 }
 
 .rawtheapee-profile-form {
@@ -971,6 +969,12 @@
 
 .rawtheapee-profile-form .input-action-row {
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.rawtheapee-profile-form .input-action-row select {
+  flex: 1 1 220px;
+  min-width: 0;
 }
 
 .rawtheapee-profile-details {
@@ -1003,23 +1007,27 @@
 }
 
 .rawtheapee-profile-preview {
-  display: flex;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  height: 100%;
+  position: relative;
+  overflow: hidden;
 }
 
 .rawtheapee-profile-preview > .panel-soft {
-  align-self: flex-start;
-  margin-bottom: 0;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  min-height: 0;
+  text-align: center;
 }
 
 .rawtheapee-profile-preview-frame {
   display: flex;
-  flex: 1 1 auto;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   min-width: 0;
   min-height: 0;
   margin: 0;
@@ -1056,12 +1064,9 @@
   min-height: 0;
 }
 
-.card.card-maximized .rawtheapee-profile-image-shell {
-  height: 100%;
-}
-
-.card.card-maximized .rawtheapee-profile-image {
-  max-height: 100%;
+.card.card-maximized .rawtheapee-profile-controls {
+  min-height: 0;
+  overflow: auto;
 }
 
 @media (max-width: 720px) {
@@ -1072,12 +1077,16 @@
 
   .rawtheapee-profile-controls {
     flex-basis: auto;
-    max-width: none;
   }
 
   .rawtheapee-profile-preview {
     flex-basis: auto;
     min-height: 280px;
+  }
+
+  .card.card-maximized .rawtheapee-profile-preview {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .rawtheapee-profile-details div {
