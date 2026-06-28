@@ -194,6 +194,8 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
     {
         $jobId = trim((string)($sample['job_id'] ?? ''));
         $filename = $photo !== null ? (string)($photo['original_filename'] ?? '') : '';
+        $photoId = $photo !== null ? max(0, (int)($photo['id'] ?? 0)) : 0;
+        $checksum = $photo !== null ? strtolower(trim((string)($photo['original_sha256'] ?? ''))) : '';
         $statusImage = $this->statusImage($status);
 
         return '<section class="panel-soft rawtheapee-profile-status-panel">
@@ -211,6 +213,14 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
                     <div>
                         <dt>Original Filename</dt>
                         <dd>' . HelperFramework::escape($filename !== '' ? $filename : 'none') . '</dd>
+                    </div>
+                    <div>
+                        <dt>Checksum</dt>
+                        <dd>' . HelperFramework::escape($checksum !== '' ? $checksum : 'none') . '</dd>
+                    </div>
+                    <div>
+                        <dt>Photo ID</dt>
+                        <dd>' . HelperFramework::escape($photoId > 0 ? (string)$photoId : 'none') . '</dd>
                     </div>
                     <div>
                         <dt>Profile Applied</dt>
