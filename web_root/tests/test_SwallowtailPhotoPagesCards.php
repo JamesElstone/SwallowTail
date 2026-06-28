@@ -1072,6 +1072,8 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
         'original_filename' => 'IMG_0042.CR2',
         'conversion_state' => 'ready',
         'preview_ready' => true,
+        'original_ready' => true,
+        'original_asset_sha256' => str_repeat('a', 64),
         'effective_can_edit' => true,
         'effective_can_download_single_jpeg' => true,
     ]);
@@ -1085,6 +1087,7 @@ $harness->check(_gallery::class, 'browse gallery previews link to view and edit 
     $harness->assertTrue(str_contains($html, 'gallery-download-link'));
     $harness->assertTrue(str_contains($html, 'gallery-event-select'));
     $harness->assertTrue(str_contains($html, '/api/photo-download.php?kind=photo&amp;photo_id=42'));
+    $harness->assertTrue(str_contains($html, 'data-gallery-viewer-prefetch-url="/api/photo-imaging.php?photo_id=42&amp;type=original&amp;v=' . str_repeat('a', 64) . '"'));
     $harness->assertTrue(!str_contains($html, '>Ready<'));
 });
 
@@ -1102,6 +1105,7 @@ $harness->check(_gallery::class, 'browse gallery hides download link without sin
     ]);
 
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
+    $harness->assertTrue(!str_contains($html, 'data-gallery-viewer-prefetch-url'));
 });
 
 $harness->check(_gallery::class, 'browse gallery hides download link until conversion is complete', function () use ($harness): void {
@@ -1114,11 +1118,14 @@ $harness->check(_gallery::class, 'browse gallery hides download link until conve
         'original_filename' => 'IMG_0042.CR2',
         'conversion_state' => 'processing',
         'preview_ready' => true,
+        'original_ready' => true,
+        'original_asset_sha256' => str_repeat('b', 64),
         'effective_can_download_single_jpeg' => true,
     ]);
 
     $harness->assertTrue(str_contains($html, 'gallery-status-processing'));
     $harness->assertTrue(!str_contains($html, 'gallery-download-link'));
+    $harness->assertTrue(!str_contains($html, 'data-gallery-viewer-prefetch-url'));
 });
 
 $harness->check(_gallery::class, 'browse gallery hides edit link without edit permission', function () use ($harness): void {
@@ -1476,6 +1483,9 @@ $harness->check(_gallery::class, 'browse gallery event assignment markup is hidd
     $harness->assertTrue(str_contains($js, 'galleryEventCreateForm'));
     $harness->assertTrue(str_contains($js, 'is-assigning-events'));
     $harness->assertTrue(str_contains($js, 'has-selected-event'));
+    $harness->assertTrue(str_contains($js, 'data-gallery-viewer-prefetch-url'));
+    $harness->assertTrue(str_contains($js, 'prefetchGalleryViewerImageFromEvent'));
+    $harness->assertTrue(str_contains($js, 'void poll(0);'));
     $harness->assertTrue(str_contains($action, "['event.permissions', 'browse.gallery']"));
 });
 

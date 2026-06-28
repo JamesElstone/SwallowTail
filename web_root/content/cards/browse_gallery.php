@@ -115,6 +115,10 @@ final class _browse_galleryCard extends CardBaseFramework
         $downloadUrl = '/api/photo-download.php?kind=photo&photo_id=' . rawurlencode((string)$photoId);
         $previewType = $this->galleryPreviewType($photo);
         $status = $this->statusIndicatorState((string)($photo['conversion_state'] ?? 'pending'));
+        $viewerPrefetchUrl = $this->galleryViewerPrefetchUrl($photo, $status);
+        $viewerPrefetchAttribute = $viewerPrefetchUrl !== ''
+            ? ' data-gallery-viewer-prefetch-url="' . HelperFramework::escape($viewerPrefetchUrl) . '"'
+            : '';
         $needsRefresh = $this->photoNeedsRefresh($photo);
         $pendingAttribute = $needsRefresh ? ' data-gallery-photo-pending="1"' : '';
         $statusType = $needsRefresh ? $this->galleryAssetScanType($photo) : null;
@@ -144,19 +148,39 @@ final class _browse_galleryCard extends CardBaseFramework
 
         return '<article class="gallery-tile" data-gallery-photo-id="' . HelperFramework::escape((string)$photoId) . '"' . $pendingAttribute . $statusUrlAttribute . '>
             <div class="gallery-thumb-shell">
-                <a class="gallery-view-link gallery-thumb-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
+                <a class="gallery-view-link gallery-thumb-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '"' . $viewerPrefetchAttribute . '>
                     <span class="gallery-thumb">' . $preview . $statusIndicator . '</span>
                 </a>
                 ' . $eventCheckbox . '
                 ' . $downloadLink . '
                 ' . $editLink . '
             </div>
-            <a class="gallery-view-link gallery-meta-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '">
+            <a class="gallery-view-link gallery-meta-link" href="' . HelperFramework::escape($viewerUrl) . '" aria-label="View ' . HelperFramework::escape($filename) . '"' . $viewerPrefetchAttribute . '>
                 <span class="gallery-meta">
                     <strong>' . HelperFramework::escape($filename) . '</strong>
                 </span>
             </a>
         </article>';
+    }
+
+    private function galleryViewerPrefetchUrl(array $photo, string $status): string
+    {
+        $photoId = (int)($photo['id'] ?? 0);
+        $sha256 = strtolower(trim((string)($photo['original_asset_sha256'] ?? '')));
+        if (
+            $photoId <= 0
+            || !$this->canShowDownloadLink($photo, $status)
+            || empty($photo['original_ready'])
+            || preg_match('/^[a-f0-9]{64}$/', $sha256) !== 1
+        ) {
+            return '';
+        }
+
+        return '/api/photo-imaging.php?' . http_build_query([
+            'photo_id' => $photoId,
+            'type' => 'original',
+            'v' => $sha256,
+        ]);
     }
 
     private function galleryPreviewType(array $photo): ?string

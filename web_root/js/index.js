@@ -21,6 +21,7 @@
     const cardMaximizedStorageKey = 'card:maximized';
     const galleryAutoRefreshIntervalMs = 5000;
     const galleryCardRefreshIntervalMs = 30000;
+    const galleryViewerPrefetchImages = new Map();
     let afEphemeralDeviceId = null;
     let activeGalleryEventCreateButton = null;
     const ajaxNonceBootstrapId = 'ajax-security-bootstrap';
@@ -2702,7 +2703,11 @@
                 }
             });
             if (viewer.dataset.pictureViewerStatus !== 'loaded') {
-                pollTimer = window.setTimeout(() => poll(0), 1000);
+                if (imageNode instanceof HTMLImageElement && String(imageNode.getAttribute('src') || '').trim() !== '') {
+                    pollTimer = window.setTimeout(() => poll(0), 1000);
+                } else {
+                    void poll(0);
+                }
             }
 
             window.addEventListener('pagehide', () => {
@@ -2711,6 +2716,36 @@
                 }
             }, { once: true });
         });
+    }
+
+    function prefetchGalleryViewerImage(link) {
+        if (!(link instanceof HTMLAnchorElement)) {
+            return;
+        }
+
+        const url = String(link.dataset.galleryViewerPrefetchUrl || '').trim();
+        if (url === '' || link.dataset.galleryViewerPrefetchStarted === '1' || galleryViewerPrefetchImages.has(url)) {
+            return;
+        }
+
+        link.dataset.galleryViewerPrefetchStarted = '1';
+        const image = new Image();
+        image.decoding = 'async';
+        if ('fetchPriority' in image) {
+            image.fetchPriority = 'high';
+        }
+        image.src = url;
+        galleryViewerPrefetchImages.set(url, image);
+    }
+
+    function prefetchGalleryViewerImageFromEvent(event) {
+        const link = event.target instanceof Element
+            ? event.target.closest('[data-gallery-viewer-prefetch-url]')
+            : null;
+
+        if (link instanceof HTMLAnchorElement) {
+            prefetchGalleryViewerImage(link);
+        }
     }
 
     function initialisePictureEditors(root = document) {
@@ -4878,7 +4913,14 @@
         }
     });
 
+    document.addEventListener('pointerover', prefetchGalleryViewerImageFromEvent);
+    document.addEventListener('pointerdown', prefetchGalleryViewerImageFromEvent);
+    document.addEventListener('focusin', prefetchGalleryViewerImageFromEvent);
+    document.addEventListener('touchstart', prefetchGalleryViewerImageFromEvent, { passive: true });
+
     document.addEventListener('click', async (event) => {
+        prefetchGalleryViewerImageFromEvent(event);
+
         const cardSizeToggle = event.target instanceof Element ? event.target.closest('[data-card-size-toggle]') : null;
         if (cardSizeToggle instanceof HTMLButtonElement) {
             event.preventDefault();
