@@ -565,6 +565,7 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     $harness->assertSame(7, (int)($jobs['total'] ?? 0));
     $harness->assertSame(2, (int)($jobs['outstanding'] ?? 0));
     $harness->assertSame(4, (int)($jobs['completed'] ?? 0));
+    $harness->assertSame(1, (int)($jobs['obsolete'] ?? 0));
     $harness->assertSame('embedded', (string)($durations[0]['image_type'] ?? ''));
     $harness->assertSame(2, (int)($durations[0]['completed_jobs'] ?? 0));
     $harness->assertSame(1.0, (float)($durations[0]['average_seconds'] ?? 0));
@@ -582,6 +583,7 @@ $harness->check(_statisticsCard::class, 'renders dashboard statistics totals and
     $harness->assertTrue(str_contains($html, 'Total Jobs'));
     $harness->assertTrue(str_contains($html, 'Jobs Outstanding'));
     $harness->assertTrue(str_contains($html, 'Jobs Completed'));
+    $harness->assertTrue(str_contains($html, 'Jobs Obsolete'));
     $harness->assertTrue(str_contains($html, 'Time Taken per Job by Image Type'));
     $harness->assertTrue(str_contains($html, '<table>'));
     $harness->assertTrue(str_contains($html, '<th>Type</th>'));

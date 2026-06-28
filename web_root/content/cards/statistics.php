@@ -52,6 +52,7 @@ final class _statisticsCard extends CardBaseFramework
                 ' . $this->metric('Total Jobs', (int)($jobs['total'] ?? 0), 'All conversion jobs') . '
                 ' . $this->metric('Jobs Outstanding', (int)($jobs['outstanding'] ?? 0), 'Queued or processing') . '
                 ' . $this->metric('Jobs Completed', (int)($jobs['completed'] ?? 0), 'Succeeded jobs') . '
+                ' . $this->metric('Jobs Obsolete', (int)($jobs['obsolete'] ?? 0), 'Superseded jobs') . '
             </dl>
             <div class="statistics-duration">
                 <h3>Time Taken per Job by Image Type</h3>

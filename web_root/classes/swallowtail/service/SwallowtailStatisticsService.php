@@ -45,6 +45,7 @@ final class SwallowtailStatisticsService
             'total' => 0,
             'outstanding' => 0,
             'completed' => 0,
+            'obsolete' => 0,
         ];
 
         if (!InterfaceDB::tableExists('photo_conversion_jobs')) {
@@ -65,6 +66,11 @@ final class SwallowtailStatisticsService
             "SELECT COUNT(*)
              FROM photo_conversion_jobs
              WHERE status = 'succeeded'"
+        ));
+        $counts['obsolete'] = max(0, (int)InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+             FROM photo_conversion_jobs
+             WHERE status = 'obsolete'"
         ));
 
         return $counts;
