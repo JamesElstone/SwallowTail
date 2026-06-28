@@ -73,7 +73,11 @@ final class _jobsCard extends CardBaseFramework
             ->column(
                 'action',
                 'Action',
-                html: fn(array $row): string => $this->reprocessButtonHtml($context, (string)($row['job_key'] ?? '')),
+                html: fn(array $row): string => $this->reprocessButtonHtml(
+                    $context,
+                    (string)($row['job_key'] ?? ''),
+                    (int)($row['failed'] ?? 0) > 0
+                ),
                 exportable: false,
                 cellClass: 'cell-fit'
             );
@@ -94,7 +98,11 @@ final class _jobsCard extends CardBaseFramework
             ->column(
                 'action',
                 'Action',
-                html: fn(array $row): string => $this->reprocessButtonHtml($context, (string)($row['job_key'] ?? '')),
+                html: fn(array $row): string => $this->reprocessButtonHtml(
+                    $context,
+                    (string)($row['job_key'] ?? ''),
+                    (int)($row['failed'] ?? 0) > 0
+                ),
                 exportable: false,
                 cellClass: 'cell-fit'
             );
@@ -105,19 +113,21 @@ final class _jobsCard extends CardBaseFramework
         return HelperFramework::escape(number_format(max(0, (int)($row[$key] ?? 0))));
     }
 
-    private function reprocessButtonHtml(array $context, string $jobKey): string
+    private function reprocessButtonHtml(array $context, string $jobKey, bool $enabled): string
     {
         $jobKey = strtolower(trim($jobKey));
         if (!in_array($jobKey, ['conversion', 'migration', 'metadata', 'profile'], true)) {
             return '';
         }
 
+        $disabled = $enabled ? '' : ' disabled';
+
         return '<form method="post" action="?page=settings" data-ajax="true">
             <input type="hidden" name="card_action" value="Jobs">
             <input type="hidden" name="jobs_action" value="reprocess_exceptions">
             <input type="hidden" name="job_type" value="' . HelperFramework::escape($jobKey) . '">
             <input type="hidden" name="csrf_token" value="' . HelperFramework::escape((string)($context['page']['csrf_token'] ?? '')) . '">
-            <button class="button primary" type="submit">Reprocess Exceptions</button>
+            <button class="button primary" type="submit"' . $disabled . '>Reprocess Exceptions</button>
         </form>';
     }
 }

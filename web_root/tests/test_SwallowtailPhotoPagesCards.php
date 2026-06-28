@@ -607,7 +607,23 @@ $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess f
     $harness->assertTrue(str_contains($html, 'name="job_type" value="conversion"'));
     $harness->assertTrue(str_contains($html, 'name="csrf_token" value="test-csrf"'));
     $harness->assertTrue(str_contains($html, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
+    $harness->assertSame(0, substr_count($html, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
     $harness->assertTrue(!str_contains($html, 'name="cards[]"'));
+
+    $service = new SwallowtailJobStatisticsService();
+    foreach (['conversion', 'migration', 'metadata', 'profile'] as $jobType) {
+        $service->reprocessExceptions($jobType);
+    }
+
+    $disabledHtml = (new _jobsCard())->render([
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['jobs'],
+        ],
+    ]);
+
+    $harness->assertSame(4, substr_count($disabledHtml, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
+    $harness->assertSame(0, substr_count($disabledHtml, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
 });
 
 $harness->check(SwallowtailJobStatisticsService::class, 'reprocesses only failed exception rows', function () use ($harness, $seedJobStatisticsTables): void {
