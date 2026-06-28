@@ -1677,6 +1677,22 @@ $harness->check(_event_permissionsCard::class, 'event permissions card uses sear
     $harness->assertTrue(str_contains($serviceSource, 'LIMIT " . (string)$limit'));
 });
 
+$harness->check(_event_permissionsCard::class, 'event permissions card exposes delete grant action', function () use ($harness): void {
+    $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'event_permissions.php');
+    $actionSource = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'actions' . DIRECTORY_SEPARATOR . 'EventPermissionsAction.php');
+    $serviceSource = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'classes' . DIRECTORY_SEPARATOR . 'swallowtail' . DIRECTORY_SEPARATOR . 'service' . DIRECTORY_SEPARATOR . 'SwallowtailEventManagementService.php');
+
+    if (!is_string($source) || !is_string($actionSource) || !is_string($serviceSource)) {
+        throw new RuntimeException('Unable to read event permission source.');
+    }
+
+    $harness->assertTrue(str_contains($source, "hiddenFields(\$context, \$csrfToken, 'delete_grant'"));
+    $harness->assertTrue(str_contains($source, '<button class="button button-inline danger" type="submit">Delete</button>'));
+    $harness->assertTrue(str_contains($actionSource, "'delete_grant' =>"));
+    $harness->assertTrue(str_contains($serviceSource, 'deletePermission'));
+    $harness->assertTrue(str_contains($serviceSource, 'revokeEventGranteePermission'));
+});
+
 $harness->check(_event_permissionsCard::class, 'event role permissions explain when no roles exist', function () use ($harness): void {
     $card = new _event_permissionsCard();
     $method = new ReflectionMethod($card, 'rolePermissions');

@@ -95,6 +95,11 @@ final class SwallowtailEventManagementService
         $this->setPermission($eventId, 'user', $userId, ['can_view' => true], $grantedByUserId);
     }
 
+    public function deletePermission(int $eventId, string $granteeType, int $granteeId): void
+    {
+        $this->photoLibraryService->revokeEventGranteePermission($eventId, $granteeType, $granteeId);
+    }
+
     public function rolePermissionRows(int $eventId): array
     {
         $roles = $this->roleRepository->listRoles();

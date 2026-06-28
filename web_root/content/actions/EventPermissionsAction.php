@@ -35,6 +35,7 @@ final class EventPermissionsAction implements ActionInterfaceFramework
                 'create_event' => $this->createEvent($request, $userId),
                 'select_event' => $this->selectEvent($request),
                 'set_grant' => $this->setGrant($request, $userId),
+                'delete_grant' => $this->deleteGrant($request),
                 'search_users' => $this->searchUsers($request),
                 'add_user' => $this->addUser($request, $userId),
                 'assign_photos' => $this->assignPhotos($request, $userId),
@@ -69,6 +70,18 @@ final class EventPermissionsAction implements ActionInterfaceFramework
         );
 
         return $this->success('Event permissions updated.', ['event_id' => $eventId]);
+    }
+
+    private function deleteGrant(RequestFramework $request): ActionResultFramework
+    {
+        $eventId = (int)$request->input('event_id', 0);
+        $this->eventService->deletePermission(
+            $eventId,
+            (string)$request->input('grantee_type', ''),
+            (int)$request->input('grantee_id', 0)
+        );
+
+        return $this->success('Event permission deleted.', ['event_id' => $eventId]);
     }
 
     private function searchUsers(RequestFramework $request): ActionResultFramework

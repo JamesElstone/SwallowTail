@@ -983,6 +983,10 @@
   gap: 3px;
 }
 
+.event-permission-update-form {
+  display: contents;
+}
+
 .event-permission-toggles {
   display: flex;
   flex-wrap: wrap;
@@ -999,6 +1003,17 @@
   background: var(--panel-soft);
   font-size: 0.9rem;
   font-weight: 700;
+}
+
+.event-permission-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.event-permission-actions form {
+  margin: 0;
 }
 
 .event-user-picker {

@@ -195,18 +195,32 @@ final class _event_permissionsCard extends CardBaseFramework
             </label>';
         }
 
-        return '<form method="post" action="?page=events" data-ajax="true" class="event-permission-row">
-            ' . $this->hiddenFields($context, $csrfToken, 'set_grant', $eventId) . '
-            <input type="hidden" name="grantee_type" value="' . HelperFramework::escape($granteeType) . '">
-            <input type="hidden" name="grantee_id" value="' . HelperFramework::escape((string)$granteeId) . '">
-            <div class="event-permission-row-head">
-                <strong>' . HelperFramework::escape($title) . '</strong>
-                ' . (trim($meta) !== '' ? '<span class="helper">' . HelperFramework::escape($meta) . '</span>' : '') . '
-                ' . ($inherited !== '' ? '<span class="helper">' . HelperFramework::escape($inherited) . '</span>' : '') . '
+        $escapedGranteeType = HelperFramework::escape($granteeType);
+        $escapedGranteeId = HelperFramework::escape((string)$granteeId);
+        $updateFormId = 'event-permission-update-' . $escapedGranteeType . '-' . $escapedGranteeId;
+
+        return '<div class="event-permission-row">
+            <form id="' . $updateFormId . '" method="post" action="?page=events" data-ajax="true" class="event-permission-update-form">
+                ' . $this->hiddenFields($context, $csrfToken, 'set_grant', $eventId) . '
+                <input type="hidden" name="grantee_type" value="' . $escapedGranteeType . '">
+                <input type="hidden" name="grantee_id" value="' . $escapedGranteeId . '">
+                <div class="event-permission-row-head">
+                    <strong>' . HelperFramework::escape($title) . '</strong>
+                    ' . (trim($meta) !== '' ? '<span class="helper">' . HelperFramework::escape($meta) . '</span>' : '') . '
+                    ' . ($inherited !== '' ? '<span class="helper">' . HelperFramework::escape($inherited) . '</span>' : '') . '
+                </div>
+                <div class="event-permission-toggles">' . $toggles . '</div>
+            </form>
+            <div class="event-permission-actions">
+                <button form="' . $updateFormId . '" class="button button-inline primary" type="submit">Save</button>
+                <form method="post" action="?page=events" data-ajax="true">
+                    ' . $this->hiddenFields($context, $csrfToken, 'delete_grant', $eventId) . '
+                    <input type="hidden" name="grantee_type" value="' . $escapedGranteeType . '">
+                    <input type="hidden" name="grantee_id" value="' . $escapedGranteeId . '">
+                    <button class="button button-inline danger" type="submit">Delete</button>
+                </form>
             </div>
-            <div class="event-permission-toggles">' . $toggles . '</div>
-            <button class="button button-inline primary" type="submit">Save</button>
-        </form>';
+        </div>';
     }
 
     private function userSearchForm(array $context, int $eventId, string $csrfToken, string $search): string
