@@ -257,8 +257,46 @@ $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee profile select subm
     $harness->assertTrue(str_contains($html, 'data-rawtheapee-display-type-field="true"'));
     $harness->assertTrue(str_contains($html, 'Change random Photo'));
     $harness->assertTrue(str_contains($html, 'Refresh Profiles'));
+    $harness->assertTrue(str_contains($html, 'class="form-row rawtheapee-profile-form panel-soft"'));
     $harness->assertTrue(!str_contains($html, 'Show Profile Effect'));
     $harness->assertTrue(!str_contains($html, 'type="submit" name="rawtheapee_profiles_action"'));
+});
+
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee photo search panel renders recall results', function () use ($harness): void {
+    $card = new _rawtheapee_profilesCard();
+    $method = new ReflectionMethod($card, 'photoSearchPanel');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, 7, 12, '/api/photo-imaging.php?photo_id=12&type=preview', 'preview', 'test-csrf', 'IMG', [[
+        'id' => 42,
+        'original_filename' => 'IMG_0042.CR2',
+        'original_sha256' => str_repeat('a', 64),
+    ]], true);
+
+    $harness->assertTrue(str_contains($html, 'class="panel-soft rawtheapee-photo-search-panel"'));
+    $harness->assertTrue(str_contains($html, 'name="rawtheapee_photo_search" value="IMG"'));
+    $harness->assertTrue(str_contains($html, 'name="rawtheapee_profiles_action" value="search_photo"'));
+    $harness->assertTrue(str_contains($html, 'name="rawtheapee_profiles_action" value="select_photo"'));
+    $harness->assertTrue(str_contains($html, 'name="rawtheapee_selected_photo_id" value="42"'));
+    $harness->assertTrue(str_contains($html, 'IMG_0042.CR2'));
+    $harness->assertTrue(str_contains($html, 'ID 42'));
+    $harness->assertTrue(str_contains($html, 'aaaaaaaaaaaa...aaaaaaaa'));
+    $harness->assertTrue(str_contains($html, 'Use Photo'));
+});
+
+$harness->check(_rawtheapee_profilesCard::class, 'rawtheapee details render in a status panel with state image', function () use ($harness): void {
+    $card = new _rawtheapee_profilesCard();
+    $method = new ReflectionMethod($card, 'details');
+    $method->setAccessible(true);
+
+    $readyHtml = (string)$method->invoke($card, 'Ready', ['job_id' => 27329], ['original_filename' => 'IMG_2130.CR2'], 'Auto-Matched curve - iso high', 'rawtheapee');
+    $renderingHtml = (string)$method->invoke($card, 'Rendering', ['job_id' => 27330], ['original_filename' => 'IMG_2131.CR2'], 'Auto-Matched curve - iso high', 'rawtheapee');
+
+    $harness->assertTrue(str_contains($readyHtml, 'class="panel-soft rawtheapee-profile-status-panel"'));
+    $harness->assertTrue(str_contains($readyHtml, 'data-rawtheapee-profile-state-image="true"'));
+    $harness->assertTrue(str_contains($readyHtml, 'src="/swallowtail_butterfly_42x42.png"'));
+    $harness->assertTrue(str_contains($readyHtml, 'IMG_2130.CR2'));
+    $harness->assertTrue(str_contains($renderingHtml, 'src="/swallowtail_256.gif"'));
 });
 
 $harness->check(_rawtheapee_profilesCard::class, 'rawtheapee preview renders selected display url', function () use ($harness): void {

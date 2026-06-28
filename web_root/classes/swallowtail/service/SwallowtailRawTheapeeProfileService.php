@@ -235,6 +235,88 @@ final class SwallowtailRawTheapeeProfileService
         return is_array($row) ? $row : null;
     }
 
+    public function searchAccessibleThumbnailPhotos(int $userId, string $query, int $limit = 10): array
+    {
+        $query = trim($query);
+        if ($userId <= 0 || $query === '') {
+            return [];
+        }
+
+        $limit = max(1, min(25, $limit));
+        $normalisedQuery = strtolower($query);
+        $likeTerm = $this->escapeLikeTerm($normalisedQuery);
+        $queryPhotoId = ctype_digit($query) ? max(0, (int)$query) : 0;
+        $params = [
+            'thumbnail_image_type' => 'thumbnail',
+            'query_exact' => $normalisedQuery,
+            'query_prefix' => $likeTerm . '%',
+            'query_contains' => '%' . $likeTerm . '%',
+        ];
+        $where = "photo.upload_state = 'uploaded'";
+        $roleId = $this->roleIdForUser($userId);
+
+        if ($roleId !== RoleAssignmentService::ADMIN_ROLE_ID) {
+            $params['access_upload_user_id'] = $userId;
+            $params['access_grantee_user_id'] = $userId;
+            $params['access_grantee_role_id'] = $roleId;
+            $where .= "
+                AND (
+                    photo.uploaded_by_user_id = :access_upload_user_id
+                    OR EXISTS (
+                        SELECT 1
+                        FROM event_photos access_event_photo
+                        INNER JOIN event_permissions access_permission
+                            ON access_permission.event_id = access_event_photo.event_id
+                        WHERE access_event_photo.photo_id = photo.id
+                          AND access_permission.can_view = 1
+                          AND (
+                              (access_permission.grantee_type = 'user' AND access_permission.grantee_id = :access_grantee_user_id)
+                              OR
+                              (access_permission.grantee_type = 'role' AND access_permission.grantee_id = :access_grantee_role_id)
+                          )
+                          AND (access_permission.expires_at IS NULL OR access_permission.expires_at > CURRENT_TIMESTAMP)
+                        LIMIT 1
+                    )
+                )";
+        }
+
+        $searchClauses = [
+            "LOWER(photo.original_filename) LIKE :query_contains ESCAPE '!'",
+            "LOWER(photo.original_sha256) LIKE :query_contains ESCAPE '!'",
+        ];
+        $photoIdOrder = '';
+        if ($queryPhotoId > 0) {
+            $params['query_photo_id'] = $queryPhotoId;
+            array_unshift($searchClauses, 'photo.id = :query_photo_id');
+            $photoIdOrder = 'CASE WHEN photo.id = :query_photo_id THEN 0 ELSE 1 END, ';
+        }
+
+        $rows = InterfaceDB::fetchAll(
+            "SELECT photo.*
+             FROM photos photo
+             INNER JOIN photo_image_assets thumbnail_asset
+                ON thumbnail_asset.photo_id = photo.id
+               AND thumbnail_asset.image_type = :thumbnail_image_type
+               AND thumbnail_asset.bytes > 0
+               AND thumbnail_asset.sha256 <> ''
+             WHERE " . $where . "
+               AND (" . implode(' OR ', $searchClauses) . ")
+             ORDER BY " . $photoIdOrder . "
+                CASE WHEN LOWER(photo.original_sha256) = :query_exact THEN 0 ELSE 1 END,
+                CASE WHEN LOWER(photo.original_filename) = :query_exact THEN 0 ELSE 1 END,
+                CASE WHEN LOWER(photo.original_sha256) LIKE :query_prefix ESCAPE '!'
+                       OR LOWER(photo.original_filename) LIKE :query_prefix ESCAPE '!' THEN 0 ELSE 1 END,
+                CASE WHEN LOWER(photo.original_sha256) LIKE :query_contains ESCAPE '!'
+                       OR LOWER(photo.original_filename) LIKE :query_contains ESCAPE '!' THEN 0 ELSE 1 END,
+                photo.created_at DESC,
+                photo.id DESC
+             LIMIT " . (string)$limit,
+            $params
+        );
+
+        return is_array($rows) ? $rows : [];
+    }
+
     public function requestRefresh(): bool
     {
         $queue = trim((string)\Swallowtail\Store\SwallowtailConfigurationStore::get(
@@ -368,5 +450,10 @@ final class SwallowtailRawTheapeeProfileService
     private function randomOrderSql(): string
     {
         return InterfaceDB::driverName() === 'sqlite' ? 'RANDOM()' : 'RAND()';
+    }
+
+    private function escapeLikeTerm(string $term): string
+    {
+        return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term);
     }
 }

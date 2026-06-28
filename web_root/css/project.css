@@ -967,7 +967,22 @@
   padding-bottom: 0;
 }
 
+.rawtheapee-photo-search-panel,
+.rawtheapee-profile-status-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.rawtheapee-photo-search-form {
+  padding-bottom: 0;
+}
+
 .rawtheapee-profile-form .input-action-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.rawtheapee-photo-search-form .input-action-row {
   align-items: flex-start;
   flex-wrap: wrap;
 }
@@ -975,6 +990,64 @@
 .rawtheapee-profile-form .input-action-row select {
   flex: 1 1 100%;
   min-width: 0;
+}
+
+.rawtheapee-photo-search-form .input-action-row input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.rawtheapee-photo-search-results {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rawtheapee-photo-search-result {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.rawtheapee-photo-search-meta {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rawtheapee-photo-search-meta strong,
+.rawtheapee-photo-search-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rawtheapee-photo-search-meta span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.rawtheapee-profile-status-heading {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.rawtheapee-profile-state-image {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
 }
 
 .rawtheapee-profile-details {
@@ -1100,6 +1173,15 @@
 
   .rawtheapee-profile-details dd::before {
     content: "";
+  }
+
+  .rawtheapee-photo-search-result {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .rawtheapee-profile-status-heading {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

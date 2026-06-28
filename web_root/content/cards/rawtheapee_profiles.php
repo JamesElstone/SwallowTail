@@ -54,6 +54,7 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             'photo_id' => max(0, (int)$request->input('rawtheapee_photo_id', (int)($actionContext['photo_id'] ?? $current['photo_id'] ?? 0))),
             'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtheapee_display_url', (string)($actionContext['display_url'] ?? $current['display_url'] ?? ''))),
             'display_type' => $this->normaliseDisplayType((string)$request->input('rawtheapee_display_type', (string)($actionContext['display_type'] ?? $current['display_type'] ?? 'none'))),
+            'photo_search' => $this->normalisePhotoSearch((string)$request->input('rawtheapee_photo_search', (string)($actionContext['photo_search'] ?? $current['photo_search'] ?? ''))),
         ];
 
         $pageContext[$this->key()] = array_replace($current, $requestContext, $actionContext);
@@ -79,10 +80,14 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         $status = (string)($dashboard['status'] ?? $this->statusLabel($sample, $asset, $showPreview));
         $imageShown = $this->imageShownLabel($displayType, $showPreview);
         $statusUrl = (string)($sample['status_url'] ?? $dashboard['status_url'] ?? '');
+        $photoSearch = $this->normalisePhotoSearch((string)($state['photo_search'] ?? ''));
+        $photoSearchResults = (array)($state['photo_search_results'] ?? []);
+        $photoSearchPerformed = !empty($state['photo_search_performed']);
 
         return '<div class="rawtheapee-profile-layout" data-rawtheapee-profile-panel="true" data-rawtheapee-profile-status-url="' . HelperFramework::escape($statusUrl) . '">
             <div class="rawtheapee-profile-controls">
                 ' . $this->controlForm($profiles, $profileId, $photoId, $displayUrl, $displayType, $csrfToken) . '
+                ' . $this->photoSearchPanel($profileId, $photoId, $displayUrl, $displayType, $csrfToken, $photoSearch, $photoSearchResults, $photoSearchPerformed) . '
                 ' . $this->details($status, $sample, $photo, $profileLabel, $imageShown) . '
             </div>
             ' . $this->photoPreview($photoId, $photo, $displayUrl, $displayType, $showPreview) . '
@@ -105,14 +110,10 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
             $options .= '<option value="0" disabled>No RawTheapee profiles found</option>';
         }
 
-        return '<form method="post" action="?page=profiles" data-ajax="true" class="form-row rawtheapee-profile-form">
-            <input type="hidden" name="cards[]" value="rawtheapee_profiles">
-            <input type="hidden" name="card_action" value="RawTheapeeProfiles">
-            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+        return '<form method="post" action="?page=profiles" data-ajax="true" class="form-row rawtheapee-profile-form panel-soft">
+            ' . $this->hiddenFields($profileId, $displayUrl, $displayType, $csrfToken, false) . '
             <input type="hidden" name="rawtheapee_profiles_action" value="test">
             <input type="hidden" name="rawtheapee_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
-            <input type="hidden" name="rawtheapee_display_url" value="' . HelperFramework::escape($displayUrl) . '" data-rawtheapee-display-url-field="true">
-            <input type="hidden" name="rawtheapee_display_type" value="' . HelperFramework::escape($displayType) . '" data-rawtheapee-display-type-field="true">
             <label for="rawtheapee-profile-id">Profile</label>
             <div class="input-action-row">
                 <select id="rawtheapee-profile-id" name="rawtheapee_profile_id">' . $options . '</select>
@@ -122,33 +123,106 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         </form>';
     }
 
+    private function photoSearchPanel(
+        int $profileId,
+        int $photoId,
+        string $displayUrl,
+        string $displayType,
+        string $csrfToken,
+        string $photoSearch,
+        array $results,
+        bool $performed
+    ): string {
+        $resultHtml = '';
+        if ($performed) {
+            if ($photoSearch === '') {
+                $resultHtml = '<p class="helper">Enter a filename, checksum, or photo ID.</p>';
+            } elseif ($results === []) {
+                $resultHtml = '<p class="helper">No accessible photo matched.</p>';
+            } else {
+                $items = '';
+                foreach ($results as $photo) {
+                    $items .= $this->photoSearchResult((array)$photo, $profileId, $displayUrl, $displayType, $csrfToken, $photoSearch);
+                }
+                $resultHtml = '<div class="rawtheapee-photo-search-results">' . $items . '</div>';
+            }
+        }
+
+        return '<section class="panel-soft rawtheapee-photo-search-panel">
+            <form method="post" action="?page=profiles" data-ajax="true" class="form-row rawtheapee-photo-search-form">
+                ' . $this->hiddenFields($profileId, $displayUrl, $displayType, $csrfToken) . '
+                <input type="hidden" name="rawtheapee_profiles_action" value="search_photo">
+                <input type="hidden" name="rawtheapee_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
+                <label for="rawtheapee-photo-search">Recall Photo</label>
+                <div class="input-action-row">
+                    <input id="rawtheapee-photo-search" class="input" type="search" name="rawtheapee_photo_search" value="' . HelperFramework::escape($photoSearch) . '" placeholder="Filename, checksum, or photo ID">
+                    <button class="button button-inline" type="submit" data-processing-text="Searching" data-processing-state="disabled">Search</button>
+                </div>
+            </form>
+            ' . $resultHtml . '
+        </section>';
+    }
+
+    private function photoSearchResult(
+        array $photo,
+        int $profileId,
+        string $displayUrl,
+        string $displayType,
+        string $csrfToken,
+        string $photoSearch
+    ): string {
+        $photoId = max(0, (int)($photo['id'] ?? 0));
+        $filename = trim((string)($photo['original_filename'] ?? ''));
+        $checksum = strtolower(trim((string)($photo['original_sha256'] ?? '')));
+        $shortChecksum = $checksum !== '' ? substr($checksum, 0, 12) . '...' . substr($checksum, -8) : 'none';
+
+        return '<form method="post" action="?page=profiles" data-ajax="true" class="rawtheapee-photo-search-result">
+            ' . $this->hiddenFields($profileId, $displayUrl, $displayType, $csrfToken) . '
+            <input type="hidden" name="rawtheapee_profiles_action" value="select_photo">
+            <input type="hidden" name="rawtheapee_selected_photo_id" value="' . HelperFramework::escape((string)$photoId) . '">
+            <input type="hidden" name="rawtheapee_photo_search" value="' . HelperFramework::escape($photoSearch) . '">
+            <span class="rawtheapee-photo-search-meta">
+                <strong>' . HelperFramework::escape($filename !== '' ? $filename : 'Photo ' . (string)$photoId) . '</strong>
+                <span>ID ' . HelperFramework::escape((string)$photoId) . '</span>
+                <span>' . HelperFramework::escape($shortChecksum) . '</span>
+            </span>
+            <button class="button button-inline" type="submit" data-processing-text="Using" data-processing-state="disabled">Use Photo</button>
+        </form>';
+    }
+
     private function details(string $status, array $sample, ?array $photo, string $profileLabel, string $imageShown): string
     {
         $jobId = trim((string)($sample['job_id'] ?? ''));
         $filename = $photo !== null ? (string)($photo['original_filename'] ?? '') : '';
+        $statusImage = $this->statusImage($status);
 
-        return '<dl class="rawtheapee-profile-details">
-            <div>
-                <dt>Status</dt>
-                <dd data-rawtheapee-profile-status="true">' . HelperFramework::escape($status) . '</dd>
+        return '<section class="panel-soft rawtheapee-profile-status-panel">
+            <div class="rawtheapee-profile-status-heading">
+                <img class="rawtheapee-profile-state-image" data-rawtheapee-profile-state-image="true" data-ready-src="/swallowtail_butterfly_42x42.png" data-busy-src="/swallowtail_256.gif" src="' . HelperFramework::escape($statusImage) . '" alt="" loading="lazy">
+                <dl class="rawtheapee-profile-details">
+                    <div>
+                        <dt>Status</dt>
+                        <dd data-rawtheapee-profile-status="true">' . HelperFramework::escape($status) . '</dd>
+                    </div>
+                    <div>
+                        <dt>Job ID</dt>
+                        <dd>' . HelperFramework::escape($jobId !== '' ? $jobId : 'none') . '</dd>
+                    </div>
+                    <div>
+                        <dt>Original Filename</dt>
+                        <dd>' . HelperFramework::escape($filename !== '' ? $filename : 'none') . '</dd>
+                    </div>
+                    <div>
+                        <dt>Profile Applied</dt>
+                        <dd>' . HelperFramework::escape($profileLabel !== '' ? $profileLabel : 'none') . '</dd>
+                    </div>
+                    <div>
+                        <dt>Image Shown</dt>
+                        <dd data-rawtheapee-profile-image-shown="true">' . HelperFramework::escape($imageShown) . '</dd>
+                    </div>
+                </dl>
             </div>
-            <div>
-                <dt>Job ID</dt>
-                <dd>' . HelperFramework::escape($jobId !== '' ? $jobId : 'none') . '</dd>
-            </div>
-            <div>
-                <dt>Original Filename</dt>
-                <dd>' . HelperFramework::escape($filename !== '' ? $filename : 'none') . '</dd>
-            </div>
-            <div>
-                <dt>Profile Applied</dt>
-                <dd>' . HelperFramework::escape($profileLabel !== '' ? $profileLabel : 'none') . '</dd>
-            </div>
-            <div>
-                <dt>Image Shown</dt>
-                <dd data-rawtheapee-profile-image-shown="true">' . HelperFramework::escape($imageShown) . '</dd>
-            </div>
-        </dl>';
+        </section>';
     }
 
     private function photoPreview(int $photoId, ?array $photo, string $displayUrl, string $displayType, bool $showPreview): string
@@ -225,6 +299,34 @@ final class _rawtheapee_profilesCard extends CardBaseFramework
         $displayType = strtolower(trim($displayType));
 
         return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
+    }
+
+    private function normalisePhotoSearch(string $query): string
+    {
+        return substr(trim($query), 0, 255);
+    }
+
+    private function hiddenFields(int $profileId, string $displayUrl, string $displayType, string $csrfToken, bool $includeProfileId = true): string
+    {
+        $profileField = $includeProfileId
+            ? '<input type="hidden" name="rawtheapee_profile_id" value="' . HelperFramework::escape((string)$profileId) . '">'
+            : '';
+
+        return '<input type="hidden" name="cards[]" value="rawtheapee_profiles">
+            <input type="hidden" name="card_action" value="RawTheapeeProfiles">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+            ' . $profileField . '
+            <input type="hidden" name="rawtheapee_display_url" value="' . HelperFramework::escape($displayUrl) . '" data-rawtheapee-display-url-field="true">
+            <input type="hidden" name="rawtheapee_display_type" value="' . HelperFramework::escape($displayType) . '" data-rawtheapee-display-type-field="true">';
+    }
+
+    private function statusImage(string $status): string
+    {
+        $status = strtolower(trim($status));
+
+        return in_array($status, ['queued', 'queuing', 'rendering', 'loading'], true)
+            ? '/swallowtail_256.gif'
+            : '/swallowtail_butterfly_42x42.png';
     }
 
 }

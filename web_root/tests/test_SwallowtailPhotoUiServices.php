@@ -10,6 +10,7 @@ declare(strict_types=1);
 use Swallowtail\Service\SwallowtailPhotoLibraryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
 use Swallowtail\Service\SwallowtailEventManagementService;
+use Swallowtail\Service\SwallowtailRawTheapeeProfileService;
 use Swallowtail\Service\SwallowtailStorageService;
 use Swallowtail\Service\SwallowtailWebRawUploadService;
 
@@ -671,6 +672,86 @@ $harness->check(SwallowtailPhotoUiService::class, 'returns admin uploader and ev
     $harness->assertSame('event.CR2', (string)$viewerFilteredGallery['rows'][0]['original_filename']);
     $harness->assertSame(0, count((array)$uploaderFilteredGallery['rows']));
     $harness->assertSame(0, (int)$uploaderFilteredGallery['pagination']['total_items']);
+});
+
+$harness->check(SwallowtailRawTheapeeProfileService::class, 'searches accessible thumbnail photos by id filename and checksum', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    $locations = (new SwallowtailStorageService())->storageLocations();
+    $baseLocation = (string)($locations[0]['storage_base_location'] ?? '');
+    $photoIds = [];
+
+    foreach ([
+        ['RecallExact.CR2', str_repeat('1', 64), 902, '2026-06-25 10:00:00'],
+        ['RecallLater.CR2', str_repeat('2', 64), 902, '2026-06-25 11:00:00'],
+        ['RecallHidden.CR2', str_repeat('3', 64), null, '2026-06-25 12:00:00'],
+    ] as $photo) {
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photos (
+                original_filename,
+                original_extension,
+                original_bytes,
+                original_sha256,
+                storage_base_location,
+                uploaded_by_user_id,
+                uploaded_via,
+                created_at
+            ) VALUES (
+                :filename,
+                'cr2',
+                100,
+                :sha256,
+                :storage_base_location,
+                :user_id,
+                'web',
+                :created_at
+            )",
+            [
+                'filename' => $photo[0],
+                'sha256' => $photo[1],
+                'storage_base_location' => $baseLocation,
+                'user_id' => $photo[2],
+                'created_at' => $photo[3],
+            ]
+        );
+        $photoId = (int)InterfaceDB::fetchColumn('SELECT id FROM photos WHERE original_sha256 = :sha256 LIMIT 1', [
+            'sha256' => $photo[1],
+        ]);
+        $photoIds[] = $photoId;
+        InterfaceDB::prepareExecute(
+            "INSERT INTO photo_image_assets (
+                photo_id,
+                image_type,
+                sha256,
+                bytes,
+                modified_at
+            ) VALUES (
+                :photo_id,
+                'thumbnail',
+                :sha256,
+                10,
+                1
+            )",
+            [
+                'photo_id' => $photoId,
+                'sha256' => str_repeat('f', 64),
+            ]
+        );
+    }
+
+    $service = new SwallowtailRawTheapeeProfileService();
+    $adminFilenameRows = $service->searchAccessibleThumbnailPhotos(901, 'Recall', 10);
+    $uploaderFilenameRows = $service->searchAccessibleThumbnailPhotos(902, 'Recall', 10);
+    $noAccessRows = $service->searchAccessibleThumbnailPhotos(904, 'Recall', 10);
+    $idRows = $service->searchAccessibleThumbnailPhotos(901, (string)$photoIds[0], 10);
+    $checksumRows = $service->searchAccessibleThumbnailPhotos(902, str_repeat('2', 12), 10);
+
+    $harness->assertSame(3, count($adminFilenameRows));
+    $harness->assertSame('RecallHidden.CR2', (string)$adminFilenameRows[0]['original_filename']);
+    $harness->assertSame(2, count($uploaderFilenameRows));
+    $harness->assertSame('RecallLater.CR2', (string)$uploaderFilenameRows[0]['original_filename']);
+    $harness->assertSame(0, count($noAccessRows));
+    $harness->assertSame($photoIds[0], (int)$idRows[0]['id']);
+    $harness->assertSame('RecallLater.CR2', (string)$checksumRows[0]['original_filename']);
 });
 
 $harness->check(SwallowtailEventManagementService::class, 'assigns and unassigns event photos only when actor can edit photo', function () use ($harness, $swallowtailUiCreateSchema): void {

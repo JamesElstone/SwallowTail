@@ -31,6 +31,7 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
             'photo_id' => $photoId,
             'display_url' => $this->normaliseDisplayUrl((string)$request->input('rawtheapee_display_url', '')),
             'display_type' => $this->normaliseDisplayType((string)$request->input('rawtheapee_display_type', 'none')),
+            'photo_search' => $this->normalisePhotoSearch((string)$request->input('rawtheapee_photo_search', '')),
         ];
 
         $action = (string)$request->input('rawtheapee_profiles_action', 'test');
@@ -43,12 +44,47 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
             ]], [], ['rawtheapee_profiles' => $context]);
         }
 
+        if ($action === 'search_photo') {
+            $context['photo_search_results'] = $context['photo_search'] !== ''
+                ? $service->searchAccessibleThumbnailPhotos($userId, (string)$context['photo_search'], 10)
+                : [];
+            $context['photo_search_performed'] = true;
+
+            return ActionResultFramework::success(['rawtheapee.profiles'], [], [], ['rawtheapee_profiles' => $context]);
+        }
+
+        if ($action === 'select_photo') {
+            $selectedPhotoId = max(0, (int)$request->input('rawtheapee_selected_photo_id', 0));
+            $selectedPhoto = $this->selectedAccessibleThumbnailPhoto($service, $userId, $selectedPhotoId);
+            if ($selectedPhoto === null) {
+                $context['photo_search_results'] = $context['photo_search'] !== ''
+                    ? $service->searchAccessibleThumbnailPhotos($userId, (string)$context['photo_search'], 10)
+                    : [];
+                $context['photo_search_performed'] = true;
+
+                return new ActionResultFramework(false, ['rawtheapee.profiles'], [[
+                    'type' => 'error',
+                    'message' => 'The selected photo was not available.',
+                ]], [], ['rawtheapee_profiles' => $context]);
+            }
+
+            $photoId = $selectedPhotoId;
+            $context['photo_id'] = $photoId;
+            $context['display_url'] = '';
+            $context['display_type'] = 'none';
+            $context['photo_search_results'] = [$selectedPhoto];
+            $context['photo_search_performed'] = true;
+            $action = 'test';
+        }
+
         if ($action === 'test' || $action === 'change_photo') {
             if ($action === 'change_photo') {
                 $photoId = 0;
                 $context['photo_id'] = 0;
                 $context['display_url'] = '';
                 $context['display_type'] = 'none';
+                $context['photo_search_results'] = [];
+                $context['photo_search_performed'] = false;
             }
 
             if ($photoId <= 0) {
@@ -106,5 +142,25 @@ final class RawTheapeeProfilesAction implements ActionInterfaceFramework
         $displayType = strtolower(trim($displayType));
 
         return in_array($displayType, ['preview', 'thumbnail', 'rawtheapee'], true) ? $displayType : 'none';
+    }
+
+    private function normalisePhotoSearch(string $query): string
+    {
+        return substr(trim($query), 0, 255);
+    }
+
+    private function selectedAccessibleThumbnailPhoto(SwallowtailRawTheapeeProfileService $service, int $userId, int $photoId): ?array
+    {
+        if ($photoId <= 0) {
+            return null;
+        }
+
+        foreach ($service->searchAccessibleThumbnailPhotos($userId, (string)$photoId, 10) as $photo) {
+            if ((int)($photo['id'] ?? 0) === $photoId) {
+                return (array)$photo;
+            }
+        }
+
+        return null;
     }
 }

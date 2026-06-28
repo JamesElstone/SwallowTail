@@ -21,8 +21,28 @@
     }
   }
 
+  function isBusyStatus(text) {
+    const value = String(text || '').toLowerCase();
+    return value === 'queued' || value === 'queuing' || value === 'rendering' || value === 'loading';
+  }
+
+  function setStatusImage(panel, text) {
+    const image = panel.querySelector('[data-rawtheapee-profile-state-image="true"]');
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+
+    const nextSrc = isBusyStatus(text)
+      ? String(image.dataset.busySrc || '/swallowtail_256.gif')
+      : String(image.dataset.readySrc || '/swallowtail_butterfly_42x42.png');
+    if ((image.getAttribute('src') || '') !== nextSrc) {
+      image.src = nextSrc;
+    }
+  }
+
   function setStatus(panel, text) {
     setText(panel.querySelector('[data-rawtheapee-profile-status="true"]'), text);
+    setStatusImage(panel, text);
   }
 
   function setImageShown(panel, text) {
@@ -30,16 +50,17 @@
   }
 
   function setDisplayFields(panel, url, type) {
-    const urlField = panel.querySelector('[data-rawtheapee-display-url-field="true"]');
-    const typeField = panel.querySelector('[data-rawtheapee-display-type-field="true"]');
+    panel.querySelectorAll('[data-rawtheapee-display-url-field="true"]').forEach((urlField) => {
+      if (urlField instanceof HTMLInputElement) {
+        urlField.value = String(url || '');
+      }
+    });
 
-    if (urlField instanceof HTMLInputElement) {
-      urlField.value = String(url || '');
-    }
-
-    if (typeField instanceof HTMLInputElement) {
-      typeField.value = String(type || 'none');
-    }
+    panel.querySelectorAll('[data-rawtheapee-display-type-field="true"]').forEach((typeField) => {
+      if (typeField instanceof HTMLInputElement) {
+        typeField.value = String(type || 'none');
+      }
+    });
   }
 
   function syncDisplayFields(panel, image) {
