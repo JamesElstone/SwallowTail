@@ -287,12 +287,14 @@ final class _browse_galleryCard extends CardBaseFramework
     {
         $canAssignEvents ??= $this->canManageEvents();
 
-        return '<div class="gallery-header-controls">'
-            . $this->perPageControl($perPage)
-            . $this->autoRefreshControl()
-            . $this->autoScrollControl()
-            . $this->eventsControl($canAssignEvents)
-            . '</div>';
+        return '<div class="gallery-header-controls">
+            <div class="gallery-header-controls-left">' . $this->eventsControl($canAssignEvents) . '</div>
+            <div class="gallery-header-controls-center">'
+                . $this->autoRefreshControl()
+                . $this->autoScrollControl()
+            . '</div>
+            <div class="gallery-header-controls-right">' . $this->perPageControl($perPage) . '</div>
+        </div>';
     }
 
     private function eventsControl(bool $canAssignEvents): string
@@ -366,7 +368,7 @@ final class _browse_galleryCard extends CardBaseFramework
             <input type="hidden" name="_invalidate_fact" value="' . HelperFramework::escape($this->galleryInvalidationFact()) . '">
             <input type="hidden" name="' . HelperFramework::escape($this->paginationPageField()) . '" value="1">
             <label class="gallery-page-size-control">
-                <span>Images</span>
+                <span>Display</span>
                 <select name="' . HelperFramework::escape($this->perPageField()) . '" aria-label="Images per page">
                     ' . $options . '
                 </select>
