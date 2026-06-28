@@ -321,6 +321,7 @@ final class SwallowtailConversionQueueService
         $outputPath = $this->normaliseRequiredPath($outputPath, 1000);
         $profileSignature = $this->normaliseProfileSignature($profileSignature);
         $hasProfileSignatureColumn = InterfaceDB::columnExists('photo_conversion_jobs', 'profile_signature');
+        $hasOutputDimensionColumns = InterfaceDB::columnsExists('photo_conversion_jobs', ['output_width', 'output_height']);
         $profileSignatureSql = '';
         $profileSignatureParams = [];
         if ($hasProfileSignatureColumn && $profileSignature !== '') {
@@ -380,8 +381,6 @@ final class SwallowtailConversionQueueService
             'input_path',
             'profile_path',
             'output_path',
-            'output_width',
-            'output_height',
             'requested_by_user_id',
             'priority',
             'status',
@@ -393,8 +392,6 @@ final class SwallowtailConversionQueueService
             ':input_path',
             ':profile_path',
             ':output_path',
-            ':output_width',
-            ':output_height',
             ':requested_by_user_id',
             ':priority',
             "'queued'",
@@ -405,11 +402,18 @@ final class SwallowtailConversionQueueService
             'input_path' => $inputPath,
             'profile_path' => $profilePath,
             'output_path' => $outputPath,
-            'output_width' => $outputWidth,
-            'output_height' => $outputHeight,
             'requested_by_user_id' => $this->nullablePositiveInt($requestedByUserId),
             'priority' => $priority,
         ];
+
+        if ($hasOutputDimensionColumns) {
+            $insertColumns[] = 'output_width';
+            $insertColumns[] = 'output_height';
+            $insertValues[] = ':output_width';
+            $insertValues[] = ':output_height';
+            $insertParams['output_width'] = $outputWidth;
+            $insertParams['output_height'] = $outputHeight;
+        }
 
         if ($hasProfileSignatureColumn) {
             $insertColumns[] = 'profile_signature';

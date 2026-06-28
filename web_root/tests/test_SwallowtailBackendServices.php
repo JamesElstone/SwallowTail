@@ -398,8 +398,6 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         input_path TEXT NULL,
         profile_path TEXT NULL,
         output_path TEXT NULL,
-        output_width INTEGER NULL,
-        output_height INTEGER NULL,
         profile_signature TEXT NULL,
         requested_by_user_id INTEGER NULL,
         priority INTEGER NOT NULL DEFAULT 20,
@@ -409,7 +407,6 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         locked_at TEXT NULL,
         locked_by TEXT NULL,
         last_error TEXT NULL,
-        redis_notified_at TEXT NULL,
         started_at TEXT NULL,
         completed_at TEXT NULL,
         duration_seconds REAL NULL,
@@ -4768,7 +4765,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     }
 
     $job = InterfaceDB::fetchOne(
-        "SELECT profile_path, profile_signature, requested_by_user_id, priority, output_width, output_height
+        "SELECT profile_path, profile_signature, requested_by_user_id, priority
          FROM photo_conversion_jobs
          WHERE id = :id",
         ['id' => (int)$queued['job_id']]
@@ -4781,8 +4778,6 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
     $harness->assertSame(1, preg_match('/^[a-f0-9]{64}$/', (string)($job['profile_signature'] ?? '')));
     $harness->assertSame(303, (int)($job['requested_by_user_id'] ?? 0));
     $harness->assertSame(70, (int)($job['priority'] ?? 0));
-    $harness->assertSame(0, (int)($job['output_width'] ?? 0));
-    $harness->assertSame(0, (int)($job['output_height'] ?? 0));
     if ($profilePath === '') {
         throw new RuntimeException('Preview job did not store a profile path.');
     }
@@ -5817,7 +5812,9 @@ $harness->check('SwallowTail migration', 'defines the photo backend tables', fun
         'asset_variant_key char(64)',
         'UNIQUE KEY uq_photo_image_assets_photo_type_variant (photo_id, image_type, asset_variant_key)',
         'KEY idx_photo_image_assets_variant (photo_id, image_type, asset_variant_key, profile_signature)',
-        'output_width',
+        'DROP COLUMN IF EXISTS output_width',
+        'DROP COLUMN IF EXISTS output_height',
+        'DROP COLUMN IF EXISTS redis_notified_at',
         'duration_seconds',
         "'embedded'",
         "'thumbnail'",
