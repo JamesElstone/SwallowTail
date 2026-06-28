@@ -27,8 +27,8 @@ final class _profiles extends PageContextFramework
     public function cards(): array
     {
         return [
-            'internal_profiles',
             'rawtheapee_profiles',
+            'internal_profiles',
             'combined_profile_preview',
         ];
     }

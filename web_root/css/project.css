@@ -959,7 +959,9 @@
   display: grid;
   align-content: start;
   gap: 24px;
-  flex: 1 1 0;
+  flex: 0 1 auto;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -1154,6 +1156,7 @@
 
   .rawtheapee-profile-controls {
     flex-basis: auto;
+    width: 100%;
   }
 
   .rawtheapee-profile-preview {
