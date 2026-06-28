@@ -267,7 +267,6 @@ final class SwallowtailStorageService
 
     public function imagePath(string $storageBaseLocation, string $checksum, string $imageType): string
     {
-
         $checksum = $this->normaliseChecksum($checksum);
         $imageType = $this->normaliseImageType($imageType);
         $extension = match ($imageType) {
@@ -287,6 +286,21 @@ final class SwallowtailStorageService
             . substr($checksum, 0, 2) . DIRECTORY_SEPARATOR
             . substr($checksum, 2, 2) . DIRECTORY_SEPARATOR
             . $checksum . '_' . $suffix . '.' . $extension;
+    }
+
+    public function imageVariantPath(string $storageBaseLocation, string $checksum, string $imageType, string $variantKey): string
+    {
+        $checksum = $this->normaliseChecksum($checksum);
+        $imageType = $this->normaliseImageType($imageType);
+        $variantKey = strtolower(trim($variantKey));
+        if ($imageType !== 'rawtheapee_sample' || preg_match('/^[a-f0-9]{64}$/', $variantKey) !== 1) {
+            throw new InvalidArgumentException('Unsupported image variant.');
+        }
+
+        return $this->dataRoot($storageBaseLocation)
+            . substr($checksum, 0, 2) . DIRECTORY_SEPARATOR
+            . substr($checksum, 2, 2) . DIRECTORY_SEPARATOR
+            . $checksum . '_' . $imageType . '_' . $variantKey . '.jpg';
     }
 
     public function ensureDirectoryForPath(string $absolutePath): void

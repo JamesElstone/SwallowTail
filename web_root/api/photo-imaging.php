@@ -22,7 +22,8 @@ if ($error instanceof ResponseFramework) {
 
 $photoId = max(0, (int)$request->query('photo_id', 0));
 $type = trim((string)$request->query('type', 'preview'));
-$image = (new SwallowtailImageServeService())->derivativeImage($photoId, $type, $security->userId());
+$profileSignature = strtolower(trim((string)$request->query('profile_signature', '')));
+$image = (new SwallowtailImageServeService())->derivativeImage($photoId, $type, $security->userId(), $profileSignature);
 
 if ($image === null) {
     http_response_code(404);

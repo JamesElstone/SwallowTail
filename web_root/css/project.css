@@ -973,7 +973,7 @@
 }
 
 .rawtheapee-profile-form .input-action-row select {
-  flex: 1 1 220px;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
@@ -1004,6 +1004,10 @@
 
 .rawtheapee-profile-details dd::before {
   content: ": ";
+}
+
+.rawtheapee-profile-details dd[data-rawtheapee-profile-image-shown="true"] {
+  text-transform: capitalize;
 }
 
 .rawtheapee-profile-preview {

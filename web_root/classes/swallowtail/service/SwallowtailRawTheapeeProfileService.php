@@ -53,7 +53,7 @@ final class SwallowtailRawTheapeeProfileService
 
         $photoId = max(0, $photoId);
         if ($photoId <= 0) {
-            $photo = $this->randomAccessibleThumbnailPhoto($userId);
+            $photo = $this->randomAccessibleThumbnailPhoto($userId, true);
             $photoId = max(0, (int)($photo['id'] ?? 0));
         }
 
@@ -167,7 +167,7 @@ final class SwallowtailRawTheapeeProfileService
         return '';
     }
 
-    public function randomAccessibleThumbnailPhoto(int $userId): ?array
+    public function randomAccessibleThumbnailPhoto(int $userId, bool $preferRawTheapeeArtifacts = false): ?array
     {
         if ($userId <= 0) {
             return null;
@@ -176,6 +176,20 @@ final class SwallowtailRawTheapeeProfileService
         $params = [
             'thumbnail_image_type' => 'thumbnail',
         ];
+        $sampleJoin = '';
+        $preferredOrder = '';
+        if ($preferRawTheapeeArtifacts) {
+            $params['sample_image_type'] = self::SAMPLE_IMAGE_TYPE;
+            $sampleJoin = "
+             LEFT JOIN photo_image_assets sample_asset
+                ON sample_asset.photo_id = photo.id
+               AND sample_asset.image_type = :sample_image_type
+               AND sample_asset.bytes > 0
+               AND sample_asset.sha256 <> ''
+               AND LENGTH(COALESCE(sample_asset.profile_signature, '')) = 64";
+            $preferredOrder = 'CASE WHEN sample_asset.id IS NULL THEN 1 ELSE 0 END, ';
+        }
+
         $where = "photo.upload_state = 'uploaded'";
         $roleId = $this->roleIdForUser($userId);
 
@@ -211,9 +225,9 @@ final class SwallowtailRawTheapeeProfileService
                 ON thumbnail_asset.photo_id = photo.id
                AND thumbnail_asset.image_type = :thumbnail_image_type
                AND thumbnail_asset.bytes > 0
-               AND thumbnail_asset.sha256 <> ''
+               AND thumbnail_asset.sha256 <> ''" . $sampleJoin . "
              WHERE " . $where . "
-             ORDER BY " . $this->randomOrderSql() . "
+             ORDER BY " . $preferredOrder . $this->randomOrderSql() . "
              LIMIT 1",
             $params
         );
@@ -257,11 +271,11 @@ final class SwallowtailRawTheapeeProfileService
         $checksum = (string)($photo['original_sha256'] ?? '');
         $base = (string)($photo['storage_base_location'] ?? '');
         $inputPath = $storage->imagePath($base, $checksum, 'source');
-        $outputPath = $storage->imagePath($base, $checksum, self::SAMPLE_IMAGE_TYPE);
         $profileSignature = $this->profileSignature($profile);
+        $outputPath = $storage->imageVariantPath($base, $checksum, self::SAMPLE_IMAGE_TYPE, $profileSignature);
         $assetService = new SwallowtailPhotoAssetService();
-        $existingAsset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
-        if ($existingAsset !== null && $assetService->isFreshForSignature($existingAsset, $profileSignature)) {
+        $existingAsset = $assetService->assetForPhotoProfileSignature($photo, self::SAMPLE_IMAGE_TYPE, $profileSignature);
+        if ($existingAsset !== null) {
             return [
                 'success' => true,
                 'job_id' => 0,
@@ -316,21 +330,25 @@ final class SwallowtailRawTheapeeProfileService
     private function freshSampleAssetForPhoto(array $photo, array $profile): ?array
     {
         $assetService = new SwallowtailPhotoAssetService();
-        $asset = $assetService->assetForPhoto($photo, self::SAMPLE_IMAGE_TYPE);
-        if ($asset === null || !$assetService->isFreshForSignature($asset, $this->profileSignature($profile))) {
-            return null;
-        }
+        $asset = $assetService->assetForPhotoProfileSignature($photo, self::SAMPLE_IMAGE_TYPE, $this->profileSignature($profile));
 
         return is_array($asset) ? $asset : null;
     }
 
     private function assetUrl(int $photoId, array $asset): string
     {
-        return '/api/photo-imaging.php?' . http_build_query([
+        $profileSignature = strtolower(trim((string)($asset['profile_signature'] ?? '')));
+        $query = [
             'photo_id' => $photoId,
             'type' => (string)($asset['image_type'] ?? 'preview'),
             'v' => (string)($asset['sha256'] ?? ''),
-        ]);
+        ];
+        if ((string)($asset['image_type'] ?? '') === self::SAMPLE_IMAGE_TYPE) {
+            $query['profile_signature'] = $profileSignature;
+            $query['v'] = $profileSignature;
+        }
+
+        return '/api/photo-imaging.php?' . http_build_query($query);
     }
 
     private function normaliseDisplayUrl(string $displayUrl): string

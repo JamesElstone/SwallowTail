@@ -15,7 +15,7 @@ use Throwable;
 final class SwallowtailPhotoAssetNotificationService
 {
     private const DEFAULT_ASSET_QUEUE = 'swallowtail:metadata:asset_urgent';
-    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample'];
+    private const IMAGE_TYPES = ['embedded', 'thumbnail', 'original', 'preview', 'final'];
 
     public function __construct(
         private readonly object $redis = new SwallowtailRedisService(),

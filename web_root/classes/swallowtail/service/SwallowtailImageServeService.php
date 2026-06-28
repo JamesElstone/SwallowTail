@@ -20,7 +20,7 @@ final class SwallowtailImageServeService
     ) {
     }
 
-    public function derivativeImage(int $photoId, string $imageType, int $userId): ?array
+    public function derivativeImage(int $photoId, string $imageType, int $userId, string $profileSignature = ''): ?array
     {
         if ($photoId <= 0 || $userId <= 0) {
             return null;
@@ -40,12 +40,16 @@ final class SwallowtailImageServeService
             return null;
         }
 
-        $info = $this->assetService->assetForPhoto($photo, $imageType);
+        $info = $imageType === 'rawtheapee_sample'
+            ? $this->assetService->assetForPhotoProfileSignature($photo, $imageType, $profileSignature)
+            : $this->assetService->assetForPhoto($photo, $imageType);
         if ($info === null) {
             return null;
         }
 
-        $etagSource = (string)($info['sha256'] ?? '');
+        $etagSource = $imageType === 'rawtheapee_sample'
+            ? (string)($info['profile_signature'] ?? '')
+            : (string)($info['sha256'] ?? '');
         $bytes = (int)$info['bytes'];
         $modifiedAt = (int)$info['modified_at'];
 

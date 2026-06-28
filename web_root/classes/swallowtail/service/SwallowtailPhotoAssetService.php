@@ -29,6 +29,9 @@ final class SwallowtailPhotoAssetService
         if ($photoId <= 0 || $imageType === '' || !InterfaceDB::tableExists('photo_image_assets')) {
             return null;
         }
+        if ($imageType === 'rawtheapee_sample') {
+            return null;
+        }
 
         $row = InterfaceDB::fetchOne(
             "SELECT *
@@ -41,31 +44,40 @@ final class SwallowtailPhotoAssetService
                 'image_type' => $imageType,
             ]
         );
-        if (!is_array($row)) {
+        return is_array($row) ? $this->assetFromRow($photo, $imageType, $row, $requireReadableFile) : null;
+    }
+
+    public function assetForPhotoProfileSignature(array $photo, string $imageType, string $profileSignature, bool $requireReadableFile = true): ?array
+    {
+        $photoId = max(0, (int)($photo['id'] ?? 0));
+        $imageType = $this->normaliseImageType($imageType);
+        $profileSignature = $this->normaliseSha256($profileSignature);
+        if (
+            $photoId <= 0
+            || $imageType !== 'rawtheapee_sample'
+            || $profileSignature === ''
+            || !InterfaceDB::tableExists('photo_image_assets')
+        ) {
             return null;
         }
 
-        $path = $this->absolutePathForPhoto($photo, $imageType);
-        if ($path === null) {
-            return null;
-        }
+        $variantColumn = InterfaceDB::columnExists('photo_image_assets', 'asset_variant_key');
+        $row = InterfaceDB::fetchOne(
+            "SELECT *
+             FROM photo_image_assets
+             WHERE photo_id = :photo_id
+               AND image_type = :image_type
+               AND " . ($variantColumn ? 'asset_variant_key = :asset_variant_key' : 'profile_signature = :profile_signature') . "
+             LIMIT 1",
+            [
+                'photo_id' => $photoId,
+                'image_type' => $imageType,
+                'asset_variant_key' => $profileSignature,
+                'profile_signature' => $profileSignature,
+            ]
+        );
 
-        if ($requireReadableFile && (!is_file($path) || !is_readable($path))) {
-            return null;
-        }
-
-        $row['absolute_path'] = $path;
-        $row['image_type'] = $imageType;
-        $row['bytes'] = max(0, (int)($row['bytes'] ?? 0));
-        $row['modified_at'] = max(0, (int)($row['modified_at'] ?? 0));
-        $row['sha256'] = $this->normaliseSha256((string)($row['sha256'] ?? ''));
-        $row['profile_signature'] = $this->normaliseSha256((string)($row['profile_signature'] ?? ''));
-
-        if ((int)$row['bytes'] <= 0 || (string)$row['sha256'] === '') {
-            return null;
-        }
-
-        return $row;
+        return is_array($row) ? $this->assetFromRow($photo, $imageType, $row, $requireReadableFile) : null;
     }
 
     public function assetForPhotoWithFinalFallback(array $photo, string $imageType, bool $requireReadableFile = true): ?array
@@ -124,6 +136,20 @@ final class SwallowtailPhotoAssetService
         return $this->assetForPhoto($photo, $imageType, $requireReadableFile);
     }
 
+    public function assetForPhotoIdProfileSignature(int $photoId, string $imageType, string $profileSignature, bool $requireReadableFile = true): ?array
+    {
+        if ($photoId <= 0) {
+            return null;
+        }
+
+        $photo = (new SwallowtailPhotoLibraryService())->photoById($photoId);
+        if ($photo === null) {
+            return null;
+        }
+
+        return $this->assetForPhotoProfileSignature($photo, $imageType, $profileSignature, $requireReadableFile);
+    }
+
     public function isFreshForSignature(array $asset, string $profileSignature): bool
     {
         $profileSignature = $this->normaliseSha256($profileSignature);
@@ -137,7 +163,7 @@ final class SwallowtailPhotoAssetService
         $base = trim((string)($photo['storage_base_location'] ?? ''));
         $checksum = trim((string)($photo['original_sha256'] ?? ''));
         $imageType = $this->normaliseImageType($imageType);
-        if ($base === '' || $checksum === '' || $imageType === '') {
+        if ($base === '' || $checksum === '' || $imageType === '' || $imageType === 'rawtheapee_sample') {
             return null;
         }
 
@@ -153,6 +179,52 @@ final class SwallowtailPhotoAssetService
         $imageType = strtolower(trim($imageType));
 
         return in_array($imageType, self::IMAGE_TYPES, true) ? $imageType : '';
+    }
+
+    private function assetFromRow(array $photo, string $imageType, array $row, bool $requireReadableFile): ?array
+    {
+        $profileSignature = $this->normaliseSha256((string)($row['profile_signature'] ?? ''));
+        $path = $imageType === 'rawtheapee_sample'
+            ? $this->absoluteVariantPathForPhoto($photo, $imageType, $profileSignature)
+            : $this->absolutePathForPhoto($photo, $imageType);
+        if ($path === null) {
+            return null;
+        }
+
+        if ($requireReadableFile && (!is_file($path) || !is_readable($path))) {
+            return null;
+        }
+
+        $row['absolute_path'] = $path;
+        $row['image_type'] = $imageType;
+        $row['bytes'] = max(0, (int)($row['bytes'] ?? 0));
+        $row['modified_at'] = max(0, (int)($row['modified_at'] ?? 0));
+        $row['sha256'] = $this->normaliseSha256((string)($row['sha256'] ?? ''));
+        $row['profile_signature'] = $profileSignature;
+        $row['asset_variant_key'] = $this->normaliseSha256((string)($row['asset_variant_key'] ?? ''));
+
+        if ((int)$row['bytes'] <= 0 || (string)$row['sha256'] === '') {
+            return null;
+        }
+
+        return $row;
+    }
+
+    private function absoluteVariantPathForPhoto(array $photo, string $imageType, string $profileSignature): ?string
+    {
+        $base = trim((string)($photo['storage_base_location'] ?? ''));
+        $checksum = trim((string)($photo['original_sha256'] ?? ''));
+        $imageType = $this->normaliseImageType($imageType);
+        $profileSignature = $this->normaliseSha256($profileSignature);
+        if ($base === '' || $checksum === '' || $imageType !== 'rawtheapee_sample' || $profileSignature === '') {
+            return null;
+        }
+
+        try {
+            return $this->storageService->imageVariantPath($base, $checksum, $imageType, $profileSignature);
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private function normaliseSha256(string $value): string

@@ -344,6 +344,13 @@ final class SwallowtailPreviewProfileService
 
     private function assetStatus(int $photoId, int $userId, string $imageType): array
     {
+        if ($imageType === 'rawtheapee_sample') {
+            return [
+                'success' => false,
+                'errors' => ['RawTheapee sample status requires a conversion job.'],
+            ];
+        }
+
         if ($photoId <= 0 || $userId <= 0 || !$this->photoUiService->userCanViewPhoto($photoId, $userId)) {
             return [
                 'success' => false,
@@ -398,7 +405,7 @@ final class SwallowtailPreviewProfileService
         }
 
         $job = InterfaceDB::fetchOne(
-            "SELECT id, status, last_error
+            "SELECT id, status, last_error, profile_signature
              FROM photo_conversion_jobs
              WHERE id = :job_id
                AND photo_id = :photo_id
@@ -426,7 +433,9 @@ final class SwallowtailPreviewProfileService
         ];
 
         if ($status === 'succeeded') {
-            $asset = $this->assetService->assetForPhotoId($photoId, $imageType);
+            $asset = $imageType === 'rawtheapee_sample'
+                ? $this->assetService->assetForPhotoIdProfileSignature($photoId, $imageType, (string)($job['profile_signature'] ?? ''))
+                : $this->assetService->assetForPhotoId($photoId, $imageType);
             if ($asset !== null) {
                 $payload[$imageType . '_url'] = $this->previewUrl($photoId, $asset);
             }
@@ -879,12 +888,17 @@ final class SwallowtailPreviewProfileService
     private function previewUrl(int $photoId, array $asset): string
     {
         $imageType = (string)($asset['image_type'] ?? 'preview');
-
-        return '/api/photo-imaging.php?' . http_build_query([
+        $profileSignature = $this->normaliseProfileSignature((string)($asset['profile_signature'] ?? ''));
+        $query = [
             'photo_id' => $photoId,
             'type' => in_array($imageType, ['preview', 'thumbnail', 'embedded', 'final', 'original', 'rawtheapee_sample'], true) ? $imageType : 'preview',
-            'v' => (string)($asset['sha256'] ?? ''),
-        ]);
+            'v' => $imageType === 'rawtheapee_sample' ? $profileSignature : (string)($asset['sha256'] ?? ''),
+        ];
+        if ($imageType === 'rawtheapee_sample') {
+            $query['profile_signature'] = $profileSignature;
+        }
+
+        return '/api/photo-imaging.php?' . http_build_query($query);
     }
 
     private function statusUrl(int $photoId, int $jobId, string $imageType): string

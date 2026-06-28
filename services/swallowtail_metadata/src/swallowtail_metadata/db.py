@@ -321,6 +321,9 @@ class MetadataDatabase:
             return
         conversion_job_id = conversion_job_id if conversion_job_id is not None and conversion_job_id > 0 else None
         profile_signature = profile_signature if len(profile_signature) == 64 else None
+        if image_type == "rawtheapee_sample" and profile_signature is None:
+            return
+        asset_variant_key = profile_signature if image_type == "rawtheapee_sample" and profile_signature is not None else ""
         self._execute(
             """
             INSERT INTO photo_image_assets (
@@ -332,10 +335,11 @@ class MetadataDatabase:
                 width,
                 height,
                 profile_signature,
+                asset_variant_key,
                 conversion_job_id,
                 generated_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
             )
             ON DUPLICATE KEY UPDATE
                 sha256 = VALUES(sha256),
@@ -344,6 +348,7 @@ class MetadataDatabase:
                 width = VALUES(width),
                 height = VALUES(height),
                 profile_signature = VALUES(profile_signature),
+                asset_variant_key = VALUES(asset_variant_key),
                 conversion_job_id = VALUES(conversion_job_id),
                 generated_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
@@ -357,6 +362,7 @@ class MetadataDatabase:
                 width,
                 height,
                 profile_signature,
+                asset_variant_key,
                 conversion_job_id,
             ),
         )
@@ -376,8 +382,16 @@ class MetadataDatabase:
               LEFT JOIN photo_image_assets asset
                 ON asset.photo_id = job.photo_id
                AND asset.image_type = job.image_type
+               AND (
+                   job.image_type <> 'rawtheapee_sample'
+                   OR asset.asset_variant_key = job.profile_signature
+               )
              WHERE job.status = 'succeeded'
                AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtheapee_sample')
+               AND (
+                   job.image_type <> 'rawtheapee_sample'
+                   OR LENGTH(COALESCE(job.profile_signature, '')) = 64
+               )
                AND asset.id IS NULL
              ORDER BY
                    CASE job.image_type

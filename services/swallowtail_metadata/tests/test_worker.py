@@ -599,6 +599,70 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
         self.assertIn("WHEN 'rawtheapee_sample' THEN 5", sql)
         self.assertLess(sql.index("WHEN 'thumbnail' THEN 0"), sql.index("job.completed_at DESC"))
 
+    def test_unrecorded_asset_backfill_matches_rawtheapee_signature_variants(self) -> None:
+        database, connection = self.database()
+        database._table_exists = lambda _table_name: True
+
+        database.next_unrecorded_image_asset_job()
+
+        sql = next(
+            sql for sql, _params in connection.executed
+            if "FROM photo_conversion_jobs job" in sql
+        )
+        self.assertIn("asset.asset_variant_key = job.profile_signature", sql)
+        self.assertIn("job.image_type <> 'rawtheapee_sample'", sql)
+
+    def test_upsert_image_asset_uses_rawtheapee_profile_signature_as_variant_key(self) -> None:
+        database, connection = self.database()
+        database._table_exists = lambda _table_name: True
+
+        database.upsert_image_asset(
+            42,
+            "rawtheapee_sample",
+            "a" * 64,
+            123,
+            456,
+            10,
+            20,
+            "b" * 64,
+            77,
+        )
+        database.upsert_image_asset(
+            42,
+            "preview",
+            "c" * 64,
+            123,
+            456,
+            10,
+            20,
+            "d" * 64,
+            78,
+        )
+
+        raw_params = connection.executed[0][1]
+        preview_params = connection.executed[1][1]
+        self.assertIn("asset_variant_key", connection.executed[0][0])
+        self.assertEqual("b" * 64, raw_params[-2])
+        self.assertEqual("", preview_params[-2])
+
+    def test_upsert_image_asset_skips_unsigned_rawtheapee_sample(self) -> None:
+        database, connection = self.database()
+        database._table_exists = lambda _table_name: True
+
+        database.upsert_image_asset(
+            42,
+            "rawtheapee_sample",
+            "a" * 64,
+            123,
+            456,
+            10,
+            20,
+            "",
+            77,
+        )
+
+        self.assertEqual([], connection.executed)
+
 
 class RawTherapeeBaselineRunnerTest(unittest.TestCase):
     def test_health_check_accepts_rawtherapee_version_output_with_nonzero_exit(self) -> None:

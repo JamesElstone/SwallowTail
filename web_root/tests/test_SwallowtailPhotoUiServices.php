@@ -85,6 +85,7 @@ function swallowtail_ui_record_asset(
             width,
             height,
             profile_signature,
+            asset_variant_key,
             conversion_job_id,
             generated_at
         ) VALUES (
@@ -96,14 +97,16 @@ function swallowtail_ui_record_asset(
             1,
             1,
             :profile_signature,
+            :asset_variant_key,
             :conversion_job_id,
             CURRENT_TIMESTAMP
         )
-        ON CONFLICT(photo_id, image_type) DO UPDATE SET
+        ON CONFLICT(photo_id, image_type, asset_variant_key) DO UPDATE SET
             sha256 = excluded.sha256,
             bytes = excluded.bytes,
             modified_at = excluded.modified_at,
             profile_signature = excluded.profile_signature,
+            asset_variant_key = excluded.asset_variant_key,
             conversion_job_id = excluded.conversion_job_id,
             updated_at = CURRENT_TIMESTAMP",
         [
@@ -113,6 +116,7 @@ function swallowtail_ui_record_asset(
             'bytes' => max(1, (int)@filesize($path)),
             'modified_at' => max(1, (int)@filemtime($path)),
             'profile_signature' => $profileSignature,
+            'asset_variant_key' => $imageType === 'rawtheapee_sample' && $profileSignature !== null ? $profileSignature : '',
             'conversion_job_id' => $conversionJobId,
         ]
     );
@@ -415,11 +419,12 @@ $swallowtailUiCreateSchema = static function () use ($swallowtailUiEnableRootSto
         width INTEGER NULL,
         height INTEGER NULL,
         profile_signature TEXT NULL,
+        asset_variant_key TEXT NOT NULL DEFAULT '',
         conversion_job_id INTEGER NULL,
         generated_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (photo_id, image_type)
+        UNIQUE (photo_id, image_type, asset_variant_key)
     )");
 
     InterfaceDB::execute("CREATE TABLE photo_profile_data (
