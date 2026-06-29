@@ -532,8 +532,6 @@ final class SwallowtailDataIntegrityCheckService
             throw new RuntimeException('Unable to write profiled derivative PP3 profile.');
         }
 
-        @chmod($path, 0660);
-
         return $path;
     }
 

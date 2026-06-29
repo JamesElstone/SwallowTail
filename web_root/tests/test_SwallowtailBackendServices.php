@@ -960,6 +960,38 @@ $harness->check(SwallowtailStorageService::class, 'creates storage hash director
     }
 });
 
+$harness->check(SwallowtailStorageService::class, 'does not chmod existing storage directories during app writes', function () use ($harness): void {
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $harness->skip('POSIX directory modes are not available on Windows.');
+    }
+
+    $storageRoot = swallowtail_backend_storage_tmp_root();
+    $storage = new SwallowtailStorageService();
+    $destinationPath = $storage->imagePath($storageRoot, str_repeat('d', 64), 'source');
+    $directory = dirname($destinationPath);
+
+    if (!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory)) {
+        throw new RuntimeException('Unable to create existing storage hash directory.');
+    }
+
+    @chmod($directory, 0700);
+    clearstatcache(true, $directory);
+    $beforeMode = fileperms($directory);
+    if (!is_int($beforeMode)) {
+        throw new RuntimeException('Unable to inspect existing storage hash directory permissions.');
+    }
+
+    $storage->ensureDirectoryForPath($destinationPath);
+
+    clearstatcache(true, $directory);
+    $afterMode = fileperms($directory);
+    if (!is_int($afterMode)) {
+        throw new RuntimeException('Unable to inspect existing storage hash directory permissions after ensure.');
+    }
+
+    $harness->assertSame($beforeMode & 07777, $afterMode & 07777);
+});
+
 $harness->check(SwallowtailStorageService::class, 'reports storage file write failures without PHP warnings', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 

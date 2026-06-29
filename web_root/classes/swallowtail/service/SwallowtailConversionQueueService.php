@@ -755,8 +755,6 @@ final class SwallowtailConversionQueueService
             throw new RuntimeException('Unable to write thumbnail PP3 profile.');
         }
 
-        @chmod($path, 0660);
-
         return $path;
     }
 

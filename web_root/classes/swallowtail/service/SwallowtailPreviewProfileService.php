@@ -903,8 +903,6 @@ final class SwallowtailPreviewProfileService
             throw new RuntimeException('Unable to write PP3 profile.');
         }
 
-        @chmod($path, 0660);
-
         return $path;
     }
 

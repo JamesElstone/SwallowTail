@@ -307,12 +307,18 @@ final class SwallowtailStorageService
     {
         $directory = dirname($absolutePath);
         if (is_dir($directory)) {
-            $this->ensureStorageDirectoryPermissions($directory);
             return;
         }
 
         try {
-            $created = $this->filesystemOperation(static fn(): bool => mkdir($directory, 0770, true));
+            $created = $this->filesystemOperation(static function () use ($directory): bool {
+                $previousUmask = umask(0007);
+                try {
+                    return mkdir($directory, self::STORAGE_DIRECTORY_MODE, true);
+                } finally {
+                    umask($previousUmask);
+                }
+            });
         } catch (Throwable $exception) {
             throw new RuntimeException(sprintf(
                 'Unable to create SwallowTail storage directory: %s%s',
@@ -328,76 +334,6 @@ final class SwallowtailStorageService
                 $this->filesystemFailureSuffix($created['warning'])
             ));
         }
-
-        $this->ensureStorageDirectoryPermissions($directory);
-    }
-
-    private function ensureStorageDirectoryPermissions(string $directory): void
-    {
-        if (DIRECTORY_SEPARATOR === '\\') {
-            return;
-        }
-
-        foreach ($this->storageDirectoryPermissionTargets($directory) as $target) {
-            if ($this->storageDirectoryPermissionsAreCurrent($target)) {
-                continue;
-            }
-
-            try {
-                $changed = $this->filesystemOperation(static fn(): bool => chmod($target, self::STORAGE_DIRECTORY_MODE));
-            } catch (Throwable $exception) {
-                throw new RuntimeException(sprintf(
-                    'Unable to set SwallowTail storage directory permissions: %s%s',
-                    $target,
-                    $this->filesystemFailureSuffix(null, $exception)
-                ), 0, $exception);
-            }
-
-            if (!$changed['success']) {
-                throw new RuntimeException(sprintf(
-                    'Unable to set SwallowTail storage directory permissions: %s%s',
-                    $target,
-                    $this->filesystemFailureSuffix($changed['warning'])
-                ));
-            }
-        }
-    }
-
-    private function storageDirectoryPermissionsAreCurrent(string $directory): bool
-    {
-        $mode = @fileperms($directory);
-
-        return is_int($mode) && ($mode & 07777) === self::STORAGE_DIRECTORY_MODE;
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function storageDirectoryPermissionTargets(string $directory): array
-    {
-        $directory = $this->pathWithoutTrailingDirectorySeparator($directory);
-        $marker = DIRECTORY_SEPARATOR . self::DATA_DIRECTORY;
-        $search = $directory . DIRECTORY_SEPARATOR;
-        $position = strpos($search, $marker . DIRECTORY_SEPARATOR);
-        if ($position === false) {
-            return [$directory];
-        }
-
-        $dataRoot = substr($directory, 0, $position + strlen($marker));
-        $relative = trim(substr($directory, strlen($dataRoot)), DIRECTORY_SEPARATOR);
-        $targets = [$dataRoot];
-        $current = $dataRoot;
-
-        foreach (explode(DIRECTORY_SEPARATOR, $relative) as $part) {
-            if ($part === '') {
-                continue;
-            }
-
-            $current .= DIRECTORY_SEPARATOR . $part;
-            $targets[] = $current;
-        }
-
-        return $targets;
     }
 
     public function storeSourceFile(string $sourcePath, string $checksum, bool $move = false, ?string $preferredBaseLocation = null): array
@@ -456,10 +392,6 @@ final class SwallowtailStorageService
                         ));
                     }
 
-                    try {
-                        $this->filesystemOperation(static fn(): bool => chmod($destinationPath, 0660));
-                    } catch (Throwable) {
-                    }
                 }
 
                 return [
