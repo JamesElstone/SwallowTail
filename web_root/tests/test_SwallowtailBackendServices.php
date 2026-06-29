@@ -4927,6 +4927,12 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         'SELECT status FROM photo_conversion_jobs WHERE id = :id LIMIT 1',
         ['id' => (int)$queued['job_id']]
     ));
+    $obsoleteStatus = $service->imageStatus($photoId, (int)$queued['job_id'], 303, 'preview');
+    $harness->assertSame(true, (bool)($obsoleteStatus['success'] ?? false));
+    $harness->assertSame('obsolete', (string)($obsoleteStatus['status'] ?? ''));
+    $harness->assertSame(true, (bool)($obsoleteStatus['superseded'] ?? false));
+    $harness->assertSame((int)$queued['job_id'], (int)($obsoleteStatus['obsolete_job_id'] ?? 0));
+    $harness->assertTrue(str_contains((string)($obsoleteStatus['status_url'] ?? ''), 'job_id=' . (string)(int)$second['job_id']));
 
     $storage = new SwallowtailStorageService();
     $photo = $library->photoById($photoId);
@@ -4961,6 +4967,12 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
          WHERE id = :id",
         ['id' => (int)$second['job_id']]
     );
+    $assetPendingStatus = $service->imageStatus($photoId, (int)$second['job_id'], 303, 'preview');
+    $harness->assertSame(true, (bool)($assetPendingStatus['success'] ?? false));
+    $harness->assertSame('processing', (string)($assetPendingStatus['status'] ?? ''));
+    $harness->assertSame(true, (bool)($assetPendingStatus['asset_pending'] ?? false));
+    $harness->assertTrue(!array_key_exists('preview_url', $assetPendingStatus));
+
     swallowtail_backend_record_asset($photoId, 'preview', $previewPath, str_repeat('6', 64), (string)InterfaceDB::fetchColumn(
         "SELECT profile_signature FROM photo_conversion_jobs WHERE id = :id LIMIT 1",
         ['id' => (int)$second['job_id']]
@@ -4974,6 +4986,10 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues authorised PP3 
         throw new RuntimeException('Preview status URL did not include the asset SHA: ' . (string)($status['preview_url'] ?? ''));
     }
     $harness->assertTrue(str_contains((string)($status['preview_url'] ?? ''), 'type=preview'));
+    $obsoleteReadyStatus = $service->imageStatus($photoId, (int)$queued['job_id'], 303, 'preview');
+    $harness->assertSame(true, (bool)($obsoleteReadyStatus['superseded'] ?? false));
+    $harness->assertSame(true, (bool)($obsoleteReadyStatus['ready'] ?? false));
+    $harness->assertTrue(str_contains((string)($obsoleteReadyStatus['preview_url'] ?? ''), 'v=' . str_repeat('6', 64)));
 
     @unlink($source);
 });

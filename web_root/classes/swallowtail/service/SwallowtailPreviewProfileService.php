@@ -536,10 +536,30 @@ final class SwallowtailPreviewProfileService
             'status' => $status,
         ];
 
+        if ($status === 'obsolete' && in_array($imageType, ['preview', 'final'], true)) {
+            return $this->supersededRenderStatus($photoId, $jobId, $userId, $imageType, $job);
+        }
+
         if ($status === 'succeeded') {
             $asset = $imageType === 'rawtherapee_sample'
                 ? $this->assetService->assetForPhotoIdProfileSignature($photoId, $imageType, (string)($job['profile_signature'] ?? ''))
                 : $this->assetService->assetForPhotoId($photoId, $imageType);
+            if ($asset === null && $imageType !== 'rawtherapee_sample') {
+                $photo = $this->photoLibraryService->photoById($photoId);
+                if ($photo !== null) {
+                    (new SwallowtailPhotoAssetNotificationService())->notifyPhotoAsset(
+                        $photo,
+                        $imageType,
+                        'photo_status_succeeded_asset_pending'
+                    );
+                }
+
+                $payload['status'] = 'processing';
+                $payload['ready'] = false;
+                $payload['asset_pending'] = true;
+
+                return $payload;
+            }
             if ($asset !== null) {
                 $payload[$imageType . '_url'] = $this->previewUrl($photoId, $asset);
                 if ($imageType === 'rawtherapee_sample') {
@@ -552,6 +572,57 @@ final class SwallowtailPreviewProfileService
             }
         } elseif ($status === 'failed') {
             $payload['error'] = (string)($job['last_error'] ?? ucfirst($imageType) . ' render failed.');
+        }
+
+        return $payload;
+    }
+
+    private function supersededRenderStatus(int $photoId, int $jobId, int $userId, string $imageType, array $job): array
+    {
+        $payload = [
+            'success' => true,
+            'job_id' => $jobId,
+            'obsolete_job_id' => $jobId,
+            'image_type' => $imageType,
+            'status' => 'obsolete',
+            'superseded' => true,
+            'error' => (string)($job['last_error'] ?? 'Obsolete image job.'),
+        ];
+
+        $photo = $this->photoLibraryService->photoById($photoId);
+        if ($photo === null) {
+            return $payload;
+        }
+
+        if ($imageType === 'preview') {
+            $baseline = $this->profileDataService->requestUrgentProfile($photo, 'obsolete_preview_status_poll');
+            $preview = $this->previewWorkflowState($photo, $baseline, $userId);
+            $payload['baseline'] = $baseline;
+            $payload['preview'] = $preview;
+            $payload['current_status'] = (string)($preview['status'] ?? '');
+
+            foreach (['status_url', 'preview_url', 'display_url', 'display_type'] as $key) {
+                if ((string)($preview[$key] ?? '') !== '') {
+                    $payload[$key] = (string)$preview[$key];
+                }
+            }
+            $payload['ready'] = !empty($preview['ready']);
+
+            return $payload;
+        }
+
+        $state = $this->pictureViewerState($photoId, $userId);
+        $payload['viewer'] = $state;
+        $payload['current_status'] = (string)($state['final_status'] ?? '');
+        $replacementJobId = max(0, (int)($state['job_id'] ?? 0));
+        if ($replacementJobId > 0 && $replacementJobId !== $jobId) {
+            $payload['status_url'] = $this->statusUrl($photoId, $replacementJobId, 'final');
+        }
+        if (!empty($state['final_ready'])) {
+            $payload['ready'] = true;
+            if ((string)($state['display_type'] ?? '') === 'final' && (string)($state['display_url'] ?? '') !== '') {
+                $payload['final_url'] = (string)$state['display_url'];
+            }
         }
 
         return $payload;
