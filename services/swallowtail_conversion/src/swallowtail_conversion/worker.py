@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
@@ -142,7 +143,7 @@ class ConversionWorker:
 
             final = Path(job.output_path)
             final.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(output), str(final))
+            self._move_generated_file(output, final)
             source_profile_path = self._preserve_original_source_profile(job, result)
             self.db.complete_job(job, str(final), result.command, result.stderr, result.duration_seconds)
             self._notify_metadata_asset(job, final)
@@ -334,10 +335,31 @@ class ConversionWorker:
         if destination.is_file() and destination.stat().st_size > 0 and not str(getattr(job, "profile_path", "") or "").strip():
             return destination
 
-        temporary = destination.with_name(f".{destination.name}.moving-{uuid.uuid4().hex}")
-        shutil.copy2(source, temporary)
-        os.replace(temporary, destination)
+        self._copy_generated_file(source, destination)
         return destination
+
+    def _move_generated_file(self, source: Path, destination: Path) -> None:
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+
+        self._copy_generated_file(source, destination)
+        source.unlink()
+
+    def _copy_generated_file(self, source: Path, destination: Path) -> None:
+        temporary = destination.with_name(f".{destination.name}.moving-{uuid.uuid4().hex}")
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, destination)
+        except Exception:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise
 
     def _wait_with_status(self, timeout_seconds: int) -> None:
         deadline = time.monotonic() + max(0, int(timeout_seconds))

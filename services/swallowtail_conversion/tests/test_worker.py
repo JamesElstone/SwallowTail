@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import time
@@ -845,6 +846,69 @@ class WorkerBehaviourTest(unittest.TestCase):
         self.assertEqual("conversion_completed", worker.redis.payload["reason"])
         self.assertTrue(any("Queued metadata asset notification job=1 photo=2 image_type=preview" in line for line in logs.output))
         self.assertTrue(any("Completed job=1" in line and "duration_seconds=12.346" in line for line in logs.output))
+
+    def test_cross_device_output_move_uses_content_copy_without_stat_preservation(self) -> None:
+        class FakeDb:
+            def __init__(self) -> None:
+                self.completed = False
+                self.failed = False
+
+            def is_stale_preview(self, _job) -> bool:
+                return False
+
+            def complete_job(self, _job, output_path: str, _command, _stderr, _duration) -> None:
+                self.completed = True
+                self.output_path = output_path
+
+            def fail_job(self, _job, _message, retryable=True, duration=None) -> None:
+                self.failed = True
+
+        class FakeRunner:
+            def render(self, job, temp_dir: str, should_cancel=None):
+                output = Path(temp_dir) / "rendered.jpg"
+                output.write_bytes(b"rendered-image")
+                return SimpleNamespace(
+                    temp_output_path=str(output),
+                    temp_profile_path=None,
+                    command=["fake-render"],
+                    exit_code=0,
+                    stderr="",
+                    duration_seconds=1.0,
+                    cancelled=False,
+                )
+
+        class FakeRedis:
+            def push_asset_notification(self, _payload: dict) -> bool:
+                return True
+
+        db = FakeDb()
+        final = self.root / "storage" / "final.jpg"
+        worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
+        worker.db = db
+        worker.runner = FakeRunner()
+        worker.redis = FakeRedis()
+
+        real_replace = os.replace
+        replace_calls = 0
+
+        def replace_once_with_cross_device(source, destination):
+            nonlocal replace_calls
+            replace_calls += 1
+            if replace_calls == 1:
+                raise OSError(errno.EXDEV, "Cross-device link")
+            return real_replace(source, destination)
+
+        with patch("swallowtail_conversion.worker.os.replace", side_effect=replace_once_with_cross_device):
+            worker.process_job(job(self.root, output_path=str(final)))
+
+        self.assertTrue(db.completed)
+        self.assertFalse(db.failed)
+        self.assertEqual(str(final), db.output_path)
+        self.assertEqual(b"rendered-image", final.read_bytes())
+        self.assertEqual(2, replace_calls)
 
     def test_original_job_preserves_rawtherapee_pp3_as_source_profile(self) -> None:
         class FakeDb:
