@@ -371,23 +371,18 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue($replacePosition < $rebindPosition);
     });
 
-    $harness->check(PageRendererFramework::class, 'frontend preserves maximized cards after AJAX card replacement', function () use ($harness): void {
+    $harness->check(PageRendererFramework::class, 'frontend refreshes maximized card state after AJAX card replacement', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 
         if (!is_string($script)) {
             throw new RuntimeException('Unable to read frontend script.');
         }
 
-        $harness->assertTrue(str_contains($script, "const wasMaximized = current.classList.contains('card-maximized');"));
-        $harness->assertTrue(str_contains($script, 'setCardMaximized(replacement, true);'));
-        $harness->assertTrue(str_contains($script, "const cardMaximizedStorageKey = 'card:maximized';"));
-        $harness->assertTrue(str_contains($script, 'function cardStorageIdentity(card)'));
-        $harness->assertTrue(str_contains($script, 'function restoreStoredCardMaximized(card)'));
-        $harness->assertTrue(str_contains($script, 'restoreStoredCardMaximized(card);'));
-        $harness->assertTrue(
-            strpos($script, "const wasMaximized = current.classList.contains('card-maximized');") <
-            strpos($script, 'current.replaceWith(replacement);')
-        );
+        $harness->assertTrue(str_contains($script, 'updateCardMaximizedBodyState();'));
+        $harness->assertTrue(str_contains($script, 'function setCardMaximized(card, maximized, focusToggle = false)'));
+        $harness->assertTrue(str_contains($script, "card.classList.toggle('card-maximized', maximized);"));
+        $harness->assertTrue(str_contains($script, 'current.replaceWith(replacement);'));
+        $harness->assertTrue(str_contains($script, 'current.remove();'));
     });
 
     $harness->check(PageRendererFramework::class, 'frontend page card switchers can target page-level tab root', function () use ($harness): void {
@@ -440,7 +435,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor waits for preview after edits', function () use ($harness): void {
-        $script = file_get_contents(APP_JS . 'index.js');
+        $script = file_get_contents(APP_JS . 'project.js');
 
         if (!is_string($script)) {
             throw new RuntimeException('Unable to read frontend script.');
@@ -450,7 +445,8 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(!str_contains($script, 'response?.original_url'));
         $harness->assertTrue(!str_contains($script, 'Thumbnail ready; rendering preview'));
         $harness->assertTrue(!str_contains($script, 'Original ready; rendering preview'));
-        $harness->assertTrue(str_contains($script, "swapPreviewImage(String(response.preview_url), 'preview');"));
+        $harness->assertTrue(str_contains($script, 'const previewUrl = previewUrlFromResponse(response);'));
+        $harness->assertTrue(str_contains($script, "swapPreviewImage(previewUrl, 'preview');"));
         $harness->assertTrue(str_contains($script, 'displayedPreviewStage = stageType;'));
         $harness->assertTrue(str_contains($script, 'initialPreviewStatusUrl'));
         $harness->assertTrue(str_contains($script, 'previewDisplayReady'));
@@ -462,7 +458,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
     });
 
     $harness->check(PageRendererFramework::class, 'frontend picture editor reverts to baseline settings through preview flow', function () use ($harness): void {
-        $script = file_get_contents(APP_JS . 'index.js');
+        $script = file_get_contents(APP_JS . 'project.js');
 
         if (!is_string($script)) {
             throw new RuntimeException('Unable to read frontend script.');

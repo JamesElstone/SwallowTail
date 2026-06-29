@@ -8,6 +8,7 @@
 declare(strict_types=1);
 
 use Swallowtail\Service\SwallowtailPhotoLibraryService;
+use Swallowtail\Service\SwallowtailCombinedProfileService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
 use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
@@ -1118,7 +1119,7 @@ $harness->check(SwallowtailPhotoUiService::class, 'uses lightweight gallery prev
 
     $harness->assertSame(true, (bool)$rowsByName['preview.CR2']['preview_ready']);
     $harness->assertSame(false, (bool)$rowsByName['preview.CR2']['thumbnail_ready']);
-    $harness->assertSame(false, array_key_exists('original_ready', $rowsByName['preview.CR2']));
+    $harness->assertSame(false, (bool)$rowsByName['preview.CR2']['original_ready']);
     $harness->assertSame(false, array_key_exists('final_ready', $rowsByName['preview.CR2']));
     $harness->assertSame(false, (bool)$rowsByName['thumbnail.CR2']['preview_ready']);
     $harness->assertSame(true, (bool)$rowsByName['thumbnail.CR2']['thumbnail_ready']);
@@ -1163,9 +1164,17 @@ $harness->check(SwallowtailPhotoUiService::class, 'resolves only authorized priv
         ]
     );
     $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'asset.CR2'");
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photo_profile_data (photo_id, revision, type, `key`, value, value_type) VALUES
+            (:photo_id_status, 0, 'swallowtail', 'status', 'processed', 'string')",
+        [
+            'photo_id_status' => $photoId,
+        ]
+    );
+    $finalProfileSignature = (new SwallowtailCombinedProfileService())->profileSignature($photoId, 'final');
     swallowtail_ui_record_asset($photoId, 'preview', $absolute, str_repeat('c', 64));
     swallowtail_ui_record_asset($photoId, 'thumbnail', $thumbnailAbsolute, str_repeat('d', 64));
-    swallowtail_ui_record_asset($photoId, 'final', $finalAbsolute, str_repeat('e', 64));
+    swallowtail_ui_record_asset($photoId, 'final', $finalAbsolute, str_repeat('e', 64), $finalProfileSignature);
     $library = new SwallowtailPhotoLibraryService();
     $event = $library->createEvent('Private Asset Gallery');
     $eventId = (int)($event['id'] ?? 0);

@@ -16,14 +16,7 @@
     const afStorageKey = 'af_client_device_id';
     const afPersistentCookieName = 'af_client_device_id';
     const tableCondensedStoragePrefix = 'table_condensed_view:';
-    const galleryAutoRefreshStorageKey = 'gallery:auto-refresh:browse_gallery';
-    const galleryAutoScrollStorageKey = 'gallery:auto-scroll:browse_gallery';
-    const cardMaximizedStorageKey = 'card:maximized';
-    const galleryAutoRefreshIntervalMs = 5000;
-    const galleryCardRefreshIntervalMs = 30000;
-    const galleryViewerPrefetchImages = new Map();
     let afEphemeralDeviceId = null;
-    let activeGalleryEventCreateButton = null;
     const ajaxNonceBootstrapId = 'ajax-security-bootstrap';
     const ajaxNonceState = {
         available: [],
@@ -652,136 +645,6 @@
         }
     }
 
-    function setAttributes(node, attributes) {
-        Object.entries(attributes).forEach(([name, value]) => {
-            if (value === false || value === null || value === undefined || value === '') {
-                return;
-            }
-
-            if (value === true) {
-                node.setAttribute(name, '');
-                return;
-            }
-
-            node.setAttribute(name, String(value));
-        });
-    }
-
-    function dynamicValidationCurrentValue(wrapper, name) {
-        if (!(wrapper instanceof HTMLElement)) {
-            return '';
-        }
-
-        const namedControl = name !== '' ? wrapper.querySelector(`[name="${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`) : null;
-        const control = namedControl instanceof HTMLInputElement || namedControl instanceof HTMLSelectElement || namedControl instanceof HTMLTextAreaElement
-            ? namedControl
-            : wrapper.querySelector('input, select, textarea');
-
-        return control && 'value' in control ? String(control.value || '') : '';
-    }
-
-    function dynamicValidationBaseAttributes(wrapper, name) {
-        const id = String(wrapper.dataset.validateDynamicId || '').trim();
-        const form = String(wrapper.dataset.validateDynamicForm || '').trim();
-        const stateDefault = String(wrapper.dataset.validateDynamicStateDefault || '');
-
-        return {
-            class: 'input',
-            id,
-            form,
-            name,
-            'data-state-default': stateDefault,
-        };
-    }
-
-    function rebindDynamicValidationStateWatcher(wrapper) {
-        const formId = String(wrapper.dataset.validateDynamicForm || '').trim();
-        const form = formId !== '' ? document.getElementById(formId) : null;
-
-        if (form instanceof HTMLElement) {
-            delete form.dataset.stateBound;
-            initStateWatchers(document);
-        }
-    }
-
-    function syncDynamicValidationControl(wrapper, type) {
-        if (!(wrapper instanceof HTMLElement) || wrapper.dataset.validateDynamicControl !== 'true') {
-            return;
-        }
-
-        const name = String(wrapper.dataset.validateDynamicName || '').trim();
-        if (name === '') {
-            return;
-        }
-
-        const placeholder = String(wrapper.dataset.validateDynamicPlaceholder || '').trim();
-        const currentValue = dynamicValidationCurrentValue(wrapper, name);
-        const baseAttributes = dynamicValidationBaseAttributes(wrapper, name);
-        const nodes = [];
-
-        if (type === 'boolean') {
-            const select = document.createElement('select');
-            const normalisedCurrentValue = currentValue.toLowerCase();
-            setAttributes(select, {
-                ...baseAttributes,
-                class: 'select',
-                'data-validate-boolean': true,
-            });
-
-            ['true', 'false'].forEach((value) => {
-                const option = document.createElement('option');
-                option.value = value;
-                option.textContent = value;
-                option.selected = normalisedCurrentValue === value;
-                select.appendChild(option);
-            });
-
-            if (!['true', 'false'].includes(normalisedCurrentValue)) {
-                select.value = 'false';
-            }
-            nodes.push(select);
-        } else if (type === 'null') {
-            const visible = document.createElement('input');
-            setAttributes(visible, {
-                ...baseAttributes,
-                name: '',
-                type: 'text',
-                disabled: true,
-                placeholder,
-            });
-            visible.value = '';
-
-            const hidden = document.createElement('input');
-            setAttributes(hidden, {
-                type: 'hidden',
-                name,
-                form: baseAttributes.form,
-            });
-            hidden.value = '';
-            nodes.push(visible, hidden);
-        } else {
-            const input = document.createElement('input');
-            const validationAttribute = {
-                int: 'data-validate-int',
-                float: 'data-validate-float',
-                ascii: 'data-validate-ascii',
-            }[type] || 'data-validate-ascii';
-            setAttributes(input, {
-                ...baseAttributes,
-                type: 'text',
-                placeholder,
-                inputmode: type === 'int' ? 'numeric' : (type === 'float' ? 'decimal' : ''),
-                [validationAttribute]: true,
-            });
-            input.value = sanitizeValidationValue(currentValue, type === '' ? 'ascii' : type);
-            nodes.push(input);
-        }
-
-        wrapper.replaceChildren(...nodes);
-        nodes.forEach((node) => sanitizeValidatedInput(node));
-        rebindDynamicValidationStateWatcher(wrapper);
-    }
-
     function sanitizeValidatedInput(control) {
         if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement)) {
             return;
@@ -847,11 +710,6 @@
         }
 
         validationPairScope(control).querySelectorAll(validationTypeTargetSelector(token)).forEach((target) => {
-            if (target instanceof HTMLElement && target.dataset.validateDynamicControl === 'true') {
-                syncDynamicValidationControl(target, normaliseValidationType(control.value));
-                return;
-            }
-
             sanitizeValidatedInput(target);
         });
     }
@@ -1185,10 +1043,6 @@
                     // Ignore header-setting errors so the request can still continue.
                 }
             });
-
-            if (xhr.upload && typeof options.onUploadProgress === 'function') {
-                xhr.upload.addEventListener('progress', options.onUploadProgress);
-            }
 
             xhr.onload = () => {
                 let payload = null;
@@ -1626,60 +1480,6 @@
         });
     }
 
-    function selectedValueById(id) {
-        const field = document.getElementById(id);
-
-        return field instanceof HTMLSelectElement ? field.value : '';
-    }
-
-    function syncInternalProfileAdjustmentForms(root = document) {
-        const forms = [];
-
-        if (root instanceof HTMLElement && root.matches('[data-internal-profile-adjustment-form="true"]')) {
-            forms.push(root);
-        }
-
-        if (root && typeof root.querySelectorAll === 'function') {
-            forms.push(...root.querySelectorAll('[data-internal-profile-adjustment-form="true"]'));
-        }
-
-        if (forms.length === 0) {
-            return;
-        }
-
-        const selectedImageType = selectedValueById('internal-profiles-image-type');
-        const selectedProfileName = selectedValueById('internal-profiles-profile-name');
-
-        forms.forEach((form) => {
-            if (!(form instanceof HTMLFormElement)) {
-                return;
-            }
-
-            const imageField = form.querySelector('[data-internal-profile-image-field="true"]');
-            const nameField = form.querySelector('[data-internal-profile-name-field="true"]');
-            const newNameField = form.querySelector('[data-internal-profile-new-name-field="true"]');
-            const label = form.querySelector('[data-internal-profile-adjustment-label="true"]');
-            const imageType = selectedImageType || (imageField instanceof HTMLInputElement ? imageField.value : '');
-            const profileName = selectedProfileName || (nameField instanceof HTMLInputElement ? nameField.value : '');
-
-            if (imageField instanceof HTMLInputElement) {
-                imageField.value = imageType;
-            }
-
-            if (nameField instanceof HTMLInputElement) {
-                nameField.value = profileName;
-            }
-
-            if (newNameField instanceof HTMLInputElement) {
-                newNameField.value = profileName;
-            }
-
-            if (label instanceof HTMLElement && imageType !== '' && profileName !== '') {
-                label.textContent = `Add adjustment entry for ${imageType} : ${profileName}`;
-            }
-        });
-    }
-
     function isFormControl(node) {
         return node instanceof HTMLInputElement
             || node instanceof HTMLSelectElement
@@ -1904,15 +1704,6 @@
         });
     }
 
-    function triggerStateSync(field) {
-        if (!(field instanceof HTMLElement)) {
-            return;
-        }
-
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-        field.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-
     function initDangerZoneConfirmationControls(root = document) {
         const forms = root.querySelectorAll ? root.querySelectorAll('form[data-ajax="true"]') : [];
 
@@ -1922,7 +1713,7 @@
             }
 
             const clearInput = form.querySelector('[data-clear-confirm-input]');
-            const clearButton = form.querySelector('#clear-imported-data-button');
+            const clearButton = form.querySelector('[data-clear-confirm-button], #clear-imported-data-button');
             const deleteCheckbox = form.querySelector('[data-delete-confirm-checkbox]');
             const deleteInput = form.querySelector('[data-delete-confirm-input]');
             const deleteButton = form.querySelector('[data-delete-confirm-button]');
@@ -2014,14 +1805,13 @@
         const list = scope.querySelector('[data-upload-file-list]');
         const summary = scope.querySelector('[data-upload-selection-summary]');
         const maxFiles = Number(dropzone.dataset.uploadMaxFiles || '12');
-        const fileLabel = String(dropzone.dataset.uploadFileLabel || 'file').trim() || 'file';
         const maxReached = files.length > maxFiles;
 
         if (summary instanceof HTMLElement) {
             if (files.length === 0) {
                 summary.textContent = 'No files selected yet.';
             } else if (maxReached) {
-                summary.textContent = `Too many files selected.\nPlease keep it to ${String(maxFiles)} ${fileLabel}${maxFiles === 1 ? '' : 's'} or fewer.`;
+                summary.textContent = `Too many files selected.\nPlease keep it to ${String(maxFiles)} CSV files or fewer.`;
             } else {
                 summary.textContent = `${String(files.length)} file${files.length > 1 ? 's' : ''} selected:`;
             }
@@ -2193,7 +1983,6 @@
 
             form.addEventListener('submit', (event) => {
                 const maxFiles = Number(dropzone.dataset.uploadMaxFiles || '12');
-                const fileLabel = String(dropzone.dataset.uploadFileLabel || 'file').trim() || 'file';
 
                 if (accountSelect instanceof HTMLSelectElement && !accountSelect.value) {
                     accountSelect.classList.add('input-missing-required');
@@ -2201,153 +1990,7 @@
 
                 if (input.files && input.files.length > maxFiles) {
                     event.preventDefault();
-                    window.alert(`Please upload no more than ${String(maxFiles)} ${fileLabel}${maxFiles === 1 ? '' : 's'} at once.`);
-                }
-            });
-        });
-    }
-
-    function rawUploadStatusNode(form) {
-        return form instanceof HTMLFormElement ? form.querySelector('[data-raw-upload-status]') : null;
-    }
-
-    function setRawUploadStatus(form, message, type = '') {
-        const node = rawUploadStatusNode(form);
-        if (!(node instanceof HTMLElement)) {
-            return;
-        }
-
-        node.hidden = String(message || '').trim() === '';
-        node.className = `form-row full raw-upload-progress${type ? ` ${type}` : ''}`;
-        node.textContent = String(message || '');
-    }
-
-    function rawUploadInput(form) {
-        return form instanceof HTMLFormElement ? form.querySelector('[data-upload-input]') : null;
-    }
-
-    function rawUploadDropzone(form) {
-        return form instanceof HTMLFormElement ? form.querySelector('[data-upload-dropzone]') : null;
-    }
-
-    function validateRawUploadForm(form) {
-        const input = rawUploadInput(form);
-        const dropzone = rawUploadDropzone(form);
-        const maxFiles = Number(dropzone instanceof HTMLElement ? dropzone.dataset.uploadMaxFiles || '3' : '3');
-        const files = input instanceof HTMLInputElement && input.files ? Array.from(input.files) : [];
-
-        if (files.length === 0) {
-            return 'Choose at least one CR2 file to upload.';
-        }
-
-        if (files.length > maxFiles) {
-            return `Upload no more than ${String(maxFiles)} CR2 files at once.`;
-        }
-
-        const invalidFile = files.find((file) => !String(file.name || '').toLowerCase().endsWith('.cr2'));
-        if (invalidFile) {
-            return `${invalidFile.name || 'Selected file'} is not a CR2 file.`;
-        }
-
-        return '';
-    }
-
-    function resetRawUploadForm(form) {
-        const input = rawUploadInput(form);
-        const dropzone = rawUploadDropzone(form);
-        const accountSelect = form instanceof HTMLFormElement ? form.querySelector('#upload_account_id') : null;
-
-        if (input instanceof HTMLInputElement) {
-            input.value = '';
-        }
-
-        updateUploadSelection(dropzone, input);
-        syncUploadSubmitState(form, input, accountSelect);
-    }
-
-    function applyAjaxPagePayload(payload) {
-        if (navigateToAjaxPayloadPage(payload)) {
-            return;
-        }
-
-        applyAjaxPayloadFragment('sidebar', () => replaceSidebar(payload.sidebar_html));
-        applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(payload.site_context_html));
-        applyAjaxPayloadFragment('developer options status', () => replaceDeveloperOptionsStatus(payload.developer_options_status_html));
-        applyAjaxPayloadFragment('cards', () => replaceCards(payload.cards));
-        applyAjaxPayloadFragment('flash', () => replaceFlash(payload.flash_html));
-        applyAjaxPayloadFragment('visible card', () => showPageCardTabForCard(payload.show_card));
-    }
-
-    function initialiseRawUploadForms(root = document) {
-        const forms = root.querySelectorAll ? root.querySelectorAll('[data-raw-upload-form="true"]') : [];
-
-        forms.forEach((form) => {
-            if (!(form instanceof HTMLFormElement) || form.dataset.rawUploadBound === '1') {
-                return;
-            }
-
-            form.dataset.rawUploadBound = '1';
-            form.addEventListener('submit', async (event) => {
-                event.preventDefault();
-
-                const validationError = validateRawUploadForm(form);
-                if (validationError !== '') {
-                    setRawUploadStatus(form, validationError, 'error');
-                    return;
-                }
-
-                const formData = new FormData(form);
-                formData.set('_ajax', '1');
-                appendCurrentPageCardKeys(formData, form);
-                appendSiteContextSelectionsToFormData(formData, form);
-
-                const ajaxNonce = reserveAjaxNonce();
-                if (ajaxNonce) {
-                    formData.set('ajax_nonce', ajaxNonce);
-                }
-
-                const submitter = event.submitter instanceof HTMLButtonElement
-                    ? event.submitter
-                    : form.querySelector('[data-upload-submit]');
-                const restoreProcessingState = beginButtonProcessingState(submitter);
-
-                setRawUploadStatus(form, 'Uploading...', '');
-
-                try {
-                    const payload = await sendAjax(formRequestUrl(form), {
-                        method: 'POST',
-                        body: formData,
-                        transport: 'xhr',
-                        onUploadProgress: (progressEvent) => {
-                            if (!progressEvent.lengthComputable || progressEvent.total <= 0) {
-                                setRawUploadStatus(form, 'Uploading...', '');
-                                return;
-                            }
-
-                            const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
-                            setRawUploadStatus(form, `Uploading ${String(percent)}%...`, '');
-                        },
-                    });
-
-                    completeAjaxNonce(ajaxNonce, payload?.ajax_nonce);
-                    setRawUploadStatus(form, 'Upload complete.', 'success');
-                    resetRawUploadForm(form);
-                    applyAjaxPagePayload(payload);
-                } catch (error) {
-                    restoreAjaxNonce(ajaxNonce);
-                    const flashHtml = error && error.payload && typeof error.payload.flash_html === 'string'
-                        ? error.payload.flash_html
-                        : renderErrorFlashHtml(error ? error.payload : null);
-
-                    if (flashHtml !== '') {
-                        replaceFlash(flashHtml);
-                    }
-
-                    setRawUploadStatus(form, 'Upload failed.', 'error');
-                    handleAjaxSecurityFailure(error ? error.payload : null);
-                    console.error(error);
-                } finally {
-                    restoreProcessingState();
+                    window.alert(`Please upload no more than ${String(maxFiles)} CSV files at once.`);
                 }
             });
         });
@@ -2405,22 +2048,6 @@
         });
     }
 
-    function syncSubmitAction(submitter) {
-        if (!(submitter instanceof HTMLButtonElement) || !submitter.form) {
-            return;
-        }
-
-        const actionValue = submitter.dataset.submitAction;
-        if (typeof actionValue !== 'string' || actionValue === '') {
-            return;
-        }
-
-        const actionField = submitter.form.querySelector('#settings_action_field');
-        if (actionField instanceof HTMLInputElement) {
-            actionField.value = actionValue;
-        }
-    }
-
     function syncSubmitField(submitter) {
         if (!(submitter instanceof HTMLButtonElement) || !submitter.form) {
             return;
@@ -2467,288 +2094,6 @@
             button.removeAttribute('title');
         });
     }
-
-    function initialisePictureViewers(root = document) {
-        const viewers = root.querySelectorAll ? root.querySelectorAll('[data-picture-viewer="true"]') : [];
-
-        viewers.forEach((viewer) => {
-            if (!(viewer instanceof HTMLElement) || viewer.dataset.pictureViewerBound === '1') {
-                return;
-            }
-
-            viewer.dataset.pictureViewerBound = '1';
-            const layout = viewer.closest('[data-picture-viewer-layout]');
-            const stateUrl = String(viewer.dataset.pictureViewerStateUrl || '').trim();
-            const pill = viewer.querySelector('[data-picture-viewer-status-pill]');
-            const openDetailsButton = viewer.querySelector('[data-picture-viewer-details-open]');
-            const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
-            const imageTypeLabel = viewer.querySelector('[data-picture-viewer-image-type-label]');
-            const fullscreenCloseButton = viewer.querySelector('[data-picture-viewer-fullscreen-close]');
-            const detailInputs = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('.picture-details-tab-input')) : [];
-            const detailPanels = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('[data-picture-details-panel]')) : [];
-            let imageNode = viewer.querySelector('[data-picture-viewer-image]');
-            let pollTimer = null;
-
-            if (stateUrl === '') {
-                return;
-            }
-
-            function setDetailsCollapsed(collapsed) {
-                if (!(layout instanceof HTMLElement)) {
-                    return;
-                }
-
-                layout.classList.toggle('is-details-collapsed', collapsed);
-                layout.classList.toggle('is-details-expanded', !collapsed);
-                if (openDetailsButton instanceof HTMLButtonElement) {
-                    openDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                    openDetailsButton.hidden = !collapsed;
-                }
-                if (closeDetailsButton instanceof HTMLButtonElement) {
-                    closeDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                }
-            }
-
-            function setPill(status) {
-                const normalised = ['queued', 'rendering', 'loaded'].includes(status) ? status : 'queued';
-                viewer.dataset.pictureViewerStatus = normalised;
-                if (pill instanceof HTMLElement) {
-                    pill.textContent = normalised.charAt(0).toUpperCase() + normalised.slice(1);
-                    pill.dataset.pictureViewerState = normalised;
-                }
-            }
-
-            function displayTypeLabel(type) {
-                const labels = {
-                    embedded: 'Embedded',
-                    thumbnail: 'Thumbnail',
-                    original: 'Original',
-                    preview: 'Preview',
-                    final: 'Final',
-                };
-                const normalised = String(type || '').trim().toLowerCase();
-
-                if (normalised === '') {
-                    return 'Queued';
-                }
-
-                return labels[normalised] || normalised.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
-            }
-
-            function setImageTypeLabel(type) {
-                if (imageTypeLabel instanceof HTMLElement) {
-                    imageTypeLabel.textContent = displayTypeLabel(type);
-                }
-            }
-
-            function setPictureFullscreen(active) {
-                viewer.classList.toggle('is-picture-fullscreen', active);
-                document.documentElement.classList.toggle('has-picture-viewer-fullscreen', active);
-                if (fullscreenCloseButton instanceof HTMLButtonElement) {
-                    fullscreenCloseButton.hidden = !active;
-                }
-            }
-
-            async function enterPictureFullscreen() {
-                if (!(imageNode instanceof HTMLImageElement) || String(imageNode.getAttribute('src') || '').trim() === '') {
-                    return;
-                }
-
-                setPictureFullscreen(true);
-                if (document.fullscreenElement !== viewer && typeof viewer.requestFullscreen === 'function') {
-                    try {
-                        await viewer.requestFullscreen({ navigationUI: 'hide' });
-                    } catch (error) {
-                        console.warn('Browser fullscreen was not available for the picture viewer.', error);
-                    }
-                }
-            }
-
-            async function exitPictureFullscreen() {
-                setPictureFullscreen(false);
-                if (document.fullscreenElement === viewer && typeof document.exitFullscreen === 'function') {
-                    try {
-                        await document.exitFullscreen();
-                    } catch (error) {
-                        console.warn('Unable to exit browser fullscreen for the picture viewer.', error);
-                    }
-                }
-            }
-
-            function swapImage(url, type) {
-                if (url === '' || type === '') {
-                    return;
-                }
-
-                const placeholder = viewer.querySelector('[data-picture-viewer-placeholder]');
-                if (!(imageNode instanceof HTMLImageElement)) {
-                    imageNode = document.createElement('img');
-                    imageNode.setAttribute('alt', 'Photo');
-                    imageNode.dataset.pictureViewerImage = 'true';
-                    viewer.appendChild(imageNode);
-                }
-
-                if (placeholder instanceof HTMLElement) {
-                    placeholder.remove();
-                }
-
-                if (imageNode.src !== new URL(url, window.location.href).href) {
-                    imageNode.src = url;
-                }
-                imageNode.dataset.pictureViewerImageType = type;
-                viewer.dataset.pictureViewerDisplayType = type;
-                setImageTypeLabel(type);
-            }
-
-            async function poll(attempt = 0) {
-                if (!viewer.isConnected) {
-                    return;
-                }
-
-                try {
-                    const response = await sendAjax(stateUrl);
-                    if (!response || response.success === false) {
-                        setPill('queued');
-                    } else {
-                        const status = String(response.final_status || 'queued');
-                        const displayUrl = String(response.display_url || '');
-                        const displayType = String(response.display_type || '');
-                        setPill(status);
-                        swapImage(displayUrl, displayType);
-
-                        if (status === 'loaded') {
-                            return;
-                        }
-                    }
-                } catch (error) {
-                    setPill('queued');
-                    console.error(error);
-                }
-
-                const delay = attempt < 5 ? 1500 : 4000;
-                pollTimer = window.setTimeout(() => poll(attempt + 1), delay);
-            }
-
-            async function loadDetailsPanel(panel) {
-                if (!(panel instanceof HTMLElement) || panel.dataset.pictureDetailsLoaded === '1') {
-                    return;
-                }
-
-                const url = String(panel.dataset.pictureDetailsLoadUrl || '').trim();
-                if (url === '') {
-                    panel.dataset.pictureDetailsLoaded = '1';
-                    return;
-                }
-
-                panel.dataset.pictureDetailsLoaded = '1';
-                try {
-                    const response = await sendAjax(url);
-                    if (!response || response.success === false) {
-                        panel.innerHTML = '<p class="helper">Details are not available.</p>';
-                        return;
-                    }
-
-                    panel.innerHTML = String(response.html || '<p class="helper">Details are not available.</p>');
-                } catch (error) {
-                    panel.dataset.pictureDetailsLoaded = '';
-                    panel.innerHTML = '<p class="helper">Details are not available.</p>';
-                    console.error(error);
-                }
-            }
-
-            setPill(String(viewer.dataset.pictureViewerStatus || 'queued'));
-            setImageTypeLabel(String(viewer.dataset.pictureViewerDisplayType || ''));
-            setDetailsCollapsed(true);
-            detailInputs.forEach((input, index) => {
-                if (!(input instanceof HTMLInputElement)) {
-                    return;
-                }
-
-                input.addEventListener('change', () => {
-                    if (input.checked) {
-                        void loadDetailsPanel(detailPanels[index]);
-                    }
-                });
-                if (input.checked) {
-                    void loadDetailsPanel(detailPanels[index]);
-                }
-            });
-            if (openDetailsButton instanceof HTMLButtonElement) {
-                openDetailsButton.addEventListener('click', () => setDetailsCollapsed(false));
-            }
-            if (closeDetailsButton instanceof HTMLButtonElement) {
-                closeDetailsButton.addEventListener('click', () => setDetailsCollapsed(true));
-            }
-            viewer.addEventListener('click', (event) => {
-                if (event.target !== imageNode || viewer.classList.contains('is-picture-fullscreen')) {
-                    return;
-                }
-
-                void enterPictureFullscreen();
-            });
-            if (fullscreenCloseButton instanceof HTMLButtonElement) {
-                fullscreenCloseButton.addEventListener('click', (event) => {
-                    event.stopPropagation();
-                    void exitPictureFullscreen();
-                });
-            }
-            document.addEventListener('fullscreenchange', () => {
-                if (document.fullscreenElement !== viewer && viewer.classList.contains('is-picture-fullscreen')) {
-                    setPictureFullscreen(false);
-                }
-            });
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape' && viewer.classList.contains('is-picture-fullscreen')) {
-                    void exitPictureFullscreen();
-                }
-            });
-            if (viewer.dataset.pictureViewerStatus !== 'loaded') {
-                if (imageNode instanceof HTMLImageElement && String(imageNode.getAttribute('src') || '').trim() !== '') {
-                    pollTimer = window.setTimeout(() => poll(0), 1000);
-                } else {
-                    void poll(0);
-                }
-            }
-
-            window.addEventListener('pagehide', () => {
-                if (pollTimer !== null) {
-                    window.clearTimeout(pollTimer);
-                }
-            }, { once: true });
-        });
-    }
-
-    function prefetchGalleryViewerImage(link) {
-        if (!(link instanceof HTMLAnchorElement)) {
-            return;
-        }
-
-        const url = String(link.dataset.galleryViewerPrefetchUrl || '').trim();
-        if (url === '' || link.dataset.galleryViewerPrefetchStarted === '1' || galleryViewerPrefetchImages.has(url)) {
-            return;
-        }
-
-        link.dataset.galleryViewerPrefetchStarted = '1';
-        const image = new Image();
-        image.decoding = 'async';
-        if ('fetchPriority' in image) {
-            image.fetchPriority = 'high';
-        }
-        image.src = url;
-        galleryViewerPrefetchImages.set(url, image);
-    }
-
-    function prefetchGalleryViewerImageFromEvent(event) {
-        const link = event.target instanceof Element
-            ? event.target.closest('[data-gallery-viewer-prefetch-url]')
-            : null;
-
-        if (link instanceof HTMLAnchorElement) {
-            prefetchGalleryViewerImage(link);
-        }
-    }
-
-
 
     function initialiseButtonTitleVisibility() {
         let syncingButtonTitles = false;
@@ -2817,11 +2162,7 @@
                 const replacement = template.content.firstElementChild;
 
                 if (replacement instanceof HTMLElement && current) {
-                    const wasMaximized = current.classList.contains('card-maximized');
                     current.replaceWith(replacement);
-                    if (wasMaximized) {
-                        setCardMaximized(replacement, true);
-                    }
                     initialisePageCardTabs(replacement);
                     initialiseCardToggles(replacement);
                     initStateWatchers(replacement);
@@ -2829,12 +2170,8 @@
                     initialiseDirtyActionControls(replacement);
                     initDangerZoneConfirmationControls(replacement);
                     initialiseUploadDropzones(replacement);
-                    initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
-                    syncInternalProfileAdjustmentForms(replacement);
-                    initialisePictureViewers(replacement);
-                    initialiseGalleryAutoRefresh(replacement);
                     initialiseCardAutoRefresh(replacement);
                     updateCardMaximizedBodyState();
                     return;
@@ -2854,12 +2191,8 @@
                     initialiseDirtyActionControls(replacement);
                     initDangerZoneConfirmationControls(replacement);
                     initialiseUploadDropzones(replacement);
-                    initialiseRawUploadForms(replacement);
                     initialisePasswordRequirementPanels(replacement);
                     initialiseTableCondensedControls(replacement);
-                    syncInternalProfileAdjustmentForms(replacement);
-                    initialisePictureViewers(replacement);
-                    initialiseGalleryAutoRefresh(replacement);
                     initialiseCardAutoRefresh(replacement);
                 }
             } catch (error) {
@@ -2953,296 +2286,6 @@
                 }
             };
 
-            schedule();
-        });
-    }
-
-    function galleryAutoRefreshEnabled() {
-        if (!afStorageAvailable('localStorage')) {
-            return true;
-        }
-
-        try {
-            const stored = window.localStorage.getItem(galleryAutoRefreshStorageKey);
-            return stored === null ? true : stored === '1';
-        } catch (error) {
-            return true;
-        }
-    }
-
-    function setGalleryAutoRefreshEnabled(enabled) {
-        if (!afStorageAvailable('localStorage')) {
-            return;
-        }
-
-        try {
-            window.localStorage.setItem(galleryAutoRefreshStorageKey, enabled ? '1' : '0');
-        } catch (error) {
-            // Storage may be disabled; the current checkbox state still applies.
-        }
-    }
-
-    function galleryAutoScrollEnabled() {
-        if (!afStorageAvailable('localStorage')) {
-            return false;
-        }
-
-        try {
-            return window.localStorage.getItem(galleryAutoScrollStorageKey) === '1';
-        } catch (error) {
-            return false;
-        }
-    }
-
-    function setGalleryAutoScrollEnabled(enabled) {
-        if (!afStorageAvailable('localStorage')) {
-            return;
-        }
-
-        try {
-            window.localStorage.setItem(galleryAutoScrollStorageKey, enabled ? '1' : '0');
-        } catch (error) {
-            // Storage may be disabled; the current checkbox state still applies.
-        }
-    }
-
-    function galleryAutoRefreshTargets(root) {
-        const targets = [];
-
-        if (root instanceof HTMLElement && root.matches('[data-gallery-auto-refresh="true"]')) {
-            targets.push(root);
-        }
-
-        if (root && typeof root.querySelectorAll === 'function') {
-            root.querySelectorAll('[data-gallery-auto-refresh="true"]').forEach((node) => {
-                if (node instanceof HTMLElement) {
-                    targets.push(node);
-                }
-            });
-        }
-
-        return targets;
-    }
-
-    function galleryHasPendingPreviews(target) {
-        if (!(target instanceof HTMLElement)) {
-            return false;
-        }
-
-        return target.dataset.galleryPending === '1'
-            || target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement;
-    }
-
-    function galleryHasPendingPreviewTiles(target) {
-        return target instanceof HTMLElement
-            && target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement;
-    }
-
-    function galleryCardRefreshPayload(card, target) {
-        const pageParams = new URL(window.location.href).searchParams;
-        const cardKey = String(card.dataset.cardKey || '').trim();
-        const pageField = String(target.dataset.galleryPageField || '').trim();
-        const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
-        const perPageField = String(target.dataset.galleryPerPageField || '').trim();
-        const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
-        const payload = {
-            _ajax: '1',
-            _card_refresh: '1',
-            page: pageParams.get('page') || 'gallery',
-            cards: [cardKey],
-        };
-
-        if (pageField !== '') {
-            payload[pageField] = String(pageValue);
-        }
-
-        if (perPageField !== '') {
-            payload[perPageField] = String(perPageValue);
-        }
-
-        return payload;
-    }
-
-    function galleryResponseCard(response, card) {
-        const html = String((response.cards || {})[card.id] || '').trim();
-        if (html === '') {
-            return null;
-        }
-
-        const template = document.createElement('template');
-        template.innerHTML = html;
-        const replacement = template.content.firstElementChild;
-
-        return replacement instanceof HTMLElement ? replacement : null;
-    }
-
-    function replaceGalleryPendingTiles(target, replacementCard) {
-        const replacementTarget = replacementCard instanceof HTMLElement
-            ? replacementCard.querySelector('[data-gallery-auto-refresh="true"]')
-            : null;
-
-        if (!(target instanceof HTMLElement) || !(replacementTarget instanceof HTMLElement)) {
-            return;
-        }
-
-        target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-id]').forEach((currentTile) => {
-            if (!(currentTile instanceof HTMLElement)) {
-                return;
-            }
-
-            const photoId = String(currentTile.dataset.galleryPhotoId || '').trim();
-            const replacementTile = photoId !== ''
-                ? Array.from(replacementTarget.querySelectorAll('[data-gallery-photo-id]')).find((node) => (
-                    node instanceof HTMLElement
-                    && String(node.dataset.galleryPhotoId || '').trim() === photoId
-                ))
-                : null;
-
-            if (replacementTile instanceof HTMLElement) {
-                currentTile.replaceWith(replacementTile);
-            }
-        });
-
-        target.dataset.galleryPending = galleryHasPendingPreviewTiles(target) ? '1' : '0';
-    }
-
-    function galleryPendingStatusUrls(target) {
-        if (!(target instanceof HTMLElement)) {
-            return [];
-        }
-
-        const urls = [];
-        target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-status-url]').forEach((node) => {
-            if (!(node instanceof HTMLElement)) {
-                return;
-            }
-
-            const statusUrl = String(node.dataset.galleryPhotoStatusUrl || '').trim();
-            if (statusUrl !== '' && !urls.includes(statusUrl)) {
-                urls.push(statusUrl);
-            }
-        });
-
-        return urls;
-    }
-
-    async function pollGalleryPhotoStatuses(target) {
-        const urls = galleryPendingStatusUrls(target);
-        if (urls.length === 0) {
-            return;
-        }
-
-        await Promise.allSettled(urls.map((url) => sendAjax(url)));
-    }
-
-    function initialiseGalleryAutoRefresh(root = document) {
-        galleryAutoRefreshTargets(root).forEach((target) => {
-            if (target.dataset.galleryAutoRefreshBound === '1') {
-                return;
-            }
-
-            target.dataset.galleryAutoRefreshBound = '1';
-            const card = target.closest('.card[data-card-key]');
-            const refreshControl = card instanceof HTMLElement
-                ? card.querySelector('[data-gallery-auto-refresh-toggle]')
-                : null;
-            const scrollControl = card instanceof HTMLElement
-                ? card.querySelector('[data-gallery-auto-scroll-toggle]')
-                : null;
-
-            if (!(card instanceof HTMLElement)
-                || !(refreshControl instanceof HTMLInputElement)
-                || !(scrollControl instanceof HTMLInputElement)
-            ) {
-                return;
-            }
-
-            const state = {
-                inFlight: false,
-                lastCardRefreshAt: 0,
-                timerId: null,
-            };
-            refreshControl.checked = galleryAutoRefreshEnabled();
-            scrollControl.checked = galleryAutoScrollEnabled();
-
-            const clearTimer = () => {
-                if (state.timerId !== null) {
-                    window.clearTimeout(state.timerId);
-                    state.timerId = null;
-                }
-            };
-
-            const shouldRefresh = () => (
-                card.isConnected
-                && (
-                    scrollControl.checked
-                    || (refreshControl.checked && galleryHasPendingPreviews(target))
-                )
-            );
-
-            const schedule = () => {
-                clearTimer();
-                if (!shouldRefresh()) {
-                    return;
-                }
-
-                state.timerId = window.setTimeout(refresh, galleryAutoRefreshIntervalMs);
-            };
-
-            const refresh = async () => {
-                state.timerId = null;
-                if (!shouldRefresh()) {
-                    return;
-                }
-
-                if (document.hidden || state.inFlight) {
-                    schedule();
-                    return;
-                }
-
-                state.inFlight = true;
-                const shouldAutoScroll = scrollControl.checked;
-                const shouldRefreshCard = shouldAutoScroll
-                    || Date.now() - state.lastCardRefreshAt >= galleryCardRefreshIntervalMs;
-
-                try {
-                    if (shouldRefreshCard) {
-                        const response = await sendAjax(window.location.href, {
-                            method: 'POST',
-                            body: JSON.stringify(galleryCardRefreshPayload(card, target)),
-                            headers: { 'Content-Type': 'application/json' },
-                        });
-                        state.lastCardRefreshAt = Date.now();
-                        applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
-                        if (shouldAutoScroll) {
-                            applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
-                        } else {
-                            applyAjaxPayloadFragment('gallery pending tiles', () => {
-                                replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
-                            });
-                        }
-                    } else {
-                        await pollGalleryPhotoStatuses(target);
-                    }
-                } catch (error) {
-                    console.error('Failed to auto refresh gallery.', error);
-                    schedule();
-                } finally {
-                    state.inFlight = false;
-                    if (!shouldAutoScroll || card.isConnected) {
-                        schedule();
-                    }
-                }
-            };
-
-            refreshControl.addEventListener('change', () => {
-                setGalleryAutoRefreshEnabled(refreshControl.checked);
-                schedule();
-            });
-            scrollControl.addEventListener('change', () => {
-                setGalleryAutoScrollEnabled(scrollControl.checked);
-                schedule();
-            });
             schedule();
         });
     }
@@ -3377,19 +2420,7 @@
     }
 
     function initialiseCardToggles(scope = document) {
-        const cards = [];
-
-        if (scope instanceof HTMLElement && scope.matches('.card')) {
-            cards.push(scope);
-        }
-
-        if (scope.querySelectorAll) {
-            scope.querySelectorAll('.card').forEach((card) => {
-                if (card instanceof HTMLElement) {
-                    cards.push(card);
-                }
-            });
-        }
+        const cards = scope.querySelectorAll ? scope.querySelectorAll('.card') : [];
 
         cards.forEach((card) => {
             const title = card.querySelector('.card-title');
@@ -3409,8 +2440,6 @@
             title.setAttribute('tabindex', '0');
             title.setAttribute('aria-controls', cardBody.id);
             title.setAttribute('aria-expanded', cardBody.hidden ? 'false' : 'true');
-
-            restoreStoredCardMaximized(card);
         });
     }
 
@@ -3422,77 +2451,12 @@
         body.classList.toggle('card-maximized-active', Boolean(document.querySelector('.card.card-maximized')));
     }
 
-    function currentPageId() {
-        const main = document.querySelector('.main[data-current-page]');
-
-        return main instanceof HTMLElement ? String(main.dataset.currentPage || '').trim() : '';
-    }
-
-    function cardStorageIdentity(card) {
-        if (!(card instanceof HTMLElement)) {
-            return '';
-        }
-
-        const cardKey = String(card.dataset.cardKey || '').trim();
-        const pageId = currentPageId();
-
-        return pageId !== '' && cardKey !== '' ? `${pageId}:${cardKey}` : '';
-    }
-
-    function storedMaximizedCardIdentity() {
-        if (!afStorageAvailable('localStorage')) {
-            return '';
-        }
-
-        try {
-            return String(window.localStorage.getItem(cardMaximizedStorageKey) || '').trim();
-        } catch (error) {
-            return '';
-        }
-    }
-
-    function setStoredMaximizedCard(card, maximized) {
-        if (!afStorageAvailable('localStorage')) {
-            return;
-        }
-
-        const identity = cardStorageIdentity(card);
-        if (identity === '') {
-            return;
-        }
-
-        try {
-            if (maximized) {
-                window.localStorage.setItem(cardMaximizedStorageKey, identity);
-                return;
-            }
-
-            if (storedMaximizedCardIdentity() === identity) {
-                window.localStorage.removeItem(cardMaximizedStorageKey);
-            }
-        } catch (error) {
-            // Storage may be disabled; the visible card state still applies.
-        }
-    }
-
-    function restoreStoredCardMaximized(card) {
-        const identity = cardStorageIdentity(card);
-
-        if (identity !== '' && storedMaximizedCardIdentity() === identity) {
-            setCardMaximized(card, true, false, false);
-        }
-    }
-
-    function setCardMaximized(card, maximized, focusToggle = false, persist = true) {
+    function setCardMaximized(card, maximized, focusToggle = false) {
         if (!(card instanceof HTMLElement)) {
             return;
         }
 
         card.classList.toggle('card-maximized', maximized);
-
-        if (persist) {
-            setStoredMaximizedCard(card, maximized);
-        }
 
         const toggle = card.querySelector('[data-card-size-toggle]');
         if (toggle instanceof HTMLButtonElement) {
@@ -3963,100 +2927,6 @@
         return false;
     }
 
-    function clearGalleryEventCreateModal(refocus = false) {
-        document.querySelectorAll('.gallery-event-create-backdrop').forEach((node) => node.remove());
-        document.querySelectorAll('.gallery-event-create-window').forEach((node) => node.remove());
-
-        if (refocus && activeGalleryEventCreateButton instanceof HTMLButtonElement && activeGalleryEventCreateButton.isConnected) {
-            activeGalleryEventCreateButton.focus();
-        }
-
-        activeGalleryEventCreateButton = null;
-    }
-
-    function hiddenInput(name, value) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-
-        return input;
-    }
-
-    function showGalleryEventCreateModal(button) {
-        if (!(button instanceof HTMLButtonElement)) {
-            return;
-        }
-
-        clearGalleryEventCreateModal(false);
-        activeGalleryEventCreateButton = button;
-
-        const card = button.closest('[data-page-stack-card], .card, body');
-        const existingForm = card instanceof HTMLElement ? card.querySelector('#gallery-event-assignment-form') : null;
-        const csrfInput = existingForm instanceof HTMLFormElement ? existingForm.querySelector('input[name="csrf_token"]') : null;
-        const csrfToken = csrfInput instanceof HTMLInputElement ? csrfInput.value : '';
-
-        const backdrop = document.createElement('div');
-        backdrop.className = 'gallery-event-create-backdrop';
-        backdrop.addEventListener('click', () => clearGalleryEventCreateModal(true));
-
-        const windowShell = document.createElement('div');
-        windowShell.className = 'gallery-event-create-window';
-        windowShell.setAttribute('role', 'dialog');
-        windowShell.setAttribute('aria-modal', 'true');
-        windowShell.setAttribute('aria-labelledby', 'gallery-event-create-title');
-
-        const title = document.createElement('h3');
-        title.id = 'gallery-event-create-title';
-        title.textContent = 'Add Event';
-
-        const form = document.createElement('form');
-        form.method = 'post';
-        form.action = '?page=gallery';
-        form.dataset.ajax = 'true';
-        form.dataset.galleryEventCreateForm = 'true';
-        form.className = 'gallery-event-create-form';
-
-        const label = document.createElement('label');
-        const labelText = document.createElement('span');
-        labelText.textContent = 'Event name';
-        const input = document.createElement('input');
-        input.className = 'input';
-        input.name = 'event_name';
-        input.type = 'text';
-        input.required = true;
-        input.autocomplete = 'off';
-        label.append(labelText, input);
-
-        const actions = document.createElement('div');
-        actions.className = 'gallery-event-create-actions';
-
-        const add = document.createElement('button');
-        add.className = 'button button-inline primary';
-        add.type = 'submit';
-        add.textContent = 'Add';
-
-        const cancel = document.createElement('button');
-        cancel.className = 'button button-inline';
-        cancel.type = 'button';
-        cancel.textContent = 'Cancel';
-        cancel.addEventListener('click', () => clearGalleryEventCreateModal(true));
-
-        actions.append(add, cancel);
-        form.append(
-            hiddenInput('card_action', 'EventPermissions'),
-            hiddenInput('event_permissions_action', 'create_event'),
-            hiddenInput('csrf_token', csrfToken),
-            hiddenInput('cards[]', 'browse_gallery'),
-            label,
-            actions
-        );
-        windowShell.append(title, form);
-
-        document.body.append(backdrop, windowShell);
-        input.focus();
-    }
-
     document.addEventListener('submit', async (event) => {
         const form = event.target;
         if (!(form instanceof HTMLFormElement)) {
@@ -4080,7 +2950,6 @@
             return;
         }
 
-        syncSubmitAction(event.submitter);
         syncSubmitField(event.submitter);
 
         const formData = new FormData(form);
@@ -4110,7 +2979,6 @@
         }
 
         const restoreProcessingState = beginButtonProcessingState(event.submitter);
-        const closeGalleryEventCreateOnSuccess = form.dataset.galleryEventCreateForm === 'true';
 
         try {
             const payload = await sendAjax(requestUrl, {
@@ -4140,10 +3008,6 @@
             applyAjaxPayloadFragment('flash', () => replaceFlash(payload.flash_html));
             applyAjaxPayloadFragment('visible card', () => showPageCardTabForCard(payload.show_card));
 
-            if (closeGalleryEventCreateOnSuccess) {
-                clearGalleryEventCreateModal(false);
-            }
-
         } catch (error) {
             restoreAjaxNonce(ajaxNonce);
             const flashHtml = error && error.payload && typeof error.payload.flash_html === 'string'
@@ -4162,54 +3026,11 @@
         }
     });
 
-    document.addEventListener('pointerover', prefetchGalleryViewerImageFromEvent);
-    document.addEventListener('pointerdown', prefetchGalleryViewerImageFromEvent);
-    document.addEventListener('focusin', prefetchGalleryViewerImageFromEvent);
-    document.addEventListener('touchstart', prefetchGalleryViewerImageFromEvent, { passive: true });
-
     document.addEventListener('click', async (event) => {
-        prefetchGalleryViewerImageFromEvent(event);
-
         const cardSizeToggle = event.target instanceof Element ? event.target.closest('[data-card-size-toggle]') : null;
         if (cardSizeToggle instanceof HTMLButtonElement) {
             event.preventDefault();
             toggleCardMaximized(cardSizeToggle);
-            return;
-        }
-
-        const eventUserPickerToggle = event.target instanceof Element ? event.target.closest('[data-event-user-picker-toggle]') : null;
-        if (eventUserPickerToggle instanceof HTMLButtonElement) {
-            event.preventDefault();
-            const card = eventUserPickerToggle.closest('.event-permissions');
-            const picker = card instanceof HTMLElement ? card.querySelector('[data-event-user-picker]') : null;
-            if (picker instanceof HTMLElement) {
-                picker.hidden = !picker.hidden;
-            }
-            return;
-        }
-
-        const galleryEventCreateToggle = event.target instanceof Element ? event.target.closest('[data-gallery-event-create-toggle]') : null;
-        if (galleryEventCreateToggle instanceof HTMLButtonElement) {
-            event.preventDefault();
-            showGalleryEventCreateModal(galleryEventCreateToggle);
-            return;
-        }
-
-        const galleryEventsToggle = event.target instanceof Element ? event.target.closest('[data-gallery-events-toggle]') : null;
-        if (galleryEventsToggle instanceof HTMLButtonElement) {
-            event.preventDefault();
-            const card = galleryEventsToggle.closest('[data-page-stack-card], .card, body');
-            if (card instanceof HTMLElement || card === document.body) {
-                const pane = card.querySelector('[data-gallery-events-pane]');
-                setGalleryEventsPaneOpen(card, pane instanceof HTMLElement ? pane.hidden : false);
-            }
-            return;
-        }
-
-        const assignmentButton = event.target instanceof Element ? event.target.closest('[data-gallery-assignment-event]') : null;
-        if (assignmentButton instanceof HTMLButtonElement) {
-            event.preventDefault();
-            toggleGalleryAssignmentEvent(assignmentButton);
             return;
         }
 
@@ -4241,12 +3062,6 @@
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
-            if (document.querySelector('.gallery-event-create-window')) {
-                event.preventDefault();
-                clearGalleryEventCreateModal(true);
-                return;
-            }
-
             const maximizedCard = document.querySelector('.card.card-maximized');
             if (maximizedCard instanceof HTMLElement) {
                 event.preventDefault();
@@ -4283,34 +3098,16 @@
             : null;
 
         if (submitOnChangeControl instanceof HTMLElement) {
-            const associatedForm = submitOnChangeControl instanceof HTMLInputElement
-                || submitOnChangeControl instanceof HTMLSelectElement
-                || submitOnChangeControl instanceof HTMLTextAreaElement
-                ? submitOnChangeControl.form
-                : null;
-            const form = submitOnChangeControl.closest('form[data-ajax="true"]')
-                ?? (associatedForm instanceof HTMLFormElement && associatedForm.matches('form[data-ajax="true"]') ? associatedForm : null);
+            const form = submitOnChangeControl.closest('form[data-ajax="true"]');
             if (form instanceof HTMLFormElement) {
                 form.requestSubmit();
                 return;
             }
         }
 
-        const galleryEventCheckbox = event.target instanceof Element
-            ? event.target.closest('[data-gallery-event-photo-checkbox]')
-            : null;
-        if (galleryEventCheckbox instanceof HTMLInputElement) {
-            void submitGalleryEventCheckbox(galleryEventCheckbox);
-            return;
-        }
-
         const select = event.target;
         if (!(select instanceof HTMLSelectElement)) {
             return;
-        }
-
-        if (select.id === 'internal-profiles-image-type' || select.id === 'internal-profiles-profile-name') {
-            syncInternalProfileAdjustmentForms(document);
         }
 
         if (select.dataset.noSubmitOnChange === 'true') {
@@ -4333,193 +3130,6 @@
         }
     });
 
-    function setGalleryEventsPaneOpen(root, open) {
-        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
-            root = document;
-        }
-
-        const pane = root.querySelector ? root.querySelector('[data-gallery-events-pane]') : null;
-        const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
-        const toggle = root.querySelector ? root.querySelector('[data-gallery-events-toggle]') : null;
-        if (pane instanceof HTMLElement) {
-            pane.hidden = !open;
-        }
-        if (grid instanceof HTMLElement) {
-            grid.classList.toggle('is-assigning-events', open);
-        }
-        if (toggle instanceof HTMLButtonElement) {
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            toggle.classList.toggle('primary', !open);
-            toggle.textContent = open ? 'Close Events' : 'Events';
-        }
-        if (!open) {
-            setGalleryAssignmentEvent(root, '');
-            return;
-        }
-
-        updateGalleryEventCheckboxStates(root);
-    }
-
-    function toggleGalleryAssignmentEvent(button) {
-        const root = button.closest('[data-page-stack-card], .card, body');
-        if (!(root instanceof HTMLElement)) {
-            return;
-        }
-
-        const eventId = String(button.value || '').trim();
-        const currentEventId = galleryAssignmentEventId(root);
-        setGalleryAssignmentEvent(root, currentEventId === eventId ? '' : eventId);
-    }
-
-    function setGalleryAssignmentEvent(root, eventId) {
-        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
-            root = document;
-        }
-
-        eventId = String(eventId || '').trim();
-        const form = root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
-        const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
-        if (eventInput instanceof HTMLInputElement) {
-            eventInput.value = eventId;
-        }
-
-        const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
-        if (grid instanceof HTMLElement) {
-            grid.classList.toggle('has-selected-event', eventId !== '');
-        }
-
-        if (root.querySelectorAll) {
-            root.querySelectorAll('[data-gallery-assignment-event]').forEach((button) => {
-                if (!(button instanceof HTMLButtonElement)) {
-                    return;
-                }
-
-                const selected = eventId !== '' && String(button.value || '').trim() === eventId;
-                button.classList.toggle('is-selected', selected);
-                button.setAttribute('aria-pressed', selected ? 'true' : 'false');
-            });
-        }
-
-        updateGalleryEventCheckboxStates(root);
-    }
-
-    function galleryAssignmentEventId(root) {
-        const form = root && root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
-        const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
-
-        return eventInput instanceof HTMLInputElement ? String(eventInput.value || '').trim() : '';
-    }
-
-    function updateGalleryEventCheckboxStates(root) {
-        if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
-            root = document;
-        }
-
-        const eventId = galleryAssignmentEventId(root);
-        if (!root.querySelectorAll) {
-            return;
-        }
-
-        root.querySelectorAll('[data-gallery-event-photo-checkbox]').forEach((checkbox) => {
-            if (!(checkbox instanceof HTMLInputElement)) {
-                return;
-            }
-
-            const tile = checkbox.closest('[data-gallery-photo-id]');
-            const eventIds = galleryTileEventIds(tile);
-            checkbox.checked = eventId !== '' && eventIds.includes(eventId);
-        });
-    }
-
-    function galleryTileEventIds(tile) {
-        if (!(tile instanceof HTMLElement)) {
-            return [];
-        }
-
-        return String(tile.dataset.galleryEventIds || '')
-            .split(',')
-            .map((value) => value.trim())
-            .filter((value) => value !== '');
-    }
-
-    function setGalleryTileEventId(tile, eventId, assigned) {
-        if (!(tile instanceof HTMLElement) || eventId === '') {
-            return;
-        }
-
-        const ids = galleryTileEventIds(tile).filter((id) => id !== eventId);
-        if (assigned) {
-            ids.push(eventId);
-        }
-
-        tile.dataset.galleryEventIds = Array.from(new Set(ids)).join(',');
-    }
-
-    async function submitGalleryEventCheckbox(checkbox) {
-        const root = checkbox.closest('[data-page-stack-card], .card, body');
-        if (!(root instanceof HTMLElement)) {
-            return;
-        }
-
-        const form = root.querySelector('[data-gallery-event-immediate-form]');
-        const eventId = galleryAssignmentEventId(root);
-        const tile = checkbox.closest('[data-gallery-photo-id]');
-        const photoId = checkbox.value;
-        if (!(form instanceof HTMLFormElement) || !(tile instanceof HTMLElement) || eventId === '' || photoId === '') {
-            checkbox.checked = !checkbox.checked;
-            return;
-        }
-
-        const assigned = checkbox.checked;
-        const previous = !assigned;
-        const formData = new FormData(form);
-        formData.set('_ajax', '1');
-        formData.set('assignment_event_id', eventId);
-        formData.set('assignment_state', assigned ? '1' : '0');
-        formData.delete('photo_ids');
-        formData.delete('photo_ids[]');
-        formData.append('photo_ids[]', photoId);
-
-        const payload = formDataToJsonPayload(formData);
-        const ajaxNonce = requiresAjaxNonce('POST', payload) ? reserveAjaxNonce() : null;
-        if (ajaxNonce) {
-            payload.ajax_nonce = ajaxNonce;
-        }
-
-        checkbox.disabled = true;
-        let nonceCompleted = false;
-        try {
-            const response = await sendAjax(formRequestUrl(form), {
-                method: 'POST',
-                body: JSON.stringify(payload),
-                headers: { 'Content-Type': 'application/json' },
-            });
-            if (!response || response.success === false) {
-                completeAjaxNonce(ajaxNonce, response?.ajax_nonce);
-                nonceCompleted = true;
-                throw createAjaxError(200, response);
-            }
-            completeAjaxNonce(ajaxNonce, response?.ajax_nonce);
-            nonceCompleted = true;
-            setGalleryTileEventId(tile, eventId, assigned);
-        } catch (error) {
-            if (!nonceCompleted) {
-                restoreAjaxNonce(ajaxNonce);
-            }
-            checkbox.checked = previous;
-            const flashHtml = error && error.payload && typeof error.payload.flash_html === 'string'
-                ? error.payload.flash_html
-                : renderErrorFlashHtml(error ? error.payload : null);
-            if (flashHtml !== '') {
-                replaceFlash(flashHtml);
-            }
-            handleAjaxSecurityFailure(error ? error.payload : null);
-            console.error(error);
-        } finally {
-            checkbox.disabled = false;
-        }
-    }
-
     initialiseSidebar(document);
     initialisePageCardTabs(document);
     initialiseCardToggles();
@@ -4528,12 +3138,8 @@
     initialiseDirtyActionControls(document);
     initDangerZoneConfirmationControls(document);
     initialiseUploadDropzones(document);
-    initialiseRawUploadForms(document);
     initialisePasswordRequirementPanels(document);
     initialiseTableCondensedControls(document);
-    syncInternalProfileAdjustmentForms(document);
-    initialisePictureViewers(document);
-    initialiseGalleryAutoRefresh(document);
     initialiseCardAutoRefresh(document);
     initialiseButtonTitleVisibility();
     logFlashMessages(document.getElementById('flash-messages'));

@@ -3,6 +3,17 @@
 
   const panels = new WeakSet();
   const pollTimers = new WeakMap();
+  const projectAjaxNonceBootstrapId = 'ajax-security-bootstrap';
+  const projectAjaxNonceState = {
+    available: [],
+    inFlight: new Set(),
+  };
+  const galleryAutoRefreshStorageKey = 'gallery:auto-refresh:browse_gallery';
+  const galleryAutoScrollStorageKey = 'gallery:auto-scroll:browse_gallery';
+  const galleryAutoRefreshIntervalMs = 5000;
+  const galleryCardRefreshIntervalMs = 30000;
+  const galleryViewerPrefetchImages = new Map();
+  let activeGalleryEventCreateButton = null;
 
   function statusLabel(status) {
     const value = String(status || '').toLowerCase();
@@ -19,6 +30,376 @@
     if (node instanceof HTMLElement) {
       node.textContent = text;
     }
+  }
+
+  function projectStorageAvailable(storageName) {
+    try {
+      const storage = window[storageName];
+      const probe = '__swallowtail_probe__';
+      if (!storage) {
+        return false;
+      }
+      storage.setItem(probe, '1');
+      storage.removeItem(probe);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function projectLoadAjaxNonceBootstrap() {
+    const node = document.getElementById(projectAjaxNonceBootstrapId);
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(node.dataset.noncePayload || '{}');
+      projectAjaxNonceState.available = Array.isArray(payload?.nonce_pool)
+        ? payload.nonce_pool
+          .map((nonce) => String(nonce || '').trim())
+          .filter((nonce) => nonce !== '')
+        : [];
+      projectAjaxNonceState.inFlight.clear();
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  function projectReserveAjaxNonce() {
+    const nonce = String(projectAjaxNonceState.available.pop() || '').trim();
+    if (nonce === '') {
+      return null;
+    }
+    projectAjaxNonceState.inFlight.add(nonce);
+    return nonce;
+  }
+
+  function projectRestoreAjaxNonce(nonce) {
+    const value = String(nonce || '').trim();
+    if (value === '') {
+      return;
+    }
+    projectAjaxNonceState.inFlight.delete(value);
+    if (!projectAjaxNonceState.available.includes(value)) {
+      projectAjaxNonceState.available.push(value);
+    }
+  }
+
+  function projectCompleteAjaxNonce(usedNonce, replacementNonce) {
+    const used = String(usedNonce || '').trim();
+    if (used !== '') {
+      projectAjaxNonceState.inFlight.delete(used);
+    }
+
+    const replacement = String(replacementNonce || '').trim();
+    if (replacement !== ''
+      && !projectAjaxNonceState.available.includes(replacement)
+      && !projectAjaxNonceState.inFlight.has(replacement)
+    ) {
+      projectAjaxNonceState.available.push(replacement);
+    }
+  }
+
+  function projectCreateAjaxError(status, payload = null) {
+    const message = payload && Array.isArray(payload.errors) && payload.errors.length > 0
+      ? payload.errors.join(' ')
+      : `Request failed with status ${String(status)}`;
+    const error = new Error(message);
+    error.status = status;
+    error.payload = payload;
+    return error;
+  }
+
+  function projectFormRequestUrl(form) {
+    if (!(form instanceof HTMLFormElement)) {
+      return window.location.href;
+    }
+
+    const action = String(form.getAttribute('action') || '').trim();
+    return action === '' ? window.location.href : action;
+  }
+
+  function projectFormDataToJsonPayload(formData) {
+    const payload = {};
+    if (!(formData instanceof FormData)) {
+      return payload;
+    }
+
+    formData.forEach((value, key) => {
+      const normalisedKey = key.endsWith('[]') ? key.slice(0, -2) : key;
+      if (Object.prototype.hasOwnProperty.call(payload, normalisedKey)) {
+        if (Array.isArray(payload[normalisedKey])) {
+          payload[normalisedKey].push(value);
+          return;
+        }
+        payload[normalisedKey] = [payload[normalisedKey], value];
+        return;
+      }
+      payload[normalisedKey] = key.endsWith('[]') ? [value] : value;
+    });
+
+    return payload;
+  }
+
+  function projectCollectSiteContextSelections() {
+    const selections = [];
+    document.querySelectorAll('[data-site-context-key]').forEach((node) => {
+      if (!(node instanceof HTMLSelectElement || node instanceof HTMLInputElement)) {
+        return;
+      }
+
+      const key = String(node.dataset.siteContextKey || '').trim();
+      if (key === '') {
+        return;
+      }
+
+      selections.push({
+        key,
+        value: String(node.value || ''),
+        inputName: String(node.dataset.siteContextInputName || '').trim(),
+      });
+    });
+
+    return selections;
+  }
+
+  function projectFormHasEnabledNamedField(form, name) {
+    if (!(form instanceof HTMLFormElement) || name === '') {
+      return false;
+    }
+
+    return Array.from(form.elements).some((element) => (
+      element instanceof HTMLElement
+      && element.getAttribute('name') === name
+      && !(element instanceof HTMLInputElement && element.disabled)
+      && !(element instanceof HTMLSelectElement && element.disabled)
+      && !(element instanceof HTMLTextAreaElement && element.disabled)
+    ));
+  }
+
+  function projectAppendSiteContextToFormData(formData, form = null) {
+    if (!(formData instanceof FormData)) {
+      return;
+    }
+
+    formData.delete('site_context_keys[]');
+    formData.delete('site_context_keys');
+    formData.delete('site_context_values[]');
+    formData.delete('site_context_values');
+
+    projectCollectSiteContextSelections().forEach((selection) => {
+      formData.append('site_context_keys[]', selection.key);
+      formData.append('site_context_values[]', selection.value);
+      if (selection.inputName !== '' && !projectFormHasEnabledNamedField(form, selection.inputName)) {
+        formData.set(selection.inputName, selection.value);
+      }
+    });
+  }
+
+  function projectAppendSiteContextToPayload(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return;
+    }
+
+    delete payload.site_context_keys;
+    delete payload.site_context_values;
+    payload.site_context_keys = [];
+    payload.site_context_values = [];
+
+    projectCollectSiteContextSelections().forEach((selection) => {
+      payload.site_context_keys.push(selection.key);
+      payload.site_context_values.push(selection.value);
+      if (selection.inputName !== '' && !Object.prototype.hasOwnProperty.call(payload, selection.inputName)) {
+        payload[selection.inputName] = selection.value;
+      }
+    });
+  }
+
+  async function projectFetchJson(url, options = {}) {
+    const headers = {
+      Accept: 'application/json',
+      ...(options.headers || {}),
+    };
+    const response = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      headers,
+    });
+    const text = await response.text();
+    let payload = null;
+
+    if (text.trim() !== '') {
+      try {
+        payload = JSON.parse(text);
+      } catch (error) {
+        throw projectCreateAjaxError(response.status, { errors: ['The server returned an invalid JSON response.'] });
+      }
+    }
+
+    if (!response.ok) {
+      throw projectCreateAjaxError(response.status, payload);
+    }
+
+    return payload || {};
+  }
+
+  function projectSendXhr(url, options = {}) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(String(options.method || 'GET').toUpperCase(), url);
+      xhr.responseType = 'text';
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('Accept', 'application/json');
+
+      Object.entries(options.headers || {}).forEach(([name, value]) => {
+        xhr.setRequestHeader(name, value);
+      });
+
+      if (xhr.upload && typeof options.onUploadProgress === 'function') {
+        xhr.upload.addEventListener('progress', options.onUploadProgress);
+      }
+
+      xhr.addEventListener('load', () => {
+        let payload = null;
+        try {
+          payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+        } catch (error) {
+          reject(projectCreateAjaxError(xhr.status, { errors: ['The server returned an invalid JSON response.'] }));
+          return;
+        }
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(projectCreateAjaxError(xhr.status, payload));
+          return;
+        }
+
+        resolve(payload || {});
+      });
+      xhr.addEventListener('error', () => reject(projectCreateAjaxError(0, { errors: ['Network request failed.'] })));
+      xhr.send(options.body || null);
+    });
+  }
+
+  function projectEscapedFlashHtml(message) {
+    const item = document.createElement('div');
+    item.className = 'alert error';
+    item.textContent = message;
+    return item.outerHTML;
+  }
+
+  function projectRenderErrorFlashHtml(payload) {
+    if (payload && typeof payload.flash_html === 'string') {
+      return payload.flash_html;
+    }
+
+    const errors = payload && Array.isArray(payload.errors) ? payload.errors : [];
+    if (errors.length > 0) {
+      return errors.map((error) => projectEscapedFlashHtml(String(error))).join('');
+    }
+
+    return projectEscapedFlashHtml('The request could not be completed.');
+  }
+
+  function projectReplaceFlash(html) {
+    if (typeof html !== 'string') {
+      return;
+    }
+
+    const current = document.getElementById('flash-messages');
+    if (current instanceof HTMLElement) {
+      current.innerHTML = html;
+    }
+  }
+
+  function projectReplaceSiteContextSlots(slotHtml) {
+    if (!slotHtml || typeof slotHtml !== 'object') {
+      return;
+    }
+
+    Object.entries(slotHtml).forEach(([slot, html]) => {
+      const current = document.getElementById(`site-context-${String(slot || '').trim()}-slot`);
+      if (current instanceof HTMLElement) {
+        current.innerHTML = typeof html === 'string' ? html : '';
+      }
+    });
+  }
+
+  function projectReplaceCards(cards) {
+    Object.entries(cards || {}).forEach(([domId, html]) => {
+      const current = document.getElementById(domId);
+      if (!(current instanceof HTMLElement)) {
+        return;
+      }
+
+      if (typeof html !== 'string' || html.trim() === '') {
+        current.remove();
+        return;
+      }
+
+      const template = document.createElement('template');
+      template.innerHTML = html.trim();
+      const replacement = template.content.firstElementChild;
+      if (!(replacement instanceof HTMLElement)) {
+        return;
+      }
+
+      current.replaceWith(replacement);
+      initialise(replacement);
+    });
+  }
+
+  function projectApplyAjaxPagePayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return;
+    }
+
+    const redirectUrl = String(payload.redirect_url || payload.location || '').trim();
+    if (redirectUrl !== '') {
+      window.location.href = redirectUrl;
+      return;
+    }
+
+    projectReplaceSiteContextSlots(payload.site_context_html);
+    projectReplaceCards(payload.cards);
+    projectReplaceFlash(payload.flash_html);
+  }
+
+  function projectHandleAjaxSecurityFailure(payload) {
+    if (payload && payload.reload_required) {
+      window.setTimeout(() => window.location.reload(), 150);
+    }
+  }
+
+  function projectButtonProcessingState(submitter) {
+    if (!(submitter instanceof HTMLButtonElement)) {
+      return () => {};
+    }
+
+    const processingText = String(submitter.dataset.processingText || '').trim();
+    if (processingText === '') {
+      return () => {};
+    }
+
+    const originalHtml = submitter.innerHTML;
+    const originalDisabled = submitter.disabled;
+    const shouldDisable = String(submitter.dataset.processingState || '').trim().toLowerCase() === 'disabled';
+    submitter.textContent = processingText;
+    if (shouldDisable) {
+      submitter.disabled = true;
+      submitter.setAttribute('aria-disabled', 'true');
+    }
+
+    return () => {
+      if (!submitter.isConnected) {
+        return;
+      }
+      submitter.innerHTML = originalHtml;
+      submitter.disabled = originalDisabled;
+      if (!originalDisabled) {
+        submitter.removeAttribute('aria-disabled');
+      }
+    };
   }
 
   function isBusyStatus(text) {
@@ -226,6 +607,10 @@
     }
 
     root.querySelectorAll('[data-rawtherapee-profile-panel="true"]').forEach(initialiseRawTherapeeProfilePanel);
+    syncInternalProfileAdjustmentForms(root);
+    initialiseRawUploadForms(root);
+    initialisePictureViewers(root);
+    initialiseGalleryAutoRefresh(root);
     initialisePictureEditors(root);
   }
 
@@ -1236,21 +1621,1110 @@
       });
   }
 
+  function selectedValueById(id) {
+    const field = document.getElementById(id);
+    return field instanceof HTMLSelectElement ? field.value : '';
+  }
+
+  function syncInternalProfileAdjustmentForms(root = document) {
+    const forms = [];
+    if (root instanceof HTMLElement && root.matches('[data-internal-profile-adjustment-form="true"]')) {
+      forms.push(root);
+    }
+    if (root && typeof root.querySelectorAll === 'function') {
+      forms.push(...root.querySelectorAll('[data-internal-profile-adjustment-form="true"]'));
+    }
+
+    const selectedImageType = selectedValueById('internal-profiles-image-type');
+    const selectedProfileName = selectedValueById('internal-profiles-profile-name');
+
+    forms.forEach((form) => {
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+
+      const imageField = form.querySelector('[data-internal-profile-image-field="true"]');
+      const nameField = form.querySelector('[data-internal-profile-name-field="true"]');
+      const newNameField = form.querySelector('[data-internal-profile-new-name-field="true"]');
+      const label = form.querySelector('[data-internal-profile-adjustment-label="true"]');
+      const imageType = selectedImageType || (imageField instanceof HTMLInputElement ? imageField.value : '');
+      const profileName = selectedProfileName || (nameField instanceof HTMLInputElement ? nameField.value : '');
+
+      if (imageField instanceof HTMLInputElement) {
+        imageField.value = imageType;
+      }
+      if (nameField instanceof HTMLInputElement) {
+        nameField.value = profileName;
+      }
+      if (newNameField instanceof HTMLInputElement) {
+        newNameField.value = profileName;
+      }
+      if (label instanceof HTMLElement && imageType !== '' && profileName !== '') {
+        label.textContent = `Add adjustment entry for ${imageType} : ${profileName}`;
+      }
+    });
+  }
+
+  function rawUploadInput(form) {
+    return form instanceof HTMLFormElement ? form.querySelector('[data-upload-input]') : null;
+  }
+
+  function rawUploadDropzone(form) {
+    return form instanceof HTMLFormElement ? form.querySelector('[data-upload-dropzone]') : null;
+  }
+
+  function rawUploadStatusNode(form) {
+    return form instanceof HTMLFormElement ? form.querySelector('[data-raw-upload-status]') : null;
+  }
+
+  function setRawUploadStatus(form, message, type = '') {
+    const node = rawUploadStatusNode(form);
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+
+    node.hidden = String(message || '').trim() === '';
+    node.className = `form-row full raw-upload-progress${type ? ` ${type}` : ''}`;
+    node.textContent = String(message || '');
+  }
+
+  function rawUploadFiles(form) {
+    const input = rawUploadInput(form);
+    return input instanceof HTMLInputElement && input.files ? Array.from(input.files) : [];
+  }
+
+  function updateRawUploadSelection(form) {
+    const summary = form.querySelector('[data-upload-selection-summary]');
+    const list = form.querySelector('[data-upload-file-list]');
+    const files = rawUploadFiles(form);
+
+    if (summary instanceof HTMLElement) {
+      summary.textContent = files.length === 0
+        ? 'No files selected yet.'
+        : `${String(files.length)} file${files.length === 1 ? '' : 's'} selected.`;
+    }
+
+    if (list instanceof HTMLElement) {
+      list.replaceChildren(...files.map((file) => {
+        const item = document.createElement('li');
+        item.textContent = file.name;
+        return item;
+      }));
+      list.hidden = files.length === 0;
+    }
+  }
+
+  function validateRawUploadForm(form) {
+    const dropzone = rawUploadDropzone(form);
+    const maxFiles = Number(dropzone instanceof HTMLElement ? dropzone.dataset.uploadMaxFiles || '3' : '3');
+    const files = rawUploadFiles(form);
+
+    if (files.length === 0) {
+      return 'Choose at least one CR2 file to upload.';
+    }
+    if (files.length > maxFiles) {
+      return `Upload no more than ${String(maxFiles)} CR2 files at once.`;
+    }
+
+    const invalidFile = files.find((file) => !String(file.name || '').toLowerCase().endsWith('.cr2'));
+    return invalidFile ? `${invalidFile.name || 'Selected file'} is not a CR2 file.` : '';
+  }
+
+  function resetRawUploadForm(form) {
+    const input = rawUploadInput(form);
+    if (input instanceof HTMLInputElement) {
+      input.value = '';
+    }
+    updateRawUploadSelection(form);
+  }
+
+  function initialiseRawUploadForms(root = document) {
+    const forms = root.querySelectorAll ? root.querySelectorAll('[data-raw-upload-form="true"]') : [];
+
+    forms.forEach((form) => {
+      if (!(form instanceof HTMLFormElement) || form.dataset.rawUploadBound === '1') {
+        return;
+      }
+
+      form.dataset.rawUploadBound = '1';
+      const input = rawUploadInput(form);
+      if (input instanceof HTMLInputElement) {
+        input.addEventListener('change', () => updateRawUploadSelection(form));
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const validationError = validateRawUploadForm(form);
+        if (validationError !== '') {
+          setRawUploadStatus(form, validationError, 'error');
+          return;
+        }
+
+        const formData = new FormData(form);
+        formData.set('_ajax', '1');
+        projectAppendSiteContextToFormData(formData, form);
+        const ajaxNonce = projectReserveAjaxNonce();
+        if (ajaxNonce) {
+          formData.set('ajax_nonce', ajaxNonce);
+        }
+
+        const submitter = event.submitter instanceof HTMLButtonElement
+          ? event.submitter
+          : form.querySelector('[data-upload-submit]');
+        const restoreProcessingState = projectButtonProcessingState(submitter);
+        setRawUploadStatus(form, 'Uploading...', '');
+
+        try {
+          const payload = await projectSendXhr(projectFormRequestUrl(form), {
+            method: 'POST',
+            body: formData,
+            onUploadProgress: (progressEvent) => {
+              if (!progressEvent.lengthComputable || progressEvent.total <= 0) {
+                setRawUploadStatus(form, 'Uploading...', '');
+                return;
+              }
+              const percent = Math.max(0, Math.min(100, Math.round((progressEvent.loaded / progressEvent.total) * 100)));
+              setRawUploadStatus(form, `Uploading ${String(percent)}%...`, '');
+            },
+          });
+
+          projectCompleteAjaxNonce(ajaxNonce, payload?.ajax_nonce);
+          setRawUploadStatus(form, 'Upload complete.', 'success');
+          resetRawUploadForm(form);
+          projectApplyAjaxPagePayload(payload);
+        } catch (error) {
+          projectRestoreAjaxNonce(ajaxNonce);
+          projectReplaceFlash(projectRenderErrorFlashHtml(error ? error.payload : null));
+          setRawUploadStatus(form, 'Upload failed.', 'error');
+          projectHandleAjaxSecurityFailure(error ? error.payload : null);
+          console.error(error);
+        } finally {
+          restoreProcessingState();
+        }
+      });
+
+      updateRawUploadSelection(form);
+    });
+  }
+
+  function initialisePictureViewers(root = document) {
+    const viewers = root.querySelectorAll ? root.querySelectorAll('[data-picture-viewer="true"]') : [];
+
+    viewers.forEach((viewer) => {
+      if (!(viewer instanceof HTMLElement) || viewer.dataset.pictureViewerBound === '1') {
+        return;
+      }
+
+      viewer.dataset.pictureViewerBound = '1';
+      const layout = viewer.closest('[data-picture-viewer-layout]');
+      const stateUrl = String(viewer.dataset.pictureViewerStateUrl || '').trim();
+      const pill = viewer.querySelector('[data-picture-viewer-status-pill]');
+      const openDetailsButton = viewer.querySelector('[data-picture-viewer-details-open]');
+      const closeDetailsButton = layout instanceof HTMLElement ? layout.querySelector('[data-picture-viewer-details-close]') : null;
+      const imageTypeLabel = viewer.querySelector('[data-picture-viewer-image-type-label]');
+      const fullscreenCloseButton = viewer.querySelector('[data-picture-viewer-fullscreen-close]');
+      const detailInputs = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('.picture-details-tab-input')) : [];
+      const detailPanels = layout instanceof HTMLElement ? Array.from(layout.querySelectorAll('[data-picture-details-panel]')) : [];
+      let imageNode = viewer.querySelector('[data-picture-viewer-image]');
+      let pollTimer = null;
+
+      if (stateUrl === '') {
+        return;
+      }
+
+      function setDetailsCollapsed(collapsed) {
+        if (!(layout instanceof HTMLElement)) {
+          return;
+        }
+        layout.classList.toggle('is-details-collapsed', collapsed);
+        layout.classList.toggle('is-details-expanded', !collapsed);
+        if (openDetailsButton instanceof HTMLButtonElement) {
+          openDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+          openDetailsButton.hidden = !collapsed;
+        }
+        if (closeDetailsButton instanceof HTMLButtonElement) {
+          closeDetailsButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        }
+      }
+
+      function setPill(status) {
+        const normalised = ['queued', 'rendering', 'loaded'].includes(status) ? status : 'queued';
+        viewer.dataset.pictureViewerStatus = normalised;
+        if (pill instanceof HTMLElement) {
+          pill.textContent = normalised.charAt(0).toUpperCase() + normalised.slice(1);
+          pill.dataset.pictureViewerState = normalised;
+        }
+      }
+
+      function displayTypeLabel(type) {
+        const labels = {
+          embedded: 'Embedded',
+          thumbnail: 'Thumbnail',
+          original: 'Original',
+          preview: 'Preview',
+          final: 'Final',
+        };
+        const normalised = String(type || '').trim().toLowerCase();
+        if (normalised === '') {
+          return 'Queued';
+        }
+        return labels[normalised] || normalised.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+      }
+
+      function setImageTypeLabel(type) {
+        if (imageTypeLabel instanceof HTMLElement) {
+          imageTypeLabel.textContent = displayTypeLabel(type);
+        }
+      }
+
+      function setPictureFullscreen(active) {
+        viewer.classList.toggle('is-picture-fullscreen', active);
+        document.documentElement.classList.toggle('has-picture-viewer-fullscreen', active);
+        if (fullscreenCloseButton instanceof HTMLButtonElement) {
+          fullscreenCloseButton.hidden = !active;
+        }
+      }
+
+      async function enterPictureFullscreen() {
+        if (!(imageNode instanceof HTMLImageElement) || String(imageNode.getAttribute('src') || '').trim() === '') {
+          return;
+        }
+
+        setPictureFullscreen(true);
+        if (document.fullscreenElement !== viewer && typeof viewer.requestFullscreen === 'function') {
+          try {
+            await viewer.requestFullscreen({ navigationUI: 'hide' });
+          } catch (error) {
+            console.warn('Browser fullscreen was not available for the picture viewer.', error);
+          }
+        }
+      }
+
+      async function exitPictureFullscreen() {
+        setPictureFullscreen(false);
+        if (document.fullscreenElement === viewer && typeof document.exitFullscreen === 'function') {
+          try {
+            await document.exitFullscreen();
+          } catch (error) {
+            console.warn('Unable to exit browser fullscreen for the picture viewer.', error);
+          }
+        }
+      }
+
+      function swapImage(url, type) {
+        if (url === '' || type === '') {
+          return;
+        }
+
+        const placeholder = viewer.querySelector('[data-picture-viewer-placeholder]');
+        if (!(imageNode instanceof HTMLImageElement)) {
+          imageNode = document.createElement('img');
+          imageNode.setAttribute('alt', 'Photo');
+          imageNode.dataset.pictureViewerImage = 'true';
+          viewer.appendChild(imageNode);
+        }
+        if (placeholder instanceof HTMLElement) {
+          placeholder.remove();
+        }
+        if (imageNode.src !== new URL(url, window.location.href).href) {
+          imageNode.src = url;
+        }
+        imageNode.dataset.pictureViewerImageType = type;
+        viewer.dataset.pictureViewerDisplayType = type;
+        setImageTypeLabel(type);
+      }
+
+      async function poll(attempt = 0) {
+        if (!viewer.isConnected) {
+          return;
+        }
+
+        try {
+          const response = await projectFetchJson(stateUrl);
+          if (!response || response.success === false) {
+            setPill('queued');
+          } else {
+            const status = String(response.final_status || 'queued');
+            setPill(status);
+            swapImage(String(response.display_url || ''), String(response.display_type || ''));
+            if (status === 'loaded') {
+              return;
+            }
+          }
+        } catch (error) {
+          setPill('queued');
+          console.error(error);
+        }
+
+        const delay = attempt < 5 ? 1500 : 4000;
+        pollTimer = window.setTimeout(() => poll(attempt + 1), delay);
+      }
+
+      async function loadDetailsPanel(panel) {
+        if (!(panel instanceof HTMLElement) || panel.dataset.pictureDetailsLoaded === '1') {
+          return;
+        }
+
+        const url = String(panel.dataset.pictureDetailsLoadUrl || '').trim();
+        if (url === '') {
+          panel.dataset.pictureDetailsLoaded = '1';
+          return;
+        }
+
+        panel.dataset.pictureDetailsLoaded = '1';
+        try {
+          const response = await projectFetchJson(url);
+          panel.innerHTML = response && response.success !== false
+            ? String(response.html || '<p class="helper">Details are not available.</p>')
+            : '<p class="helper">Details are not available.</p>';
+        } catch (error) {
+          panel.dataset.pictureDetailsLoaded = '';
+          panel.innerHTML = '<p class="helper">Details are not available.</p>';
+          console.error(error);
+        }
+      }
+
+      setPill(String(viewer.dataset.pictureViewerStatus || 'queued'));
+      setImageTypeLabel(String(viewer.dataset.pictureViewerDisplayType || ''));
+      setDetailsCollapsed(true);
+      detailInputs.forEach((input, index) => {
+        if (!(input instanceof HTMLInputElement)) {
+          return;
+        }
+        input.addEventListener('change', () => {
+          if (input.checked) {
+            void loadDetailsPanel(detailPanels[index]);
+          }
+        });
+        if (input.checked) {
+          void loadDetailsPanel(detailPanels[index]);
+        }
+      });
+      if (openDetailsButton instanceof HTMLButtonElement) {
+        openDetailsButton.addEventListener('click', () => setDetailsCollapsed(false));
+      }
+      if (closeDetailsButton instanceof HTMLButtonElement) {
+        closeDetailsButton.addEventListener('click', () => setDetailsCollapsed(true));
+      }
+      viewer.addEventListener('click', (event) => {
+        if (event.target !== imageNode || viewer.classList.contains('is-picture-fullscreen')) {
+          return;
+        }
+        void enterPictureFullscreen();
+      });
+      if (fullscreenCloseButton instanceof HTMLButtonElement) {
+        fullscreenCloseButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void exitPictureFullscreen();
+        });
+      }
+      document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement !== viewer && viewer.classList.contains('is-picture-fullscreen')) {
+          setPictureFullscreen(false);
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && viewer.classList.contains('is-picture-fullscreen')) {
+          void exitPictureFullscreen();
+        }
+      });
+      if (viewer.dataset.pictureViewerStatus !== 'loaded') {
+        if (imageNode instanceof HTMLImageElement && String(imageNode.getAttribute('src') || '').trim() !== '') {
+          pollTimer = window.setTimeout(() => poll(0), 1000);
+        } else {
+          void poll(0);
+        }
+      }
+      window.addEventListener('pagehide', () => {
+        if (pollTimer !== null) {
+          window.clearTimeout(pollTimer);
+        }
+      }, { once: true });
+    });
+  }
+
+  function prefetchGalleryViewerImage(link) {
+    if (!(link instanceof HTMLAnchorElement)) {
+      return;
+    }
+
+    const url = String(link.dataset.galleryViewerPrefetchUrl || '').trim();
+    if (url === '' || link.dataset.galleryViewerPrefetchStarted === '1' || galleryViewerPrefetchImages.has(url)) {
+      return;
+    }
+
+    link.dataset.galleryViewerPrefetchStarted = '1';
+    const image = new Image();
+    image.decoding = 'async';
+    if ('fetchPriority' in image) {
+      image.fetchPriority = 'high';
+    }
+    image.src = url;
+    galleryViewerPrefetchImages.set(url, image);
+  }
+
+  function prefetchGalleryViewerImageFromEvent(event) {
+    const link = event.target instanceof Element ? event.target.closest('[data-gallery-viewer-prefetch-url]') : null;
+    if (link instanceof HTMLAnchorElement) {
+      prefetchGalleryViewerImage(link);
+    }
+  }
+
+  function galleryAutoRefreshEnabled() {
+    if (!projectStorageAvailable('localStorage')) {
+      return true;
+    }
+    try {
+      const stored = window.localStorage.getItem(galleryAutoRefreshStorageKey);
+      return stored === null ? true : stored === '1';
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function setGalleryAutoRefreshEnabled(enabled) {
+    if (!projectStorageAvailable('localStorage')) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(galleryAutoRefreshStorageKey, enabled ? '1' : '0');
+    } catch (error) {
+      // Storage may be disabled; the current checkbox state still applies.
+    }
+  }
+
+  function galleryAutoScrollEnabled() {
+    if (!projectStorageAvailable('localStorage')) {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(galleryAutoScrollStorageKey) === '1';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function setGalleryAutoScrollEnabled(enabled) {
+    if (!projectStorageAvailable('localStorage')) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(galleryAutoScrollStorageKey, enabled ? '1' : '0');
+    } catch (error) {
+      // Storage may be disabled; the current checkbox state still applies.
+    }
+  }
+
+  function galleryAutoRefreshTargets(root) {
+    const targets = [];
+    if (root instanceof HTMLElement && root.matches('[data-gallery-auto-refresh="true"]')) {
+      targets.push(root);
+    }
+    if (root && typeof root.querySelectorAll === 'function') {
+      root.querySelectorAll('[data-gallery-auto-refresh="true"]').forEach((node) => {
+        if (node instanceof HTMLElement) {
+          targets.push(node);
+        }
+      });
+    }
+    return targets;
+  }
+
+  function galleryHasPendingPreviews(target) {
+    return target instanceof HTMLElement
+      && (target.dataset.galleryPending === '1'
+        || target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement);
+  }
+
+  function galleryHasPendingPreviewTiles(target) {
+    return target instanceof HTMLElement
+      && target.querySelector('[data-gallery-photo-pending="1"]') instanceof HTMLElement;
+  }
+
+  function galleryCardRefreshPayload(card, target) {
+    const pageParams = new URL(window.location.href).searchParams;
+    const cardKey = String(card.dataset.cardKey || '').trim();
+    const pageField = String(target.dataset.galleryPageField || '').trim();
+    const pageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPage || '1'), 10));
+    const perPageField = String(target.dataset.galleryPerPageField || '').trim();
+    const perPageValue = Math.max(1, Number.parseInt(String(target.dataset.galleryPerPage || '24'), 10));
+    const payload = {
+      _ajax: '1',
+      _card_refresh: '1',
+      page: pageParams.get('page') || 'gallery',
+      cards: [cardKey],
+    };
+
+    if (pageField !== '') {
+      payload[pageField] = String(pageValue);
+    }
+    if (perPageField !== '') {
+      payload[perPageField] = String(perPageValue);
+    }
+    projectAppendSiteContextToPayload(payload);
+    return payload;
+  }
+
+  function galleryResponseCard(response, card) {
+    const html = String((response.cards || {})[card.id] || '').trim();
+    if (html === '') {
+      return null;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const replacement = template.content.firstElementChild;
+    return replacement instanceof HTMLElement ? replacement : null;
+  }
+
+  function replaceGalleryPendingTiles(target, replacementCard) {
+    const replacementTarget = replacementCard instanceof HTMLElement
+      ? replacementCard.querySelector('[data-gallery-auto-refresh="true"]')
+      : null;
+    if (!(target instanceof HTMLElement) || !(replacementTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-id]').forEach((currentTile) => {
+      if (!(currentTile instanceof HTMLElement)) {
+        return;
+      }
+
+      const photoId = String(currentTile.dataset.galleryPhotoId || '').trim();
+      const replacementTile = photoId !== ''
+        ? Array.from(replacementTarget.querySelectorAll('[data-gallery-photo-id]')).find((node) => (
+          node instanceof HTMLElement && String(node.dataset.galleryPhotoId || '').trim() === photoId
+        ))
+        : null;
+
+      if (replacementTile instanceof HTMLElement) {
+        currentTile.replaceWith(replacementTile);
+      }
+    });
+
+    target.dataset.galleryPending = galleryHasPendingPreviewTiles(target) ? '1' : '0';
+  }
+
+  function galleryPendingStatusUrls(target) {
+    if (!(target instanceof HTMLElement)) {
+      return [];
+    }
+
+    const urls = [];
+    target.querySelectorAll('[data-gallery-photo-pending="1"][data-gallery-photo-status-url]').forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+
+      const statusUrl = String(node.dataset.galleryPhotoStatusUrl || '').trim();
+      if (statusUrl !== '' && !urls.includes(statusUrl)) {
+        urls.push(statusUrl);
+      }
+    });
+
+    return urls;
+  }
+
+  async function pollGalleryPhotoStatuses(target) {
+    const urls = galleryPendingStatusUrls(target);
+    if (urls.length === 0) {
+      return;
+    }
+
+    await Promise.allSettled(urls.map((url) => projectFetchJson(url)));
+  }
+
+  function initialiseGalleryAutoRefresh(root = document) {
+    galleryAutoRefreshTargets(root).forEach((target) => {
+      if (target.dataset.galleryAutoRefreshBound === '1') {
+        return;
+      }
+
+      target.dataset.galleryAutoRefreshBound = '1';
+      const card = target.closest('.card[data-card-key]');
+      const refreshControl = card instanceof HTMLElement ? card.querySelector('[data-gallery-auto-refresh-toggle]') : null;
+      const scrollControl = card instanceof HTMLElement ? card.querySelector('[data-gallery-auto-scroll-toggle]') : null;
+      if (!(card instanceof HTMLElement)
+        || !(refreshControl instanceof HTMLInputElement)
+        || !(scrollControl instanceof HTMLInputElement)
+      ) {
+        return;
+      }
+
+      const state = {
+        inFlight: false,
+        lastCardRefreshAt: 0,
+        timerId: null,
+      };
+      refreshControl.checked = galleryAutoRefreshEnabled();
+      scrollControl.checked = galleryAutoScrollEnabled();
+
+      const clearTimer = () => {
+        if (state.timerId !== null) {
+          window.clearTimeout(state.timerId);
+          state.timerId = null;
+        }
+      };
+      const shouldRefresh = () => card.isConnected
+        && (scrollControl.checked || (refreshControl.checked && galleryHasPendingPreviews(target)));
+      const schedule = () => {
+        clearTimer();
+        if (shouldRefresh()) {
+          state.timerId = window.setTimeout(refresh, galleryAutoRefreshIntervalMs);
+        }
+      };
+      const refresh = async () => {
+        state.timerId = null;
+        if (!shouldRefresh()) {
+          return;
+        }
+        if (document.hidden || state.inFlight) {
+          schedule();
+          return;
+        }
+
+        state.inFlight = true;
+        const shouldAutoScroll = scrollControl.checked;
+        const shouldRefreshCard = shouldAutoScroll
+          || Date.now() - state.lastCardRefreshAt >= galleryCardRefreshIntervalMs;
+
+        try {
+          if (shouldRefreshCard) {
+            const response = await projectFetchJson(window.location.href, {
+              method: 'POST',
+              body: JSON.stringify(galleryCardRefreshPayload(card, target)),
+              headers: { 'Content-Type': 'application/json' },
+            });
+            state.lastCardRefreshAt = Date.now();
+            projectReplaceSiteContextSlots(response.site_context_html);
+            if (shouldAutoScroll) {
+              projectReplaceCards(response.cards);
+            } else {
+              replaceGalleryPendingTiles(target, galleryResponseCard(response, card));
+            }
+          } else {
+            await pollGalleryPhotoStatuses(target);
+          }
+        } catch (error) {
+          console.error('Failed to auto refresh gallery.', error);
+          schedule();
+        } finally {
+          state.inFlight = false;
+          if (!shouldAutoScroll || card.isConnected) {
+            schedule();
+          }
+        }
+      };
+
+      refreshControl.addEventListener('change', () => {
+        setGalleryAutoRefreshEnabled(refreshControl.checked);
+        schedule();
+      });
+      scrollControl.addEventListener('change', () => {
+        setGalleryAutoScrollEnabled(scrollControl.checked);
+        schedule();
+      });
+      schedule();
+    });
+  }
+
+  function setGalleryEventsPaneOpen(root, open) {
+    if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+      root = document;
+    }
+
+    const pane = root.querySelector ? root.querySelector('[data-gallery-events-pane]') : null;
+    const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
+    const toggle = root.querySelector ? root.querySelector('[data-gallery-events-toggle]') : null;
+    if (pane instanceof HTMLElement) {
+      pane.hidden = !open;
+    }
+    if (grid instanceof HTMLElement) {
+      grid.classList.toggle('is-assigning-events', open);
+    }
+    if (toggle instanceof HTMLButtonElement) {
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      toggle.classList.toggle('primary', !open);
+      toggle.textContent = open ? 'Close Events' : 'Events';
+    }
+    if (!open) {
+      setGalleryAssignmentEvent(root, '');
+      return;
+    }
+    updateGalleryEventCheckboxStates(root);
+  }
+
+  function toggleGalleryAssignmentEvent(button) {
+    const root = button.closest('[data-page-stack-card], .card, body');
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+
+    const eventId = String(button.value || '').trim();
+    const currentEventId = galleryAssignmentEventId(root);
+    setGalleryAssignmentEvent(root, currentEventId === eventId ? '' : eventId);
+  }
+
+  function setGalleryAssignmentEvent(root, eventId) {
+    if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+      root = document;
+    }
+
+    eventId = String(eventId || '').trim();
+    const form = root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
+    const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
+    if (eventInput instanceof HTMLInputElement) {
+      eventInput.value = eventId;
+    }
+
+    const grid = root.querySelector ? root.querySelector('[data-gallery-events-grid]') : null;
+    if (grid instanceof HTMLElement) {
+      grid.classList.toggle('has-selected-event', eventId !== '');
+    }
+
+    if (root.querySelectorAll) {
+      root.querySelectorAll('[data-gallery-assignment-event]').forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) {
+          return;
+        }
+
+        const selected = eventId !== '' && String(button.value || '').trim() === eventId;
+        button.classList.toggle('is-selected', selected);
+        button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      });
+    }
+
+    updateGalleryEventCheckboxStates(root);
+  }
+
+  function galleryAssignmentEventId(root) {
+    const form = root && root.querySelector ? root.querySelector('[data-gallery-event-immediate-form]') : null;
+    const eventInput = form instanceof HTMLFormElement ? form.querySelector('[data-gallery-assignment-event-id]') : null;
+    return eventInput instanceof HTMLInputElement ? String(eventInput.value || '').trim() : '';
+  }
+
+  function updateGalleryEventCheckboxStates(root) {
+    if (!(root instanceof HTMLElement) && root !== document && root !== document.body) {
+      root = document;
+    }
+
+    const eventId = galleryAssignmentEventId(root);
+    if (!root.querySelectorAll) {
+      return;
+    }
+
+    root.querySelectorAll('[data-gallery-event-photo-checkbox]').forEach((checkbox) => {
+      if (!(checkbox instanceof HTMLInputElement)) {
+        return;
+      }
+
+      const tile = checkbox.closest('[data-gallery-photo-id]');
+      const eventIds = galleryTileEventIds(tile);
+      checkbox.checked = eventId !== '' && eventIds.includes(eventId);
+    });
+  }
+
+  function galleryTileEventIds(tile) {
+    if (!(tile instanceof HTMLElement)) {
+      return [];
+    }
+
+    return String(tile.dataset.galleryEventIds || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value !== '');
+  }
+
+  function setGalleryTileEventId(tile, eventId, assigned) {
+    if (!(tile instanceof HTMLElement) || eventId === '') {
+      return;
+    }
+
+    const ids = galleryTileEventIds(tile).filter((id) => id !== eventId);
+    if (assigned) {
+      ids.push(eventId);
+    }
+    tile.dataset.galleryEventIds = Array.from(new Set(ids)).join(',');
+  }
+
+  async function submitGalleryEventCheckbox(checkbox) {
+    const root = checkbox.closest('[data-page-stack-card], .card, body');
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+
+    const form = root.querySelector('[data-gallery-event-immediate-form]');
+    const eventId = galleryAssignmentEventId(root);
+    const tile = checkbox.closest('[data-gallery-photo-id]');
+    const photoId = checkbox.value;
+    if (!(form instanceof HTMLFormElement) || !(tile instanceof HTMLElement) || eventId === '' || photoId === '') {
+      checkbox.checked = !checkbox.checked;
+      return;
+    }
+
+    const assigned = checkbox.checked;
+    const previous = !assigned;
+    const formData = new FormData(form);
+    formData.set('_ajax', '1');
+    formData.set('assignment_event_id', eventId);
+    formData.set('assignment_state', assigned ? '1' : '0');
+    formData.delete('photo_ids');
+    formData.delete('photo_ids[]');
+    formData.append('photo_ids[]', photoId);
+    projectAppendSiteContextToFormData(formData, form);
+
+    const payload = projectFormDataToJsonPayload(formData);
+    const ajaxNonce = projectReserveAjaxNonce();
+    if (ajaxNonce) {
+      payload.ajax_nonce = ajaxNonce;
+    }
+
+    checkbox.disabled = true;
+    let nonceCompleted = false;
+    try {
+      const response = await projectFetchJson(projectFormRequestUrl(form), {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      projectCompleteAjaxNonce(ajaxNonce, response?.ajax_nonce);
+      nonceCompleted = true;
+      if (!response || response.success === false) {
+        throw projectCreateAjaxError(200, response);
+      }
+      setGalleryTileEventId(tile, eventId, assigned);
+    } catch (error) {
+      if (!nonceCompleted) {
+        projectRestoreAjaxNonce(ajaxNonce);
+      }
+      checkbox.checked = previous;
+      projectReplaceFlash(projectRenderErrorFlashHtml(error ? error.payload : null));
+      projectHandleAjaxSecurityFailure(error ? error.payload : null);
+      console.error(error);
+    } finally {
+      checkbox.disabled = false;
+    }
+  }
+
+  function clearGalleryEventCreateModal(refocus = false) {
+    document.querySelectorAll('.gallery-event-create-backdrop').forEach((node) => node.remove());
+    document.querySelectorAll('.gallery-event-create-window').forEach((node) => node.remove());
+    if (refocus && activeGalleryEventCreateButton instanceof HTMLButtonElement && activeGalleryEventCreateButton.isConnected) {
+      activeGalleryEventCreateButton.focus();
+    }
+    activeGalleryEventCreateButton = null;
+  }
+
+  function hiddenInput(name, value) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    return input;
+  }
+
+  function showGalleryEventCreateModal(button) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    clearGalleryEventCreateModal(false);
+    activeGalleryEventCreateButton = button;
+    const card = button.closest('[data-page-stack-card], .card, body');
+    const existingForm = card instanceof HTMLElement ? card.querySelector('#gallery-event-assignment-form') : null;
+    const csrfInput = existingForm instanceof HTMLFormElement ? existingForm.querySelector('input[name="csrf_token"]') : null;
+    const csrfToken = csrfInput instanceof HTMLInputElement ? csrfInput.value : '';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'gallery-event-create-backdrop';
+    backdrop.addEventListener('click', () => clearGalleryEventCreateModal(true));
+
+    const windowShell = document.createElement('div');
+    windowShell.className = 'gallery-event-create-window';
+    windowShell.setAttribute('role', 'dialog');
+    windowShell.setAttribute('aria-modal', 'true');
+    windowShell.setAttribute('aria-labelledby', 'gallery-event-create-title');
+
+    const title = document.createElement('h3');
+    title.id = 'gallery-event-create-title';
+    title.textContent = 'Add Event';
+
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = '?page=gallery';
+    form.dataset.galleryEventCreateForm = 'true';
+    form.className = 'gallery-event-create-form';
+
+    const label = document.createElement('label');
+    const labelText = document.createElement('span');
+    labelText.textContent = 'Event name';
+    const input = document.createElement('input');
+    input.className = 'input';
+    input.name = 'event_name';
+    input.type = 'text';
+    input.required = true;
+    input.autocomplete = 'off';
+    label.append(labelText, input);
+
+    const actions = document.createElement('div');
+    actions.className = 'gallery-event-create-actions';
+    const add = document.createElement('button');
+    add.className = 'button button-inline primary';
+    add.type = 'submit';
+    add.textContent = 'Add';
+    const cancel = document.createElement('button');
+    cancel.className = 'button button-inline';
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => clearGalleryEventCreateModal(true));
+
+    actions.append(add, cancel);
+    form.append(
+      hiddenInput('card_action', 'EventPermissions'),
+      hiddenInput('event_permissions_action', 'create_event'),
+      hiddenInput('csrf_token', csrfToken),
+      hiddenInput('cards[]', 'browse_gallery'),
+      label,
+      actions
+    );
+    windowShell.append(title, form);
+    document.body.append(backdrop, windowShell);
+    input.focus();
+  }
+
+  async function submitGalleryEventCreateForm(form) {
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const formData = new FormData(form);
+    formData.set('_ajax', '1');
+    projectAppendSiteContextToFormData(formData, form);
+    const payload = projectFormDataToJsonPayload(formData);
+    const ajaxNonce = projectReserveAjaxNonce();
+    if (ajaxNonce) {
+      payload.ajax_nonce = ajaxNonce;
+    }
+
+    const submitter = form.querySelector('button[type="submit"]');
+    const restoreProcessingState = projectButtonProcessingState(submitter);
+    let nonceCompleted = false;
+    try {
+      const response = await projectFetchJson(projectFormRequestUrl(form), {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+      });
+      projectCompleteAjaxNonce(ajaxNonce, response?.ajax_nonce);
+      nonceCompleted = true;
+      if (!response || response.success === false) {
+        throw projectCreateAjaxError(200, response);
+      }
+      projectApplyAjaxPagePayload(response);
+      clearGalleryEventCreateModal(false);
+    } catch (error) {
+      if (!nonceCompleted) {
+        projectRestoreAjaxNonce(ajaxNonce);
+      }
+      projectReplaceFlash(projectRenderErrorFlashHtml(error ? error.payload : null));
+      projectHandleAjaxSecurityFailure(error ? error.payload : null);
+      console.error(error);
+    } finally {
+      restoreProcessingState();
+    }
+  }
+
+  projectLoadAjaxNonceBootstrap();
+
   document.addEventListener('DOMContentLoaded', () => initialise(document));
 
+  document.addEventListener('pointerover', prefetchGalleryViewerImageFromEvent);
+  document.addEventListener('pointerdown', prefetchGalleryViewerImageFromEvent);
+  document.addEventListener('focusin', prefetchGalleryViewerImageFromEvent);
+  document.addEventListener('touchstart', prefetchGalleryViewerImageFromEvent, { passive: true });
+
+  document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.dataset.galleryEventCreateForm !== 'true') {
+      return;
+    }
+
+    event.preventDefault();
+    void submitGalleryEventCreateForm(form);
+  });
+
   document.addEventListener('click', (event) => {
+    prefetchGalleryViewerImageFromEvent(event);
+
     const target = event.target;
     if (!(target instanceof Element)) {
+      return;
+    }
+
+    const eventUserPickerToggle = target.closest('[data-event-user-picker-toggle]');
+    if (eventUserPickerToggle instanceof HTMLButtonElement) {
+      event.preventDefault();
+      const card = eventUserPickerToggle.closest('.event-permissions');
+      const picker = card instanceof HTMLElement ? card.querySelector('[data-event-user-picker]') : null;
+      if (picker instanceof HTMLElement) {
+        picker.hidden = !picker.hidden;
+      }
+      return;
+    }
+
+    const galleryEventCreateToggle = target.closest('[data-gallery-event-create-toggle]');
+    if (galleryEventCreateToggle instanceof HTMLButtonElement) {
+      event.preventDefault();
+      showGalleryEventCreateModal(galleryEventCreateToggle);
+      return;
+    }
+
+    const galleryEventsToggle = target.closest('[data-gallery-events-toggle]');
+    if (galleryEventsToggle instanceof HTMLButtonElement) {
+      event.preventDefault();
+      const card = galleryEventsToggle.closest('[data-page-stack-card], .card, body');
+      if (card instanceof HTMLElement || card === document.body) {
+        const pane = card.querySelector('[data-gallery-events-pane]');
+        setGalleryEventsPaneOpen(card, pane instanceof HTMLElement ? pane.hidden : false);
+      }
+      return;
+    }
+
+    const assignmentButton = target.closest('[data-gallery-assignment-event]');
+    if (assignmentButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      toggleGalleryAssignmentEvent(assignmentButton);
       return;
     }
 
     prepareInternalProfileMove(target.closest('[data-internal-profile-move-direction]'));
   });
 
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.querySelector('.gallery-event-create-window')) {
+      event.preventDefault();
+      clearGalleryEventCreateModal(true);
+    }
+  });
+
   document.addEventListener('change', (event) => {
     const target = event.target;
     if (target instanceof HTMLSelectElement && target.matches('[data-rawtherapee-default-profile-id]')) {
       syncRawTherapeeDefaultButton(target);
+    }
+
+    if (target instanceof HTMLSelectElement
+      && (target.id === 'internal-profiles-image-type' || target.id === 'internal-profiles-profile-name')
+    ) {
+      syncInternalProfileAdjustmentForms(document);
+    }
+
+    const galleryEventCheckbox = target instanceof Element
+      ? target.closest('[data-gallery-event-photo-checkbox]')
+      : null;
+    if (galleryEventCheckbox instanceof HTMLInputElement) {
+      void submitGalleryEventCheckbox(galleryEventCheckbox);
     }
   });
 

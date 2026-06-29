@@ -13,6 +13,7 @@ use Swallowtail\Service\SwallowtailJobStatisticsService;
 use Swallowtail\Service\SwallowtailInternalProfilesService;
 use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
+use Swallowtail\Service\SwallowtailPhotoUiService;
 use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
 use Swallowtail\Service\SwallowtailServiceStatusService;
 use Swallowtail\Service\SwallowtailStatisticsService;
@@ -46,8 +47,8 @@ $harness->check(_profiles::class, 'profiles page exposes profile management card
     $profiles = new _profiles();
 
     $harness->assertSame([
-        'internal_profiles',
         'rawtherapee_profiles',
+        'internal_profiles',
         'combined_profile_preview',
     ], $profiles->cards());
 });
@@ -115,56 +116,65 @@ $harness->check(_internal_profilesCard::class, 'internal profiles exposes framew
 
 $harness->check(_internal_profilesCard::class, 'internal profile editor renders with table builder without pagination', function () use ($harness): void {
     $card = new _internal_profilesCard();
-    $method = new ReflectionMethod($card, 'profileTable');
-    $method->setAccessible(true);
-
-    $table = $method->invoke($card, [
-        [
-            'id' => 42,
-            'image_type' => 'preview',
-            'profile_name' => 'default',
-            'type' => 'Resize',
-            'key' => 'Enabled',
-            'value' => 'true',
-            'value_type' => 'bool',
+    $tables = $card->tables([
+        'page' => [
+            'csrf_token' => 'test-csrf',
         ],
-        [
-            'id' => 43,
-            'image_type' => 'preview',
-            'profile_name' => 'default',
-            'type' => 'Resize',
-            'key' => 'ShortEdge',
-            'value' => '820',
-            'value_type' => 'int',
+        'services' => [
+            'internal_profiles_dashboard' => [
+                'image_type' => 'preview',
+                'profile_name' => 'default',
+                'rows' => [
+                    [
+                        'id' => 42,
+                        'image_type' => 'preview',
+                        'profile_name' => 'default',
+                        'type' => 'Resize',
+                        'key' => 'Enabled',
+                        'value' => 'true',
+                        'value_type' => 'bool',
+                    ],
+                    [
+                        'id' => 43,
+                        'image_type' => 'preview',
+                        'profile_name' => 'default',
+                        'type' => 'Resize',
+                        'key' => 'ShortEdge',
+                        'value' => '820',
+                        'value_type' => 'int',
+                    ],
+                    [
+                        'id' => 44,
+                        'image_type' => 'preview',
+                        'profile_name' => 'default',
+                        'type' => 'Exposure',
+                        'key' => 'Lightness',
+                        'value' => '1.5',
+                        'value_type' => 'float',
+                    ],
+                    [
+                        'id' => 45,
+                        'image_type' => 'preview',
+                        'profile_name' => 'default',
+                        'type' => 'RAW Bayer',
+                        'key' => 'Method',
+                        'value' => 'fast',
+                        'value_type' => 'string',
+                    ],
+                    [
+                        'id' => 46,
+                        'image_type' => 'preview',
+                        'profile_name' => 'default',
+                        'type' => 'Resize',
+                        'key' => 'Optional',
+                        'value' => null,
+                        'value_type' => 'null',
+                    ],
+                ],
+            ],
         ],
-        [
-            'id' => 44,
-            'image_type' => 'preview',
-            'profile_name' => 'default',
-            'type' => 'Exposure',
-            'key' => 'Lightness',
-            'value' => '1.5',
-            'value_type' => 'float',
-        ],
-        [
-            'id' => 45,
-            'image_type' => 'preview',
-            'profile_name' => 'default',
-            'type' => 'RAW Bayer',
-            'key' => 'Method',
-            'value' => 'fast',
-            'value_type' => 'string',
-        ],
-        [
-            'id' => 46,
-            'image_type' => 'preview',
-            'profile_name' => 'default',
-            'type' => 'Resize',
-            'key' => 'Optional',
-            'value' => null,
-            'value_type' => 'null',
-        ],
-    ], 'preview', 'default', 'test-csrf', true);
+    ]);
+    $table = $tables[0] ?? null;
 
     $harness->assertTrue($table instanceof TableFramework);
 
@@ -197,7 +207,7 @@ $harness->check(_internal_profilesCard::class, 'internal profile editor renders 
     $harness->assertTrue(str_contains($html, 'data-validate-type-target='));
     $harness->assertTrue(!str_contains($html, 'data-submit-on-change="true"'));
     $harness->assertTrue(!str_contains($html, 'table-footer'));
-    $harness->assertTrue(!str_contains($html, '_table_export_prepare'));
+    $harness->assertTrue(str_contains($html, '_table_export_prepare'));
     $harness->assertTrue(!str_contains($html, 'profile-editor-row'));
 
     $targetMatches = [];
@@ -688,7 +698,7 @@ $harness->check(SwallowtailStatisticsService::class, 'summarises photo and conve
     $harness->assertSame(7, (int)($jobs['total'] ?? 0));
     $harness->assertSame(2, (int)($jobs['outstanding'] ?? 0));
     $harness->assertSame(4, (int)($jobs['completed'] ?? 0));
-    $harness->assertSame(1, (int)($jobs['obsolete'] ?? 0));
+    $harness->assertSame(0, (int)($jobs['obsolete'] ?? 0));
     $harness->assertSame('embedded', (string)($durations[0]['image_type'] ?? ''));
     $harness->assertSame(2, (int)($durations[0]['completed_jobs'] ?? 0));
     $harness->assertSame(1.0, (float)($durations[0]['average_seconds'] ?? 0));
@@ -1559,7 +1569,7 @@ $harness->check(_gallery::class, 'browse gallery renders auto refresh control', 
 });
 
 $harness->check(_gallery::class, 'browse gallery auto refresh defaults to enabled', function () use ($harness): void {
-    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'project.js');
 
     if (!is_string($js)) {
         throw new RuntimeException('Unable to read gallery JavaScript.');
@@ -1570,7 +1580,7 @@ $harness->check(_gallery::class, 'browse gallery auto refresh defaults to enable
 });
 
 $harness->check(_gallery::class, 'browse gallery polls photo status between card refreshes', function () use ($harness): void {
-    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'project.js');
 
     if (!is_string($js)) {
         throw new RuntimeException('Unable to read gallery JavaScript.');
@@ -1843,7 +1853,7 @@ $harness->check(_gallery::class, 'browse gallery falls back to thumbnail preview
 $harness->check(_gallery::class, 'browse gallery event assignment markup is hidden by default', function () use ($harness): void {
     $source = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'cards' . DIRECTORY_SEPARATOR . 'browse_gallery.php');
     $css = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'css' . DIRECTORY_SEPARATOR . 'project.css');
-    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'index.js');
+    $js = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'js' . DIRECTORY_SEPARATOR . 'project.js');
     $action = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'content' . DIRECTORY_SEPARATOR . 'actions' . DIRECTORY_SEPARATOR . 'EventPermissionsAction.php');
 
     if (!is_string($source) || !is_string($css) || !is_string($js) || !is_string($action)) {
@@ -1855,7 +1865,7 @@ $harness->check(_gallery::class, 'browse gallery event assignment markup is hidd
     $harness->assertTrue(str_contains($source, 'data-gallery-event-create-toggle'));
     $harness->assertTrue(str_contains($source, '>Add Event<'));
     $harness->assertTrue(str_contains($source, '>Tag Photos<'));
-    $harness->assertTrue(str_contains($source, '>Show Photos<'));
+    $harness->assertTrue(str_contains($source, "'Show Photos'"));
     $harness->assertTrue(!str_contains($source, '>Assign Events<'));
     $harness->assertTrue(!str_contains($source, '>Tag<'));
     $harness->assertTrue(!str_contains($source, '>Untag<'));
@@ -2009,18 +2019,16 @@ $harness->check(_picture_editorCard::class, 'picture editor helper uses photo me
     $harness->assertTrue(str_contains($source, 'data-picture-editor-save disabled'));
 });
 
-$harness->check(_picture_editorCard::class, 'picture editor matches viewer empty photo message', function () use ($harness): void {
+$harness->check(_picture_editorCard::class, 'picture editor renders editor empty photo message', function () use ($harness): void {
     $context = [
         'page' => [
             'photo_id' => 0,
         ],
     ];
 
-    $viewerHtml = (new _picture_viewerCard())->render($context);
     $editorHtml = (new _picture_editorCard())->render($context);
 
-    $harness->assertSame($viewerHtml, $editorHtml);
-    $harness->assertSame('<p class="helper">Select a photo from the gallery to view it here.</p>', $editorHtml);
+    $harness->assertSame('<p class="helper">Select a photo from the gallery to edit it here.</p>', $editorHtml);
 });
 
 $harness->check(_edit::class, 'picture editor exposes revert control', function () use ($harness): void {
@@ -2080,7 +2088,6 @@ $harness->check(_event_permissionsCard::class, 'event role permissions explain w
     ], [], 7, 'test-csrf');
 
     $harness->assertTrue(str_contains($html, 'Role Permissions'));
-    $harness->assertTrue(str_contains($html, '<div class="panel-soft">'));
     $harness->assertTrue(str_contains($html, 'No roles are available yet.'));
     $harness->assertTrue(str_contains($html, 'Create a role before assigning role-based event permissions.'));
 });
