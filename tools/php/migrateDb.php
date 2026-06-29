@@ -21,6 +21,8 @@ function eel_run_migration_tool(string $schemaFile, string $migrationsDirectory)
         return 1;
     }
 
+    $currentMigration = '';
+
     try {
         eel_migration_hydrate_empty_database($schemaFile);
         ensureSchemaMigrationsTable();
@@ -36,7 +38,6 @@ function eel_run_migration_tool(string $schemaFile, string $migrationsDirectory)
             return 0;
         }
 
-        $currentMigration = '';
         foreach ($pending as $file) {
             $currentMigration = basename($file);
             applyMigration($file);
@@ -47,7 +48,7 @@ function eel_run_migration_tool(string $schemaFile, string $migrationsDirectory)
         echo 'Applied ' . count($pending) . " migration(s).\n";
         return 0;
     } catch (Throwable $exception) {
-        fwrite(STDERR, eel_migration_failure_message($exception, $currentMigration ?? '') . "\n");
+        fwrite(STDERR, eel_migration_failure_message($exception, $currentMigration) . "\n");
         return 1;
     }
 }

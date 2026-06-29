@@ -31,6 +31,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check('migrateDb.php', 'loads CLI helper functions without running migrations', function () use ($harness, $includeOutput): void {
     $harness->assertSame('', $includeOutput);
     $harness->assertTrue(function_exists('eel_run_migration_tool'));
+    $harness->assertTrue(function_exists('eel_migration_failure_message'));
     $harness->assertTrue(function_exists('eel_migration_hydrate_empty_database'));
     $harness->assertTrue(function_exists('eel_migration_database_has_no_application_tables'));
     $harness->assertTrue(function_exists('eel_migration_application_tables'));
@@ -151,15 +152,20 @@ $harness->check('migrateDb.php', 'tracks expected application tables for empty d
     }
 });
 
-$harness->check('migrateDb.php', 'includes migration filename in failure messages', function () use ($harness): void {
-    $message = eel_migration_failure_message(
-        new RuntimeException('Duplicate column name asset_variant_key'),
-        '2026_06_28_001_rawtherapee_sample_asset_variants.sql'
-    );
+$harness->check('migrateDb.php', 'reports the migration file that failed when known', function () use ($harness): void {
+    $exception = new RuntimeException('Column already exists.');
 
     $harness->assertSame(
-        'Migration failed while applying 2026_06_28_001_rawtherapee_sample_asset_variants.sql: Duplicate column name asset_variant_key',
-        $message
+        'Migration failed: Column already exists.',
+        eel_migration_failure_message($exception, '')
+    );
+    $harness->assertSame(
+        'Migration failed while applying 20260629_add_example.sql: Column already exists.',
+        eel_migration_failure_message($exception, '20260629_add_example.sql')
+    );
+    $harness->assertSame(
+        'Migration failed while applying 2026_06_28_001_rawtherapee_sample_asset_variants.sql: Column already exists.',
+        eel_migration_failure_message($exception, '2026_06_28_001_rawtherapee_sample_asset_variants.sql')
     );
 });
 
