@@ -116,7 +116,9 @@ final class RawTherapeeProfilesAction implements ActionInterfaceFramework
             $context['sample'] = $result;
             return new ActionResultFramework(!empty($result['success']), ['rawtherapee.profiles'], [[
                 'type' => !empty($result['success']) ? 'success' : 'error',
-                'message' => (string)($result['message'] ?? (!empty($result['success']) ? 'RawTherapee sample queued.' : 'RawTherapee sample could not be queued.')),
+                'message' => (string)($result['message'] ?? (!empty($result['success'])
+                    ? $this->sampleQueuedMessage($service, $profileId, $photoId)
+                    : 'RawTherapee sample could not be queued.')),
             ]], [], ['rawtherapee_profiles' => $context]);
         }
 
@@ -155,6 +157,19 @@ final class RawTherapeeProfilesAction implements ActionInterfaceFramework
     private function normalisePhotoSearch(string $query): string
     {
         return substr(trim($query), 0, 255);
+    }
+
+    private function sampleQueuedMessage(SwallowtailRawTherapeeProfileService $service, int $profileId, int $photoId): string
+    {
+        $profile = $service->profileById($profileId);
+        $profileLabel = is_array($profile)
+            ? trim((string)($profile['display_label'] ?? $profile['relative_path'] ?? ''))
+            : '';
+        if ($profileLabel === '') {
+            $profileLabel = 'Profile ' . (string)$profileId;
+        }
+
+        return 'RawTherapee sample queued: Profile Applied: ' . $profileLabel . ' for Photo ' . (string)$photoId;
     }
 
     private function selectedAccessibleThumbnailPhoto(SwallowtailRawTherapeeProfileService $service, int $userId, int $photoId): ?array
