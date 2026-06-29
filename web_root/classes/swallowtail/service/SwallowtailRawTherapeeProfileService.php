@@ -164,6 +164,7 @@ final class SwallowtailRawTherapeeProfileService
             'asset' => $asset,
             'display_url' => $displayUrl,
             'display_type' => $displayType,
+            'applied_profile_label' => $this->appliedProfileLabel($profiles, $displayType, $displayUrl, $asset),
             'status_url' => $statusUrl,
             'status' => $status,
             'show_preview' => $photo !== null,
@@ -231,6 +232,23 @@ final class SwallowtailRawTherapeeProfileService
 
         if (is_file($profilePath) && is_readable($profilePath)) {
             return $this->profileSignature(['profile_path' => $profilePath]);
+        }
+
+        return '';
+    }
+
+    public function profileLabelForSignature(string $profileSignature, ?array $profiles = null): string
+    {
+        $profileSignature = $this->normaliseSha256($profileSignature);
+        if ($profileSignature === '') {
+            return '';
+        }
+
+        foreach ($profiles ?? $this->availableProfiles() as $profile) {
+            $profile = (array)$profile;
+            if ($this->profileSignature($profile) === $profileSignature) {
+                return $this->profileLabel($profile);
+            }
         }
 
         return '';
@@ -703,6 +721,53 @@ final class SwallowtailRawTherapeeProfileService
         }
 
         return '/api/photo-imaging.php?' . http_build_query($query);
+    }
+
+    private function appliedProfileLabel(array $profiles, string $displayType, string $displayUrl, ?array $asset): string
+    {
+        $displayType = $this->normaliseDisplayType($displayType);
+        if ($displayType === 'none') {
+            return '';
+        }
+
+        if ($displayType !== 'rawtherapee') {
+            return 'Current Profile';
+        }
+
+        $profileSignature = $asset !== null
+            ? $this->normaliseSha256((string)($asset['profile_signature'] ?? ''))
+            : $this->profileSignatureFromDisplayUrl($displayUrl);
+
+        return $this->profileLabelForSignature($profileSignature, $profiles);
+    }
+
+    private function profileSignatureFromDisplayUrl(string $displayUrl): string
+    {
+        $displayUrl = $this->normaliseDisplayUrl($displayUrl);
+        if ($displayUrl === '') {
+            return '';
+        }
+
+        $queryString = parse_url($displayUrl, PHP_URL_QUERY);
+        if (!is_string($queryString) || $queryString === '') {
+            return '';
+        }
+
+        parse_str($queryString, $query);
+
+        return $this->normaliseSha256((string)($query['profile_signature'] ?? $query['v'] ?? ''));
+    }
+
+    private function profileLabel(array $profile): string
+    {
+        return (string)($profile['display_label'] ?? $profile['relative_path'] ?? 'Profile');
+    }
+
+    private function normaliseSha256(string $value): string
+    {
+        $value = strtolower(trim($value));
+
+        return preg_match('/^[a-f0-9]{64}$/', $value) === 1 ? $value : '';
     }
 
     private function normaliseDisplayUrl(string $displayUrl): string

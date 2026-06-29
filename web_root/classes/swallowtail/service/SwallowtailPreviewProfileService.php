@@ -542,6 +542,10 @@ final class SwallowtailPreviewProfileService
                 : $this->assetService->assetForPhotoId($photoId, $imageType);
             if ($asset !== null) {
                 $payload[$imageType . '_url'] = $this->previewUrl($photoId, $asset);
+                if ($imageType === 'rawtherapee_sample') {
+                    $payload['rawtherapee_sample_profile_label'] = (new SwallowtailRawTherapeeProfileService())
+                        ->profileLabelForSignature((string)($asset['profile_signature'] ?? ''));
+                }
             }
             if ($imageType === 'preview') {
                 $payload['preview_url'] = $payload['preview_url'] ?? (isset($payload[$imageType . '_url']) ? (string)$payload[$imageType . '_url'] : '');

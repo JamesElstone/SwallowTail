@@ -77,7 +77,7 @@ final class _rawtherapee_profilesCard extends CardBaseFramework
         $displayType = (string)($dashboard['display_type'] ?? 'none');
         $showPreview = !empty($dashboard['show_preview']);
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
-        $profileLabel = $this->profileLabel($profiles, $profileId);
+        $profileLabel = trim((string)($dashboard['applied_profile_label'] ?? ''));
         $status = (string)($dashboard['status'] ?? $this->statusLabel($sample, $asset, $showPreview));
         $imageShown = $this->imageShownLabel($displayType, $showPreview);
         $statusUrl = (string)($sample['status_url'] ?? $dashboard['status_url'] ?? '');
@@ -232,7 +232,7 @@ final class _rawtherapee_profilesCard extends CardBaseFramework
                     </div>
                     <div>
                         <dt>Profile Applied</dt>
-                        <dd>' . HelperFramework::escape($profileLabel !== '' ? $profileLabel : 'none') . '</dd>
+                        <dd data-rawtherapee-profile-applied="true">' . HelperFramework::escape($profileLabel !== '' ? $profileLabel : 'none') . '</dd>
                     </div>
                     <div>
                         <dt>Image Shown</dt>
@@ -264,21 +264,6 @@ final class _rawtherapee_profilesCard extends CardBaseFramework
                 </span>
             </figure>
         </div>';
-    }
-
-    private function profileLabel(array $profiles, int $profileId): string
-    {
-        if ($profileId <= 0) {
-            return 'Current Profile';
-        }
-
-        foreach ($profiles as $profile) {
-            if ((int)($profile['id'] ?? 0) === $profileId) {
-                return (string)($profile['display_label'] ?? $profile['relative_path'] ?? 'Profile');
-            }
-        }
-
-        return '';
     }
 
     private function statusLabel(array $sample, ?array $asset, bool $showPreview): string

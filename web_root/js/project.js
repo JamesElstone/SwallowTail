@@ -49,6 +49,10 @@
     setText(panel.querySelector('[data-rawtherapee-profile-image-shown="true"]'), text);
   }
 
+  function setAppliedProfile(panel, text) {
+    setText(panel.querySelector('[data-rawtherapee-profile-applied="true"]'), text);
+  }
+
   function setDisplayFields(panel, url, type) {
     panel.querySelectorAll('[data-rawtherapee-display-url-field="true"]').forEach((urlField) => {
       if (urlField instanceof HTMLInputElement) {
@@ -96,15 +100,19 @@
   function resolvedImagePayload(payload) {
     const rawTherapeeUrl = String(payload.rawtherapee_sample_url || '').trim();
     if (rawTherapeeUrl !== '') {
-      return { type: 'rawtherapee', url: rawTherapeeUrl };
+      return {
+        type: 'rawtherapee',
+        url: rawTherapeeUrl,
+        profileLabel: String(payload.rawtherapee_sample_profile_label || '').trim(),
+      };
     }
 
     const previewUrl = String(payload.preview_url || '').trim();
     if (previewUrl !== '') {
-      return { type: 'preview', url: previewUrl };
+      return { type: 'preview', url: previewUrl, profileLabel: 'Current Profile' };
     }
 
-    return { type: 'none', url: '' };
+    return { type: 'none', url: '', profileLabel: '' };
   }
 
   async function pollStatus(panel, url, attempt) {
@@ -132,6 +140,7 @@
           image.dataset.rawtherapeeProfileImageType = resolved.type;
           setImageShown(panel, resolved.type);
           setDisplayFields(panel, resolved.url, resolved.type);
+          setAppliedProfile(panel, resolved.profileLabel || 'none');
           setStatus(panel, 'Ready');
           return;
         }
@@ -141,6 +150,7 @@
         image.dataset.rawtherapeeProfileImageType = resolved.type;
         image.addEventListener('load', () => {
           setDisplayFields(panel, resolved.url, resolved.type);
+          setAppliedProfile(panel, resolved.profileLabel || 'none');
           setStatus(panel, 'Ready');
         }, { once: true });
         image.src = resolved.url;
