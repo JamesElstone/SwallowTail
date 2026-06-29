@@ -64,20 +64,29 @@ fetch_file()
 	output_path=$DOWNLOAD_DIR/$file_path
 	output_dir=$(dirname "$output_path")
 	raw_url=$RAW_BASE_URL/$file_path
+	attempt=1
 
 	mkdir -p "$output_dir"
-	echo "==> fetching $BLOB_BASE_URL/$file_path"
 
-	if command -v fetch >/dev/null 2>&1; then
-		fetch -q -o "$output_path" "$raw_url"
-	elif command -v curl >/dev/null 2>&1; then
-		curl -fsSL -o "$output_path" "$raw_url"
-	elif command -v wget >/dev/null 2>&1; then
-		wget -q -O "$output_path" "$raw_url"
-	else
-		echo "fetch, curl, or wget is required to download port files" >&2
-		exit 1
-	fi
+	while :; do
+		echo "==> fetching $BLOB_BASE_URL/$file_path (attempt $attempt)"
+
+		if command -v fetch >/dev/null 2>&1; then
+			fetch -q -o "$output_path" "$raw_url" && return 0
+		elif command -v curl >/dev/null 2>&1; then
+			curl -fsSL -o "$output_path" "$raw_url" && return 0
+		elif command -v wget >/dev/null 2>&1; then
+			wget -q -O "$output_path" "$raw_url" && return 0
+		else
+			echo "fetch, curl, or wget is required to download port files" >&2
+			exit 1
+		fi
+
+		rm -f "$output_path"
+		echo "==> fetch failed for $file_path; retrying in 2 seconds" >&2
+		attempt=$((attempt + 1))
+		sleep 2
+	done
 }
 
 restart_or_start_service()
