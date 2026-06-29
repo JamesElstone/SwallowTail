@@ -3,6 +3,7 @@
 
   const panels = new WeakSet();
   const pollTimers = new WeakMap();
+  const pictureEditorBaselinePolls = new WeakMap();
 
   function statusLabel(status) {
     const value = String(status || '').toLowerCase();
@@ -273,6 +274,285 @@
     button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
 
+  function nextPictureEditorBaselineSequence(editor) {
+    const next = (pictureEditorBaselinePolls.get(editor)?.sequence || 0) + 1;
+    pictureEditorBaselinePolls.set(editor, { sequence: next, timer: null });
+    return next;
+  }
+
+  function currentPictureEditorBaselineSequence(editor) {
+    return pictureEditorBaselinePolls.get(editor)?.sequence || 0;
+  }
+
+  function clearPictureEditorBaselinePoll(editor) {
+    const state = pictureEditorBaselinePolls.get(editor);
+    if (typeof state?.timer === 'number') {
+      window.clearTimeout(state.timer);
+    }
+  }
+
+  function schedulePictureEditorBaselinePoll(editor, sequence, callback, delay) {
+    clearPictureEditorBaselinePoll(editor);
+    const timer = window.setTimeout(callback, delay);
+    pictureEditorBaselinePolls.set(editor, { sequence, timer });
+  }
+
+  function setPictureEditorControlsEnabled(editor, enabled) {
+    editor.querySelectorAll('[data-picture-editor-field], [data-picture-editor-number], [data-picture-editor-check], [data-picture-editor-revert], [data-picture-editor-save]').forEach((field) => {
+      if (field instanceof HTMLInputElement || field instanceof HTMLButtonElement) {
+        field.disabled = !enabled;
+      }
+    });
+  }
+
+  function setPictureEditorPhotoStatus(editor, text) {
+    setText(editor.querySelector('[data-picture-editor-status]'), `Photo: ${text}`);
+  }
+
+  function setPictureEditorProfileStatus(editor, text) {
+    setText(editor.querySelector('[data-picture-editor-profile-state]'), `Profile: ${text}`);
+  }
+
+  function setPictureEditorDisplayStatus(editor, text, type) {
+    const node = editor.querySelector('[data-picture-editor-display-state]');
+    if (node instanceof HTMLElement) {
+      node.textContent = `Displaying: ${text}`;
+      node.dataset.pictureEditorDisplayType = type;
+    }
+  }
+
+  function pictureEditorSettingValue(settings, path) {
+    return String(path || '').split('.').reduce((current, part) => current?.[part], settings);
+  }
+
+  function pictureEditorCssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+
+    return String(value).replace(/[^A-Za-z0-9_-]/g, '\\$&');
+  }
+
+  function syncPictureEditorSettings(editor, settings) {
+    if (!settings || typeof settings !== 'object') {
+      return;
+    }
+
+    editor.querySelectorAll('[data-picture-editor-field]').forEach((field) => {
+      if (!(field instanceof HTMLInputElement)) {
+        return;
+      }
+      const key = String(field.dataset.pictureEditorField || '');
+      const value = pictureEditorSettingValue(settings, key);
+      if (value === undefined || value === null) {
+        return;
+      }
+      field.value = String(value);
+      const number = editor.querySelector(`[data-picture-editor-number="${pictureEditorCssEscape(key)}"]`);
+      if (number instanceof HTMLInputElement) {
+        number.value = String(value);
+      }
+      field.dispatchEvent(new Event('input'));
+    });
+
+    editor.querySelectorAll('[data-picture-editor-check]').forEach((field) => {
+      if (!(field instanceof HTMLInputElement)) {
+        return;
+      }
+      const key = String(field.dataset.pictureEditorCheck || '');
+      const value = pictureEditorSettingValue(settings, key);
+      if (value === undefined || value === null) {
+        return;
+      }
+      field.checked = value === true || value === 1 || value === '1';
+      field.dispatchEvent(new Event('change'));
+    });
+  }
+
+  function ensurePictureEditorImage(editor) {
+    const existing = editor.querySelector('[data-picture-editor-image]');
+    if (existing instanceof HTMLImageElement) {
+      return existing;
+    }
+
+    const stage = editor.querySelector('[data-picture-editor-stage]');
+    const crop = editor.querySelector('[data-picture-editor-crop]');
+    if (!(stage instanceof HTMLElement)) {
+      return null;
+    }
+
+    const image = document.createElement('img');
+    image.alt = 'Photo preview';
+    image.dataset.pictureEditorImage = 'true';
+    const empty = editor.querySelector('[data-picture-editor-empty]');
+    if (empty instanceof HTMLElement) {
+      empty.remove();
+    }
+    if (crop instanceof HTMLElement) {
+      stage.insertBefore(image, crop);
+    } else {
+      stage.appendChild(image);
+    }
+
+    return image;
+  }
+
+  function showPictureEditorPreview(editor, url, type) {
+    const image = ensurePictureEditorImage(editor);
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+
+    const displayType = type === 'thumbnail' ? 'thumbnail' : 'preview';
+    editor.dataset.previewType = displayType;
+    editor.dataset.previewReady = displayType === 'preview' ? '1' : '0';
+    setPictureEditorDisplayStatus(editor, displayType, displayType);
+    setPictureEditorPhotoStatus(editor, 'Loading');
+    image.addEventListener('load', () => {
+      setPictureEditorPhotoStatus(editor, displayType === 'preview' ? 'Ready' : 'Queued');
+      setPictureEditorControlsEnabled(editor, displayType === 'preview');
+    }, { once: true });
+    image.src = url;
+    if (image.complete && image.naturalWidth > 0) {
+      setPictureEditorPhotoStatus(editor, displayType === 'preview' ? 'Ready' : 'Queued');
+      setPictureEditorControlsEnabled(editor, displayType === 'preview');
+    }
+  }
+
+  function pictureEditorPreviewPayload(payload) {
+    const preview = payload?.preview || payload || {};
+    const previewUrl = String(preview.preview_url || payload?.preview_url || '').trim();
+    if (previewUrl !== '') {
+      return { ready: preview.ready === true || payload?.preview_ready === true, url: previewUrl, type: 'preview' };
+    }
+
+    const displayUrl = String(preview.display_url || payload?.display_url || '').trim();
+    const displayType = String(preview.display_type || payload?.display_type || '').trim();
+    if (displayUrl !== '' && (displayType === 'preview' || displayType === 'thumbnail')) {
+      return { ready: displayType === 'preview' && (preview.ready === true || payload?.preview_ready === true), url: displayUrl, type: displayType };
+    }
+
+    return { ready: false, url: '', type: '' };
+  }
+
+  async function fetchPictureEditorJson(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.success === false) {
+      throw new Error((payload.errors || [payload.message || 'Picture editor request failed.']).join(' '));
+    }
+    return payload;
+  }
+
+  async function pollPictureEditorPreview(editor, statusUrl, sequence, attempt, startedAt) {
+    if (!editor.isConnected || currentPictureEditorBaselineSequence(editor) !== sequence) {
+      return;
+    }
+
+    if ((Date.now() - startedAt) > 120000) {
+      setPictureEditorPhotoStatus(editor, 'Timed out');
+      return;
+    }
+
+    try {
+      const payload = await fetchPictureEditorJson(statusUrl);
+      if (currentPictureEditorBaselineSequence(editor) !== sequence) {
+        return;
+      }
+
+      const status = String(payload.status || 'queued').toLowerCase();
+      const preview = pictureEditorPreviewPayload(payload);
+      if ((status === 'succeeded' || preview.ready) && preview.url !== '') {
+        showPictureEditorPreview(editor, preview.url, preview.type || 'preview');
+        return;
+      }
+
+      if (status === 'failed' || status === 'cancelled') {
+        setPictureEditorPhotoStatus(editor, status === 'cancelled' ? 'Cancelled' : 'Failed');
+        return;
+      }
+
+      setPictureEditorPhotoStatus(editor, status === 'processing' ? 'Rendering' : 'Queued');
+      schedulePictureEditorBaselinePoll(editor, sequence, () => {
+        pollPictureEditorPreview(editor, statusUrl, sequence, attempt + 1, startedAt);
+      }, attempt < 5 ? 750 : 1500);
+    } catch (error) {
+      console.error(error);
+      schedulePictureEditorBaselinePoll(editor, sequence, () => {
+        pollPictureEditorPreview(editor, statusUrl, sequence, attempt + 1, startedAt);
+      }, attempt < 5 ? 1500 : 3000);
+    }
+  }
+
+  async function pollPictureEditorBaseline(editor, select, statusUrl, sequence, attempt, startedAt) {
+    if (!editor.isConnected || currentPictureEditorBaselineSequence(editor) !== sequence) {
+      return;
+    }
+
+    if ((Date.now() - startedAt) > 120000) {
+      setPictureEditorProfileStatus(editor, 'Timed out');
+      select.disabled = false;
+      return;
+    }
+
+    try {
+      const payload = await fetchPictureEditorJson(statusUrl);
+      if (currentPictureEditorBaselineSequence(editor) !== sequence) {
+        return;
+      }
+
+      const baseline = payload?.baseline || {};
+      const status = String(baseline.status || '').toLowerCase();
+      if (baseline.ready === true) {
+        editor.dataset.baselineReady = '1';
+        setPictureEditorProfileStatus(editor, 'Ready');
+        syncPictureEditorSettings(editor, payload?.settings);
+        const preview = pictureEditorPreviewPayload(payload);
+        const previewStatusUrl = String(payload?.preview?.status_url || payload?.preview_status_url || '').trim();
+        if (preview.ready && preview.url !== '') {
+          showPictureEditorPreview(editor, preview.url, preview.type || 'preview');
+          select.disabled = false;
+          return;
+        }
+        if (previewStatusUrl !== '') {
+          editor.dataset.previewStatusUrl = previewStatusUrl;
+          pollPictureEditorPreview(editor, previewStatusUrl, sequence, 0, Date.now());
+          select.disabled = false;
+          return;
+        }
+
+        setPictureEditorPhotoStatus(editor, 'Queued');
+        select.disabled = false;
+        return;
+      }
+
+      if (status === 'failed') {
+        setPictureEditorProfileStatus(editor, 'Failed');
+        setPictureEditorPhotoStatus(editor, 'Failed');
+        select.disabled = false;
+        return;
+      }
+
+      setPictureEditorProfileStatus(editor, 'Preparing');
+      setPictureEditorPhotoStatus(editor, 'Waiting for profile');
+      schedulePictureEditorBaselinePoll(editor, sequence, () => {
+        pollPictureEditorBaseline(editor, select, statusUrl, sequence, attempt + 1, startedAt);
+      }, attempt < 5 ? 1000 : 2500);
+    } catch (error) {
+      console.error(error);
+      schedulePictureEditorBaselinePoll(editor, sequence, () => {
+        pollPictureEditorBaseline(editor, select, statusUrl, sequence, attempt + 1, startedAt);
+      }, attempt < 5 ? 1500 : 3000);
+    }
+  }
+
   async function changePictureEditorBaseline(select) {
     if (!(select instanceof HTMLSelectElement)) {
       return;
@@ -284,10 +564,12 @@
     }
 
     const url = String(editor.dataset.profileUrl || '/api/photo-update.php').trim() || '/api/photo-update.php';
+    const statusUrl = String(editor.dataset.profileStatusUrl || '').trim();
     const photoId = String(editor.dataset.photoId || '').trim();
     const csrfToken = String(editor.dataset.csrfToken || '').trim();
     const profileState = editor.querySelector('[data-picture-editor-profile-state]');
     const previousValue = String(select.dataset.previousValue || select.defaultValue || '0');
+    const sequence = nextPictureEditorBaselineSequence(editor);
     const form = new FormData();
     form.set('action', 'baseline_profile');
     form.set('photo_id', photoId);
@@ -297,29 +579,48 @@
     }
 
     select.disabled = true;
+    setPictureEditorControlsEnabled(editor, false);
+    editor.dataset.baselineReady = '0';
+    editor.dataset.previewReady = '0';
+    setPictureEditorDisplayStatus(editor, 'previous preview', 'preview');
     setText(profileState, 'Profile: Queued');
     try {
-      const response = await fetch(url, {
+      const payload = await fetchPictureEditorJson(url, {
         method: 'POST',
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' },
         body: form,
       });
-      const payload = await response.json();
-      if (!response.ok || payload.success !== true) {
-        throw new Error((payload.errors || [payload.message || 'Unable to change RawTherapee baseline profile.']).join(' '));
-      }
       select.dataset.previousValue = select.value;
-      editor.dataset.baselineReady = '0';
       setText(profileState, 'Profile: Preparing');
       const statusNode = editor.querySelector('[data-picture-editor-status]');
-      setText(statusNode, 'Photo: Queued');
+      setText(statusNode, 'Photo: Waiting for profile');
+      const baseline = payload?.baseline || {};
+      if (baseline.ready === true) {
+        editor.dataset.baselineReady = '1';
+        setPictureEditorProfileStatus(editor, 'Ready');
+      }
+      if (statusUrl !== '' && currentPictureEditorBaselineSequence(editor) === sequence) {
+        pollPictureEditorBaseline(editor, select, statusUrl, sequence, 0, Date.now());
+        return;
+      }
+      const previewStatusUrl = String(payload?.preview?.status_url || payload?.preview_status_url || '').trim();
+      if (previewStatusUrl !== '' && currentPictureEditorBaselineSequence(editor) === sequence) {
+        pollPictureEditorPreview(editor, previewStatusUrl, sequence, 0, Date.now());
+        return;
+      }
+      const preview = pictureEditorPreviewPayload(payload);
+      if (preview.url !== '') {
+        showPictureEditorPreview(editor, preview.url, preview.type || 'preview');
+      }
     } catch (error) {
       console.error(error);
       select.value = previousValue;
       setText(profileState, 'Profile: Change failed');
+      setPictureEditorPhotoStatus(editor, 'Failed');
+      setPictureEditorControlsEnabled(editor, true);
     } finally {
-      select.disabled = false;
+      if (currentPictureEditorBaselineSequence(editor) !== sequence || statusUrl === '') {
+        select.disabled = false;
+      }
     }
   }
 
