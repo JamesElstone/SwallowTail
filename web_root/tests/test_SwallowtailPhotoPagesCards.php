@@ -536,7 +536,7 @@ $seedJobStatisticsTables = static function (): void {
 
     InterfaceDB::execute("INSERT INTO photos (original_filename, original_extension, upload_state) VALUES
         ('A.CR2', 'cr2', 'uploaded'),
-        ('B.CR2', 'CR2', 'uploaded'),
+        ('B.CR2', 'cr2', 'uploaded'),
         ('C.JPG', 'jpg', 'uploaded'),
         ('D.CR2', 'cr2', 'removed')");
     InterfaceDB::execute("INSERT INTO photo_conversion_jobs (photo_id, status, attempts, locked_at, locked_by, started_at, completed_at, duration_seconds, last_error) VALUES
@@ -760,16 +760,39 @@ $harness->check(SwallowtailJobStatisticsService::class, 'summarises job statisti
     $harness->assertSame('4 in 2', (string)($profile['total'] ?? ''));
 });
 
+$harness->check(SwallowtailJobStatisticsService::class, 'does not use schema introspection in job statistics service', function () use ($harness): void {
+    $source = (string)file_get_contents(__DIR__ . '/../classes/swallowtail/service/SwallowtailJobStatisticsService.php');
+
+    $harness->assertSame(false, str_contains($source, 'tableExists('));
+    $harness->assertSame(false, str_contains($source, 'columnExists('));
+    $harness->assertSame(false, str_contains($source, 'columnsExists('));
+});
+
 $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess forms', function () use ($harness, $seedJobStatisticsTables): void {
     $seedJobStatisticsTables();
 
-    $html = (new _jobsCard())->render([
+    $card = new _jobsCard();
+    $service = new SwallowtailJobStatisticsService();
+    $services = $card->services();
+    $context = [
         'page' => [
+            'page_id' => 'settings',
             'csrf_token' => 'test-csrf',
             'page_cards' => ['jobs'],
         ],
-    ]);
+        'services' => [
+            'job_queue_rows' => $service->jobQueueRows(),
+            'metadata_profile_rows' => $service->metadataProfileRows(),
+        ],
+    ];
+    $html = $card->render($context);
 
+    $harness->assertSame('job_queue_rows', (string)($services[0]['key'] ?? ''));
+    $harness->assertSame(SwallowtailJobStatisticsService::class, (string)($services[0]['service'] ?? ''));
+    $harness->assertSame('jobQueueRows', (string)($services[0]['method'] ?? ''));
+    $harness->assertSame('metadata_profile_rows', (string)($services[1]['key'] ?? ''));
+    $harness->assertSame(SwallowtailJobStatisticsService::class, (string)($services[1]['service'] ?? ''));
+    $harness->assertSame('metadataProfileRows', (string)($services[1]['method'] ?? ''));
     $harness->assertTrue(str_contains($html, 'Job Queue'));
     $harness->assertTrue(str_contains($html, 'Metadata/Profile Jobs'));
     $harness->assertTrue(str_contains($html, '<th>Processing</th>'));
@@ -784,19 +807,28 @@ $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess f
     $harness->assertTrue(str_contains($html, 'name="csrf_token" value="test-csrf"'));
     $harness->assertTrue(str_contains($html, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
     $harness->assertSame(0, substr_count($html, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
-    $harness->assertTrue(!str_contains($html, 'name="cards[]"'));
+    $harness->assertTrue(str_contains($html, 'name="_table_export_prepare" value="csv"'));
+    $harness->assertTrue(str_contains($html, 'name="_table_export_prepare" value="xlsx"'));
+    $harness->assertTrue(str_contains($html, 'name="table_key" value="jobs_queue"'));
+    $harness->assertTrue(str_contains($html, 'name="table_key" value="jobs_metadata_profile"'));
+    $harness->assertTrue(str_contains($html, 'name="cards[]" value="jobs"'));
 
-    $service = new SwallowtailJobStatisticsService();
     foreach (['conversion', 'migration', 'metadata', 'profile'] as $jobType) {
         $service->reprocessExceptions($jobType);
     }
 
-    $disabledHtml = (new _jobsCard())->render([
+    $disabledContext = [
         'page' => [
+            'page_id' => 'settings',
             'csrf_token' => 'test-csrf',
             'page_cards' => ['jobs'],
         ],
-    ]);
+        'services' => [
+            'job_queue_rows' => $service->jobQueueRows(),
+            'metadata_profile_rows' => $service->metadataProfileRows(),
+        ],
+    ];
+    $disabledHtml = $card->render($disabledContext);
 
     $harness->assertSame(4, substr_count($disabledHtml, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
     $harness->assertSame(0, substr_count($disabledHtml, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
@@ -985,6 +1017,36 @@ $harness->check(SwallowtailStoragePermissionRepairService::class, 'runs sudo per
     $harness->assertSame('/usr/local/sbin/swallowtail-fix-storage-permissions', (string)($capturedArgv[2] ?? ''));
     $harness->assertSame('--base', (string)($capturedArgv[3] ?? ''));
     $harness->assertSame('/storage/1', (string)($capturedArgv[4] ?? ''));
+});
+
+$harness->check(SwallowtailStoragePermissionRepairService::class, 'repairs all currently failing storage locations', function () use ($harness): void {
+    $capturedArgv = [];
+    $service = new SwallowtailStoragePermissionRepairService(
+        static function (array $argv) use (&$capturedArgv): array {
+            $capturedArgv[] = $argv;
+
+            return [
+                'exit_code' => 0,
+                'output' => "repair completed\n",
+            ];
+        },
+        static fn(): array => [
+            ['storage_base_location' => '/storage/1', 'permission_can_write' => false],
+            ['storage_base_location' => '/storage/2/', 'permission_can_write' => false],
+            ['storage_base_location' => '/storage/2', 'permission_can_write' => false],
+            ['storage_base_location' => '/storage/3', 'permission_can_write' => true],
+            ['storage_base_location' => '', 'permission_can_write' => false],
+        ]
+    );
+
+    $repairs = $service->repairFailingLocations();
+
+    $harness->assertSame(2, count($repairs));
+    $harness->assertSame('/storage/1', (string)($repairs[0]['base'] ?? ''));
+    $harness->assertSame('/storage/2/', (string)($repairs[1]['base'] ?? ''));
+    $harness->assertSame(2, count($capturedArgv));
+    $harness->assertSame('/storage/1', (string)($capturedArgv[0][4] ?? ''));
+    $harness->assertSame('/storage/2/', (string)($capturedArgv[1][4] ?? ''));
 });
 
 $harness->check(SwallowtailStoragePermissionRepairService::class, 'rejects unknown storage locations before sudo', function () use ($harness): void {
@@ -1204,6 +1266,50 @@ $harness->check(_storage_availableCard::class, 'shows PHP permission failures be
     $harness->assertTrue(str_contains($locationHtml, 'Checked: /storage/1'));
     $harness->assertTrue(str_contains($locationHtml, 'Fix Permission Issues'));
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
+});
+
+$harness->check(_storage_availableCard::class, 'offers one action for multiple storage permission failures', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $context = [
+        'page' => [
+            'csrf_token' => 'test-csrf',
+            'page_cards' => ['storage_available'],
+        ],
+    ];
+
+    $repairForm = new ReflectionMethod($card, 'allPermissionsRepairForm');
+    $repairForm->setAccessible(true);
+    $formHtml = (string)$repairForm->invoke($card, [
+        [
+            'storage_base_location' => '/storage/1',
+            'permission_can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/2',
+            'permission_can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/2/',
+            'permission_can_write' => false,
+        ],
+        [
+            'storage_base_location' => '/storage/3',
+            'permission_can_write' => true,
+        ],
+    ], $context);
+
+    $harness->assertTrue(str_contains($formHtml, 'Fix All Permission Issues'));
+    $harness->assertTrue(str_contains($formHtml, 'name="storage_settings_action" value="fix_all_permissions"'));
+    $harness->assertTrue(str_contains($formHtml, 'all 2 storage locations'));
+    $harness->assertTrue(str_contains($formHtml, 'name="cards[]" value="storage_available"'));
+
+    $singleFailureHtml = (string)$repairForm->invoke($card, [
+        [
+            'storage_base_location' => '/storage/1',
+            'permission_can_write' => false,
+        ],
+    ], $context);
+    $harness->assertSame('', $singleFailureHtml);
 });
 
 $harness->check(StorageSettingsAction::class, 'returns flash messages for ajax storage settings failures', function () use ($harness): void {

@@ -21,6 +21,22 @@ final class _jobsCard extends CardBaseFramework
         return 'Jobs';
     }
 
+    public function services(): array
+    {
+        return [
+            [
+                'key' => 'job_queue_rows',
+                'service' => SwallowtailJobStatisticsService::class,
+                'method' => 'jobQueueRows',
+            ],
+            [
+                'key' => 'metadata_profile_rows',
+                'service' => SwallowtailJobStatisticsService::class,
+                'method' => 'metadataProfileRows',
+            ],
+        ];
+    }
+
     public function helper(array $context): string
     {
         return 'Database-backed job engine statistics and exception reprocessing.';
@@ -33,35 +49,32 @@ final class _jobsCard extends CardBaseFramework
 
     public function render(array $context): string
     {
-        try {
-            $service = new SwallowtailJobStatisticsService();
-
-            return '<div class="jobs-statistics">
-                <h3>Job Queue</h3>
-                ' . $this->jobQueueTable($context, $service->jobQueueRows())->renderTable() . '
-                <h3>Metadata/Profile Jobs</h3>
-                ' . $this->metadataProfileTable($context, $service->metadataProfileRows())->renderTable() . '
-            </div>';
-        } catch (Throwable $exception) {
-            return '<div class="panel-soft warn">Job statistics are unavailable: ' . HelperFramework::escape($exception->getMessage()) . '</div>';
-        }
+        return '<div class="jobs-statistics">
+            <h3>Job Queue</h3>
+            ' . $this->jobQueueTable($context, $this->jobQueueRows($context))->render($context, $this->exportHiddenFields($context)) . '
+            <h3>Metadata/Profile Jobs</h3>
+            ' . $this->metadataProfileTable($context, $this->metadataProfileRows($context))->render($context, $this->exportHiddenFields($context)) . '
+        </div>';
     }
 
     public function tables(array $context): array
     {
-        $service = new SwallowtailJobStatisticsService();
-
         return [
-            $this->jobQueueTable($context, $service->jobQueueRows()),
-            $this->metadataProfileTable($context, $service->metadataProfileRows()),
+            $this->jobQueueTable($context, $this->jobQueueRows($context)),
+            $this->metadataProfileTable($context, $this->metadataProfileRows($context)),
         ];
+    }
+
+    public function handleError(string $serviceKey, array $error, array $context): string
+    {
+        return 'Job statistics are unavailable: ' . (string)($error['message'] ?? 'Service error');
     }
 
     private function jobQueueTable(array $context, array $rows): TableFramework
     {
         return TableFramework::make('jobs_queue', $rows)
             ->filename('job-queue')
-            ->exports(false)
+            ->exportLimit(100)
             ->textColumn('job_type', 'Job type')
             ->column('succeeded', 'Succeeded', html: fn(array $row): string => $this->countCell($row, 'succeeded'), exportType: 'number')
             ->column('failed', 'Failed', html: fn(array $row): string => $this->countCell($row, 'failed'), exportType: 'number')
@@ -87,7 +100,7 @@ final class _jobsCard extends CardBaseFramework
     {
         return TableFramework::make('jobs_metadata_profile', $rows)
             ->filename('metadata-profile-jobs')
-            ->exports(false)
+            ->exportLimit(100)
             ->textColumn('job_type', 'Job type')
             ->column('ready', 'Ready', html: fn(array $row): string => $this->countCell($row, 'ready'), exportType: 'number')
             ->column('failed', 'Failed', html: fn(array $row): string => $this->countCell($row, 'failed'), exportType: 'number')
@@ -106,6 +119,31 @@ final class _jobsCard extends CardBaseFramework
                 exportable: false,
                 cellClass: 'cell-fit'
             );
+    }
+
+    private function jobQueueRows(array $context): array
+    {
+        return $this->serviceRows($context, 'job_queue_rows');
+    }
+
+    private function metadataProfileRows(array $context): array
+    {
+        return $this->serviceRows($context, 'metadata_profile_rows');
+    }
+
+    private function serviceRows(array $context, string $serviceKey): array
+    {
+        return array_values(array_filter(
+            (array)(($context['services'] ?? [])[$serviceKey] ?? []),
+            static fn(mixed $row): bool => is_array($row)
+        ));
+    }
+
+    private function exportHiddenFields(array $context): array
+    {
+        return [
+            'cards[]' => (array)($context['page']['page_cards'] ?? [$this->key()]),
+        ];
     }
 
     private function countCell(array $row, string $key): string

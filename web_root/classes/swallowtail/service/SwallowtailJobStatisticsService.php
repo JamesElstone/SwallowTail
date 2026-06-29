@@ -57,12 +57,7 @@ final class SwallowtailJobStatisticsService
 
     private function conversionRow(): array
     {
-        $counts = $this->blankQueueCounts();
-        if (!InterfaceDB::tableExists('photo_conversion_jobs') || !InterfaceDB::columnExists('photo_conversion_jobs', 'status')) {
-            return $this->queueRow('Conversion', $counts, '0');
-        }
-
-        $counts = array_merge($counts, $this->statusCounts(
+        $counts = array_merge($this->blankQueueCounts(), $this->statusCounts(
             'photo_conversion_jobs',
             ['succeeded', 'failed', 'cancelled', 'obsolete', 'queued', 'processing']
         ));
@@ -72,31 +67,23 @@ final class SwallowtailJobStatisticsService
 
     private function migrationRow(): array
     {
-        $counts = $this->blankQueueCounts();
-        if (InterfaceDB::tableExists('storage_migration_job_items') && InterfaceDB::columnExists('storage_migration_job_items', 'status')) {
-            $counts = array_merge($counts, $this->statusCounts(
-                'storage_migration_job_items',
-                ['succeeded', 'failed', 'queued', 'processing']
-            ));
-        }
-
-        $jobCount = InterfaceDB::tableExists('storage_migration_jobs')
-            ? max(0, InterfaceDB::tableRowCount('storage_migration_jobs'))
-            : 0;
+        $counts = array_merge($this->blankQueueCounts(), $this->statusCounts(
+            'storage_migration_job_items',
+            ['succeeded', 'failed', 'queued', 'processing']
+        ));
+        $jobCount = max(0, (int)InterfaceDB::fetchColumn('SELECT COUNT(*) FROM storage_migration_jobs'));
 
         return $this->queueRow('Migration', $counts, $this->formatCount($counts['total']) . ' in ' . $this->formatCount($jobCount));
     }
 
     private function metadataRow(): array
     {
+        $statusCounts = $this->statusCounts('photo_metadata', ['ready', 'failed', 'deferred']);
         $counts = $this->blankMetadataCounts();
-        if (InterfaceDB::tableExists('photo_metadata') && InterfaceDB::columnExists('photo_metadata', 'status')) {
-            $statusCounts = $this->statusCounts('photo_metadata', ['ready', 'failed', 'deferred']);
-            $counts['ready'] = $statusCounts['ready'];
-            $counts['failed'] = $statusCounts['failed'];
-            $counts['deferred'] = $statusCounts['deferred'];
-            $counts['total'] = $statusCounts['total'];
-        }
+        $counts['ready'] = $statusCounts['ready'];
+        $counts['failed'] = $statusCounts['failed'];
+        $counts['deferred'] = $statusCounts['deferred'];
+        $counts['total'] = $statusCounts['total'];
 
         return $this->metadataProfileRow('Metadata', $counts, $this->formatCount($counts['total']));
     }
@@ -104,23 +91,27 @@ final class SwallowtailJobStatisticsService
     private function profileRow(): array
     {
         $counts = $this->blankMetadataCounts();
-        if (InterfaceDB::tableExists('photo_profile_data') && InterfaceDB::columnsExists('photo_profile_data', ['type', 'key', 'value'])) {
-            $row = InterfaceDB::fetchOne(
-                "SELECT
-                    COALESCE(SUM(CASE WHEN value = 'processed' THEN 1 ELSE 0 END), 0) AS ready,
-                    COALESCE(SUM(CASE WHEN value = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
-                    COALESCE(SUM(CASE WHEN value = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
-                    COALESCE(SUM(CASE WHEN value = 'processing' THEN 1 ELSE 0 END), 0) AS processing,
-                    COUNT(*) AS total
-                 FROM photo_profile_data
-                 WHERE type = 'swallowtail'
-                   AND `key` = 'status'"
-            );
-            if (is_array($row)) {
-                foreach (['ready', 'failed', 'queued', 'processing', 'total'] as $key) {
-                    $counts[$key] = max(0, (int)($row[$key] ?? 0));
-                }
+        $rows = InterfaceDB::fetchAll(
+            "SELECT value, COUNT(*) AS row_count
+             FROM photo_profile_data
+             WHERE type = 'swallowtail'
+               AND `key` = 'status'
+             GROUP BY value"
+        );
+
+        foreach ($rows as $row) {
+            $status = match ((string)($row['value'] ?? '')) {
+                'processed' => 'ready',
+                'failed' => 'failed',
+                'queued' => 'queued',
+                'processing' => 'processing',
+                default => '',
+            };
+            $count = max(0, (int)($row['row_count'] ?? 0));
+            if ($status !== '') {
+                $counts[$status] = $count;
             }
+            $counts['total'] += $count;
         }
 
         return $this->metadataProfileRow(
@@ -132,53 +123,36 @@ final class SwallowtailJobStatisticsService
 
     private function statusCounts(string $table, array $statuses): array
     {
-        $selects = [];
-        foreach ($statuses as $status) {
-            $selects[] = "COALESCE(SUM(CASE WHEN status = '" . $status . "' THEN 1 ELSE 0 END), 0) AS " . $status;
-        }
-        $selects[] = 'COUNT(*) AS total';
-
-        $row = InterfaceDB::fetchOne('SELECT ' . implode(",\n", $selects) . ' FROM ' . $table);
         $counts = ['total' => 0];
         foreach ($statuses as $status) {
-            $counts[$status] = max(0, (int)(is_array($row) ? ($row[$status] ?? 0) : 0));
+            $counts[$status] = 0;
         }
-        $counts['total'] = max(0, (int)(is_array($row) ? ($row['total'] ?? 0) : 0));
+
+        $rows = InterfaceDB::fetchAll('SELECT status, COUNT(*) AS row_count FROM ' . $table . ' GROUP BY status');
+        foreach ($rows as $row) {
+            $status = (string)($row['status'] ?? '');
+            $count = max(0, (int)($row['row_count'] ?? 0));
+            if (array_key_exists($status, $counts)) {
+                $counts[$status] = $count;
+            }
+            $counts['total'] += $count;
+        }
 
         return $counts;
     }
 
     private function uploadedCr2Count(): int
     {
-        if (!InterfaceDB::tableExists('photos') || !InterfaceDB::columnsExists('photos', ['original_extension', 'upload_state'])) {
-            return 0;
-        }
-
         return max(0, (int)InterfaceDB::fetchColumn(
             "SELECT COUNT(*)
              FROM photos
              WHERE upload_state = 'uploaded'
-               AND LOWER(COALESCE(original_extension, '')) = 'cr2'"
+               AND original_extension = 'cr2'"
         ));
     }
 
     private function reprocessConversionExceptions(): int
     {
-        if (!InterfaceDB::tableExists('photo_conversion_jobs') || !InterfaceDB::columnsExists('photo_conversion_jobs', [
-            'status',
-            'attempts',
-            'available_at',
-            'locked_at',
-            'locked_by',
-            'started_at',
-            'completed_at',
-            'duration_seconds',
-            'last_error',
-            'updated_at',
-        ])) {
-            return 0;
-        }
-
         return InterfaceDB::execute(
             "UPDATE photo_conversion_jobs
              SET status = 'queued',
@@ -197,16 +171,6 @@ final class SwallowtailJobStatisticsService
 
     private function reprocessMigrationExceptions(): int
     {
-        if (!InterfaceDB::tableExists('storage_migration_job_items') || !InterfaceDB::columnsExists('storage_migration_job_items', [
-            'job_id',
-            'status',
-            'last_error',
-            'completed_at',
-            'updated_at',
-        ])) {
-            return 0;
-        }
-
         $jobRows = InterfaceDB::fetchAll(
             "SELECT DISTINCT job_id
              FROM storage_migration_job_items
@@ -234,23 +198,16 @@ final class SwallowtailJobStatisticsService
                  WHERE status = 'failed'"
             );
 
-            if (InterfaceDB::tableExists('storage_migration_jobs') && InterfaceDB::columnsExists('storage_migration_jobs', [
-                'status',
-                'last_error',
-                'completed_at',
-                'updated_at',
-            ])) {
-                foreach ($jobIds as $jobId) {
-                    InterfaceDB::prepareExecute(
-                        "UPDATE storage_migration_jobs
-                         SET status = 'queued',
-                             last_error = NULL,
-                             completed_at = NULL,
-                             updated_at = CURRENT_TIMESTAMP
-                         WHERE id = :id",
-                        ['id' => $jobId]
-                    );
-                }
+            foreach ($jobIds as $jobId) {
+                InterfaceDB::prepareExecute(
+                    "UPDATE storage_migration_jobs
+                     SET status = 'queued',
+                         last_error = NULL,
+                         completed_at = NULL,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = :id",
+                    ['id' => $jobId]
+                );
             }
 
             return $count;
@@ -259,19 +216,11 @@ final class SwallowtailJobStatisticsService
 
     private function reprocessMetadataExceptions(): int
     {
-        if (!InterfaceDB::tableExists('photo_metadata') || !InterfaceDB::columnExists('photo_metadata', 'status')) {
-            return 0;
-        }
-
         return InterfaceDB::execute("DELETE FROM photo_metadata WHERE status = 'failed'");
     }
 
     private function reprocessProfileExceptions(): int
     {
-        if (!InterfaceDB::tableExists('photo_profile_data') || !InterfaceDB::columnsExists('photo_profile_data', ['photo_id', 'type', 'key', 'value'])) {
-            return 0;
-        }
-
         $rows = InterfaceDB::fetchAll(
             "SELECT DISTINCT photo_id
              FROM photo_profile_data
