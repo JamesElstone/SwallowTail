@@ -84,9 +84,26 @@ final class SwallowtailPhotoUiService
                     FROM event_photos event_photo
                     WHERE event_photo.photo_id = photo.id
                 ) AS event_ids,
+                preview_asset.id AS gallery_preview_asset_id,
+                thumbnail_asset.id AS gallery_thumbnail_asset_id,
+                final_asset.id AS gallery_final_asset_id,
+                original_asset.id AS gallery_original_asset_id,
+                original_asset.sha256 AS gallery_original_asset_sha256,
                 " . $this->effectiveCanEditSql($userId, $params, 'photo') . " AS effective_can_edit,
                 " . $this->effectiveCanDownloadSingleJpegSql($userId, $params, 'photo') . " AS effective_can_download_single_jpeg
              FROM photos photo
+             LEFT JOIN photo_image_assets preview_asset
+                ON preview_asset.photo_id = photo.id
+               AND preview_asset.image_type = 'preview'
+             LEFT JOIN photo_image_assets thumbnail_asset
+                ON thumbnail_asset.photo_id = photo.id
+               AND thumbnail_asset.image_type = 'thumbnail'
+             LEFT JOIN photo_image_assets final_asset
+                ON final_asset.photo_id = photo.id
+               AND final_asset.image_type = 'final'
+             LEFT JOIN photo_image_assets original_asset
+                ON original_asset.photo_id = photo.id
+               AND original_asset.image_type = 'original'
              " . $joinSql . "
              WHERE " . $where . "
              ORDER BY " . $orderBySql . "
@@ -472,20 +489,24 @@ final class SwallowtailPhotoUiService
         $row['original_bytes'] = (int)($row['original_bytes'] ?? 0);
         $row['uploaded_by_user_id'] = $this->nullableInt($row['uploaded_by_user_id'] ?? null);
         $row['duplicate_upload_count'] = (int)($row['duplicate_upload_count'] ?? 0);
-        $row['preview_ready'] = $this->assetService->assetForPhoto($row, 'preview') !== null;
-        $row['thumbnail_ready'] = !$row['preview_ready'] && $this->assetService->assetForPhoto($row, 'thumbnail') !== null;
+        $row['preview_ready'] = (int)($row['gallery_preview_asset_id'] ?? 0) > 0;
+        $row['thumbnail_ready'] = !$row['preview_ready'] && (int)($row['gallery_thumbnail_asset_id'] ?? 0) > 0;
         $row['effective_can_edit'] = (int)($row['effective_can_edit'] ?? 0) === 1;
         $row['effective_can_download_single_jpeg'] = (int)($row['effective_can_download_single_jpeg'] ?? 0) === 1;
         $row['event_ids'] = $this->normaliseEventIds((string)($row['event_ids'] ?? ''));
-        $downloadAsset = !empty($row['effective_can_download_single_jpeg'])
-            ? $this->assetService->assetForPhotoWithFinalFallback($row, 'final')
-            : null;
-        $originalAsset = !empty($row['effective_can_download_single_jpeg'])
-            ? $this->assetService->assetForPhoto($row, 'original')
-            : null;
-        $row['single_jpeg_ready'] = $downloadAsset !== null;
-        $row['original_ready'] = $originalAsset !== null;
-        $row['original_asset_sha256'] = is_array($originalAsset) ? (string)($originalAsset['sha256'] ?? '') : '';
+        $hasFinalAsset = (int)($row['gallery_final_asset_id'] ?? 0) > 0;
+        $hasOriginalAsset = (int)($row['gallery_original_asset_id'] ?? 0) > 0;
+        $row['single_jpeg_ready'] = !empty($row['effective_can_download_single_jpeg'])
+            && ($hasFinalAsset || $hasOriginalAsset);
+        $row['original_ready'] = $hasOriginalAsset;
+        $row['original_asset_sha256'] = $hasOriginalAsset ? (string)($row['gallery_original_asset_sha256'] ?? '') : '';
+        unset(
+            $row['gallery_preview_asset_id'],
+            $row['gallery_thumbnail_asset_id'],
+            $row['gallery_final_asset_id'],
+            $row['gallery_original_asset_id'],
+            $row['gallery_original_asset_sha256']
+        );
 
         return $row;
     }
