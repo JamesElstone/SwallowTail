@@ -950,7 +950,7 @@
 .rawtherapee-profile-layout {
   display: flex;
   flex-flow: row wrap;
-  gap: 0px;
+  gap: 20px;
   align-items: stretch;
   min-width: 0;
 }
