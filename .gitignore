@@ -23,3 +23,7 @@ coverage.xml
 junit*.xml
 
 /.codex
+/notes
+/example_data
+/.codex/
+/web_root/tryit
