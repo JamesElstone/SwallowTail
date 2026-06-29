@@ -69,6 +69,10 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             return $this->fixPermissions($request);
         }
 
+        if ($storageAction === 'fix_all_permissions') {
+            return $this->fixAllPermissions();
+        }
+
         \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', $this->checkboxValue($request, 'store_on_root_partition'));
         \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
         \Swallowtail\Store\SwallowtailConfigurationStore::set(
@@ -200,6 +204,35 @@ final class StorageSettingsAction implements ActionInterfaceFramework
         return ActionResultFramework::success(['storage.available', 'cr2.upload'], [[
             'type' => 'success',
             'message' => 'Storage permission repair completed for ' . (string)$repair['base'] . '.',
+        ]]);
+    }
+
+    private function fixAllPermissions(): ActionResultFramework
+    {
+        try {
+            $repairs = (new SwallowtailStoragePermissionRepairService())->repairFailingLocations();
+        } catch (Throwable $exception) {
+            return new ActionResultFramework(false, ['storage.available'], [[
+                'type' => 'error',
+                'message' => $exception->getMessage(),
+            ]]);
+        }
+
+        foreach ($repairs as $repair) {
+            ($this->storageWake ?? new SwallowtailStorageWakeService())->notifyPermissionRepair((string)$repair['base']);
+        }
+
+        $count = count($repairs);
+        if ($count <= 0) {
+            return ActionResultFramework::success(['storage.available'], [[
+                'type' => 'success',
+                'message' => 'No storage permission repairs were needed.',
+            ]]);
+        }
+
+        return ActionResultFramework::success(['storage.available', 'cr2.upload'], [[
+            'type' => 'success',
+            'message' => 'Storage permission repair completed for ' . (string)$count . ' locations.',
         ]]);
     }
 

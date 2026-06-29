@@ -50,6 +50,34 @@ final class SwallowtailStoragePermissionRepairService
             throw new InvalidArgumentException('Storage location is not currently recognised by SwallowTail.');
         }
 
+        $repair = $this->repairKnownBase($knownBase);
+        (new SwallowtailStorageCacheService())->clear();
+
+        return $repair;
+    }
+
+    /**
+     * @return array<int, array{base: string, output: string}>
+     */
+    public function repairFailingLocations(): array
+    {
+        $repairs = [];
+        foreach ($this->failingStorageBases() as $base) {
+            $repairs[] = $this->repairKnownBase($base);
+        }
+
+        if ($repairs !== []) {
+            (new SwallowtailStorageCacheService())->clear();
+        }
+
+        return $repairs;
+    }
+
+    /**
+     * @return array{base: string, output: string}
+     */
+    private function repairKnownBase(string $knownBase): array
+    {
         $sudo = trim((string)\Swallowtail\Store\SwallowtailConfigurationStore::get(
             'storage.fix_permissions_sudo',
             '/usr/local/bin/sudo'
@@ -81,12 +109,39 @@ final class SwallowtailStoragePermissionRepairService
             );
         }
 
-        (new SwallowtailStorageCacheService())->clear();
-
         return [
             'base' => $knownBase,
             'output' => $output,
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function failingStorageBases(): array
+    {
+        $bases = [];
+        $seen = [];
+        foreach (($this->locationProvider)() as $location) {
+            if (!array_key_exists('permission_can_write', $location) || !empty($location['permission_can_write'])) {
+                continue;
+            }
+
+            $candidate = trim((string)($location['storage_base_location'] ?? ''));
+            if ($candidate === '') {
+                continue;
+            }
+
+            $normalised = $this->normaliseForComparison($candidate);
+            if ($normalised === '' || isset($seen[$normalised])) {
+                continue;
+            }
+
+            $seen[$normalised] = true;
+            $bases[] = $candidate;
+        }
+
+        return $bases;
     }
 
     private function knownStorageBase(string $storageBaseLocation): ?string

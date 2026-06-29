@@ -49,6 +49,7 @@ final class _storage_availableCard extends CardBaseFramework
         }
 
         $html .= $this->storageExhaustedWarning($locations);
+        $html .= $this->allPermissionsRepairForm($locations, $context);
 
         $html .= '<div class="storage-location-grid">';
         foreach ($zpools as $zpool) {
@@ -60,6 +61,58 @@ final class _storage_availableCard extends CardBaseFramework
         }
 
         return $html . '</div>';
+    }
+
+    /**
+     * @param array<int, mixed> $locations
+     */
+    private function allPermissionsRepairForm(array $locations, array $context): string
+    {
+        $failingLocations = $this->permissionFailureBaseLocations($locations);
+        $failureCount = count($failingLocations);
+        if ($failureCount < 2) {
+            return '';
+        }
+
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+
+        return '<form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions storage-permission-repair-all">
+            ' . $this->hiddenFields($context) . '
+            <input type="hidden" name="card_action" value="StorageSettings">
+            <input type="hidden" name="storage_settings_action" value="fix_all_permissions">
+            <input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">
+            <button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Fix all storage permissions" data-chicken-message="Run the SwallowTail storage permission repair helper for all ' . HelperFramework::escape((string)$failureCount) . ' storage locations currently reporting permission failures." data-chicken-confirm-text="Fix All Permissions">Fix All Permission Issues</button>
+        </form>';
+    }
+
+    /**
+     * @param array<int, mixed> $locations
+     * @return array<int, string>
+     */
+    private function permissionFailureBaseLocations(array $locations): array
+    {
+        $baseLocations = [];
+        $seen = [];
+        foreach ($locations as $location) {
+            if (!is_array($location) || !array_key_exists('permission_can_write', $location) || !empty($location['permission_can_write'])) {
+                continue;
+            }
+
+            $baseLocation = trim((string)($location['storage_base_location'] ?? ''));
+            if ($baseLocation === '') {
+                continue;
+            }
+
+            $key = rtrim(str_replace('\\', '/', $baseLocation), '/');
+            if ($key === '' || isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $baseLocations[] = $baseLocation;
+        }
+
+        return $baseLocations;
     }
 
     private function locationCard(array $location, array $context): string
