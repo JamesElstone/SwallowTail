@@ -571,15 +571,25 @@ class WorkerBehaviourTest(unittest.TestCase):
         redis = FakeRedis()
         db = FakeDb()
         worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("swallowtail_conversion.worker")
         worker.redis = redis
         worker.db = db
         worker.preempt_lock = threading.Lock()
         worker.preempt_target = None
 
-        self.assertEqual(99, worker._next_job_id())
+        with self.assertLogs("swallowtail_conversion.worker", level="INFO") as logs:
+            self.assertEqual(99, worker._next_job_id())
+
         self.assertTrue(redis.preempt_popped)
         self.assertFalse(redis.normal_popped)
         self.assertFalse(db.selected)
+        self.assertTrue(
+            any(
+                "Redis priority preempt received job=99 priority=51 queue=preempt reason=-" in line
+                for line in logs.output
+            )
+        )
 
     def test_preempt_message_interrupts_lower_priority_job_only_after_database_verification(self) -> None:
         class FakeRedis:
@@ -605,6 +615,9 @@ class WorkerBehaviourTest(unittest.TestCase):
 
         db = FakeDb()
         worker = ConversionWorker.__new__(ConversionWorker)
+        worker.config = app_config(self.root, str(self.fake))
+        worker.log = logging.getLogger("test")
+        worker.log.disabled = True
         worker.redis = FakeRedis()
         worker.db = db
         worker.preempt_lock = threading.Lock()

@@ -245,8 +245,26 @@ class ConversionWorker:
         if message is None:
             return
 
+        message_priority = int(getattr(message, "priority", 0) or 0)
+        message_reason = str(getattr(message, "reason", "") or "")
+        message_queue = str(getattr(message, "queue", "") or self.config.redis.preempt_queue)
+        self.log.info(
+            "Redis priority preempt received job=%s priority=%s queue=%s reason=%s",
+            message.job_id,
+            message_priority,
+            message_queue,
+            message_reason or "-",
+        )
+
         verified = self.db.preempt_target(message.job_id)
         if verified is None:
+            self.log.warning(
+                "Redis priority preempt ignored job=%s priority=%s queue=%s reason=%s",
+                message.job_id,
+                message_priority,
+                message_queue,
+                message_reason or "-",
+            )
             return
 
         current = getattr(self, "preempt_target", None)
