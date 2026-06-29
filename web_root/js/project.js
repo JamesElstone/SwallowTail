@@ -79,6 +79,35 @@
     return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
   }
 
+  function ensureRawTherapeeProfileImage(panel) {
+    const existing = panel.querySelector('[data-rawtherapee-profile-image="true"]');
+    if (existing instanceof HTMLImageElement) {
+      return existing;
+    }
+
+    const preview = panel.querySelector('.rawtherapee-profile-preview');
+    if (!(preview instanceof HTMLElement)) {
+      return null;
+    }
+
+    const figure = document.createElement('figure');
+    figure.className = 'rawtherapee-profile-preview-frame';
+
+    const shell = document.createElement('span');
+    shell.className = 'rawtherapee-profile-image-shell';
+
+    const image = document.createElement('img');
+    image.className = 'rawtherapee-profile-image';
+    image.dataset.rawtherapeeProfileImage = 'true';
+    image.alt = 'Photo';
+
+    shell.appendChild(image);
+    figure.appendChild(shell);
+    preview.replaceChildren(figure);
+
+    return image;
+  }
+
   function bindImageLoad(panel, image) {
     if (!(image instanceof HTMLImageElement)) {
       return;
@@ -134,7 +163,9 @@
       setStatus(panel, statusLabel(status));
 
       const resolved = resolvedImagePayload(payload);
-      const image = panel.querySelector('[data-rawtherapee-profile-image="true"]');
+      const image = resolved.url !== ''
+        ? ensureRawTherapeeProfileImage(panel)
+        : panel.querySelector('[data-rawtherapee-profile-image="true"]');
       if ((status === 'succeeded' || payload.ready === true) && resolved.url !== '' && image instanceof HTMLImageElement) {
         if ((image.getAttribute('src') || '') === resolved.url && imageLoaded(image)) {
           image.dataset.rawtherapeeProfileImageType = resolved.type;

@@ -751,6 +751,88 @@ $harness->check(SwallowtailRawTherapeeProfileService::class, 'searches accessibl
     $harness->assertSame('RecallLater.CR2', (string)$checksumRows[0]['original_filename']);
 });
 
+$harness->check(SwallowtailRawTherapeeProfileService::class, 'clears carried sample image when selected profile asset is missing', function () use ($harness, $swallowtailUiCreateSchema): void {
+    $swallowtailUiCreateSchema();
+    InterfaceDB::execute("CREATE TABLE rawtherapee_profile_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_path TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        display_label TEXT NOT NULL,
+        profile_hash TEXT NOT NULL,
+        profile_bytes INTEGER NOT NULL DEFAULT 0,
+        profile_mtime INTEGER NOT NULL DEFAULT 0,
+        is_available INTEGER NOT NULL DEFAULT 1,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        scanned_at TEXT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $baseLocation = swallowtail_ui_storage_tmp_root();
+    InterfaceDB::prepareExecute(
+        "INSERT INTO photos (
+            original_filename,
+            original_extension,
+            original_bytes,
+            original_sha256,
+            storage_base_location,
+            uploaded_by_user_id,
+            uploaded_via
+        ) VALUES (
+            'stale-sample.CR2',
+            'cr2',
+            100,
+            :sha256,
+            :storage_base_location,
+            902,
+            'web'
+        )",
+        [
+            'sha256' => str_repeat('4', 64),
+            'storage_base_location' => $baseLocation,
+        ]
+    );
+    $photoId = (int)InterfaceDB::fetchColumn("SELECT id FROM photos WHERE original_filename = 'stale-sample.CR2'");
+
+    InterfaceDB::prepareExecute(
+        "INSERT INTO rawtherapee_profile_data (
+            profile_path,
+            relative_path,
+            display_label,
+            profile_hash,
+            profile_bytes,
+            profile_mtime,
+            is_available
+        ) VALUES (
+            :profile_path,
+            'Auto-Matched curve - iso low.pp3',
+            'Auto-Matched curve - iso low',
+            :profile_hash,
+            12,
+            123,
+            1
+        )",
+        [
+            'profile_path' => $baseLocation . DIRECTORY_SEPARATOR . 'missing-low.pp3',
+            'profile_hash' => str_repeat('5', 64),
+        ]
+    );
+    $profileId = (int)InterfaceDB::fetchColumn("SELECT id FROM rawtherapee_profile_data WHERE display_label = 'Auto-Matched curve - iso low'");
+
+    $dashboard = (new SwallowtailRawTherapeeProfileService())->dashboard(
+        $profileId,
+        $photoId,
+        901,
+        true,
+        '/api/photo-imaging.php?photo_id=' . (string)$photoId . '&type=rawtherapee_sample&profile_signature=' . str_repeat('a', 64),
+        'rawtherapee'
+    );
+
+    $harness->assertSame('Queued', (string)$dashboard['status']);
+    $harness->assertSame('', (string)$dashboard['display_url']);
+    $harness->assertSame('none', (string)$dashboard['display_type']);
+    $harness->assertSame('', (string)$dashboard['applied_profile_label']);
+});
+
 $harness->check(SwallowtailEventManagementService::class, 'assigns and unassigns event photos only when actor can edit photo', function () use ($harness, $swallowtailUiCreateSchema): void {
     $swallowtailUiCreateSchema();
     $library = new SwallowtailPhotoLibraryService();

@@ -150,6 +150,8 @@ final class SwallowtailRawTherapeeProfileService
                     $displayType = 'rawtherapee';
                     $status = 'Ready';
                 } else {
+                    $displayUrl = '';
+                    $displayType = 'none';
                     $status = 'Queued';
                 }
             }
