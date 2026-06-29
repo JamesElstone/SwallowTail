@@ -25,7 +25,7 @@ SET @copy_old_profile_table_sql = IF(
     SELECT 1
       FROM information_schema.tables
      WHERE table_schema = DATABASE()
-       AND table_name = @old_profile_table
+       AND table_name = 'rawtheapee_profile_data'
   ),
   CONCAT(
     'INSERT INTO rawtherapee_profile_data (',
@@ -48,7 +48,7 @@ SET @drop_old_profile_table_sql = IF(
     SELECT 1
       FROM information_schema.tables
      WHERE table_schema = DATABASE()
-       AND table_name = @old_profile_table
+       AND table_name = 'rawtheapee_profile_data'
   ),
   CONCAT('DROP TABLE `', @old_profile_table, '`'),
   'SELECT 1'
@@ -172,7 +172,7 @@ DEALLOCATE PREPARE jobs_enum_with_legacy_stmt;
 
 UPDATE photo_conversion_jobs
    SET image_type = 'rawtherapee_sample'
- WHERE image_type = @old_sample_type;
+ WHERE CAST(image_type AS CHAR) = CONCAT('rawthe', 'apee_sample');
 
 ALTER TABLE photo_conversion_jobs
   MODIFY image_type enum('embedded','thumbnail','original','preview','final','rawtherapee_sample') NOT NULL;
@@ -188,7 +188,7 @@ DEALLOCATE PREPARE assets_enum_with_legacy_stmt;
 
 UPDATE photo_image_assets
    SET image_type = 'rawtherapee_sample'
- WHERE image_type = @old_sample_type;
+ WHERE CAST(image_type AS CHAR) = CONCAT('rawthe', 'apee_sample');
 
 ALTER TABLE photo_image_assets
   MODIFY image_type enum('embedded','thumbnail','original','preview','final','rawtherapee_sample') NOT NULL;
