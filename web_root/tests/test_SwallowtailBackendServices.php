@@ -992,6 +992,58 @@ $harness->check(SwallowtailStorageService::class, 'does not chmod existing stora
     $harness->assertSame($beforeMode & 07777, $afterMode & 07777);
 });
 
+$harness->check(SwallowtailStorageService::class, 'marks existing unwritable storage hash directories unavailable', function () use ($harness, $swallowtailAssertContains): void {
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $harness->skip('POSIX directory modes are not available on Windows.');
+    }
+
+    $configPath = AppConfigurationStore::configPath();
+    $originalConfig = file_get_contents($configPath);
+    if (!is_string($originalConfig)) {
+        throw new RuntimeException('Unable to read fixture config.');
+    }
+
+    $storageRoot = swallowtail_backend_storage_tmp_root();
+    $dataRoot = $storageRoot . DIRECTORY_SEPARATOR . SwallowtailStorageService::DATA_DIRECTORY;
+    $blockedDirectory = $dataRoot . DIRECTORY_SEPARATOR . 'aa' . DIRECTORY_SEPARATOR . 'aa';
+    if (!is_dir($blockedDirectory) && !@mkdir($blockedDirectory, 0770, true) && !is_dir($blockedDirectory)) {
+        throw new RuntimeException('Unable to create blocked storage hash directory fixture.');
+    }
+
+    try {
+        @chmod($dataRoot, 0770);
+        @chmod(dirname($blockedDirectory), 0770);
+        @chmod($blockedDirectory, 0500);
+        clearstatcache(true, $blockedDirectory);
+
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.test_base_location', $storageRoot);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.store_on_root_partition', false);
+        \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.full_threshold_percent', 0);
+        (new SwallowtailStorageCacheService())->clear();
+
+        $normalisedStorageRoot = rtrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $storageRoot), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        $matching = array_values(array_filter(
+            (new SwallowtailStorageService())->liveStorageLocations(),
+            static fn(array $location): bool => (string)($location['storage_base_location'] ?? '') === $normalisedStorageRoot
+        ));
+        if ($matching === []) {
+            throw new RuntimeException('Expected blocked test storage base to be discovered.');
+        }
+
+        $location = $matching[0];
+        $harness->assertSame(false, !empty($location['permission_can_write']));
+        $harness->assertSame(false, !empty($location['can_write']));
+        $harness->assertSame($blockedDirectory, (string)($location['permission_checked_path'] ?? ''));
+        $swallowtailAssertContains('Existing SwallowTail storage directory is not writable', (string)($location['permission_error'] ?? ''), 'storage hash directory permission error');
+    } finally {
+        @chmod($blockedDirectory, 0770);
+        file_put_contents($configPath, $originalConfig, LOCK_EX);
+        AppConfigurationStore::config(true);
+        (new SwallowtailStorageCacheService())->clear();
+        swallowtail_backend_remove_tree($storageRoot);
+    }
+});
+
 $harness->check(SwallowtailStorageService::class, 'reports storage file write failures without PHP warnings', function () use ($harness, $swallowtailAssertContains, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
     $swallowtailCreateSqliteSchema();
 

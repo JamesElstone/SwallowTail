@@ -704,18 +704,23 @@ final class SwallowtailStorageService
 
         $dataRootPath = $this->pathWithoutTrailingDirectorySeparator($dataRoot);
         if (is_dir($dataRootPath)) {
-            if (is_writable($dataRootPath)) {
+            if (!is_writable($dataRootPath)) {
                 return [
-                    'can_write' => true,
+                    'can_write' => false,
                     'checked_path' => $dataRootPath,
-                    'error' => null,
+                    'error' => 'SwallowTail storage data root is not writable by ' . $this->phpProcessUserLabel() . '.',
                 ];
             }
 
+            $directoryPermissionFailure = $this->storageDirectoryPermissionFailure($dataRootPath);
+            if ($directoryPermissionFailure !== null) {
+                return $directoryPermissionFailure;
+            }
+
             return [
-                'can_write' => false,
+                'can_write' => true,
                 'checked_path' => $dataRootPath,
-                'error' => 'SwallowTail storage data root is not writable by ' . $this->phpProcessUserLabel() . '.',
+                'error' => null,
             ];
         }
 
@@ -741,6 +746,66 @@ final class SwallowtailStorageService
             'checked_path' => $parent,
             'error' => null,
         ];
+    }
+
+    /**
+     * @return array{can_write: false, checked_path: string, error: string}|null
+     */
+    private function storageDirectoryPermissionFailure(string $dataRootPath): ?array
+    {
+        try {
+            foreach ($this->storagePermissionAuditDirectories($dataRootPath) as $directory) {
+                if (is_writable($directory)) {
+                    continue;
+                }
+
+                return [
+                    'can_write' => false,
+                    'checked_path' => $directory,
+                    'error' => 'Existing SwallowTail storage directory is not writable by ' . $this->phpProcessUserLabel() . '.',
+                ];
+            }
+        } catch (Throwable $exception) {
+            return [
+                'can_write' => false,
+                'checked_path' => $dataRootPath,
+                'error' => 'Unable to inspect SwallowTail storage directory permissions: ' . $exception->getMessage(),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @return iterable<int, string>
+     */
+    private function storagePermissionAuditDirectories(string $dataRootPath): iterable
+    {
+        yield $dataRootPath;
+
+        foreach ($this->directChildDirectories($dataRootPath) as $firstLevelDirectory) {
+            yield $firstLevelDirectory;
+            foreach ($this->directChildDirectories($firstLevelDirectory) as $secondLevelDirectory) {
+                yield $secondLevelDirectory;
+            }
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function directChildDirectories(string $directory): array
+    {
+        $children = [];
+        foreach (new \DirectoryIterator($directory) as $item) {
+            if ($item->isDot() || !$item->isDir()) {
+                continue;
+            }
+
+            $children[] = $item->getPathname();
+        }
+
+        return $children;
     }
 
     private function phpProcessUserLabel(): string
