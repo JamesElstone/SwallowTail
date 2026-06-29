@@ -2345,6 +2345,19 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtherapee sample sta
         ]
     );
     swallowtail_backend_record_asset(722, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE, $samplePath, str_repeat('d', 64), $signature, 721);
+    InterfaceDB::prepareExecute(
+        "UPDATE photo_image_assets
+         SET bytes = :bytes
+         WHERE photo_id = :photo_id
+           AND image_type = :image_type
+           AND asset_variant_key = :asset_variant_key",
+        [
+            'bytes' => 4096,
+            'photo_id' => 722,
+            'image_type' => SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE,
+            'asset_variant_key' => $signature,
+        ]
+    );
 
     $status = (new SwallowtailPreviewProfileService())->imageStatus(722, 721, 44, SwallowtailRawTherapeeProfileService::SAMPLE_IMAGE_TYPE);
     $url = (string)($status['rawtherapee_sample_url'] ?? '');
@@ -2358,6 +2371,7 @@ $harness->check(SwallowtailPreviewProfileService::class, 'rawtherapee sample sta
     $harness->assertTrue(str_contains($url, 'v=' . $signature));
     $harness->assertTrue(is_array($image));
     $harness->assertSame($samplePath, (string)($image['absolute_path'] ?? ''));
+    $harness->assertSame((int)filesize($samplePath), (int)($image['bytes'] ?? 0));
     $harness->assertSame(null, $missingSignature);
     $harness->assertSame(null, $wrongSignature);
 });

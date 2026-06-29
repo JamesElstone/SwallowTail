@@ -195,10 +195,13 @@ final class SwallowtailPhotoAssetService
             return null;
         }
 
+        $actualBytes = is_file($path) ? (int)filesize($path) : 0;
+        $actualModifiedAt = is_file($path) ? (int)filemtime($path) : 0;
+
         $row['absolute_path'] = $path;
         $row['image_type'] = $imageType;
-        $row['bytes'] = max(0, (int)($row['bytes'] ?? 0));
-        $row['modified_at'] = max(0, (int)($row['modified_at'] ?? 0));
+        $row['bytes'] = $actualBytes > 0 ? $actualBytes : max(0, (int)($row['bytes'] ?? 0));
+        $row['modified_at'] = $actualModifiedAt > 0 ? $actualModifiedAt : max(0, (int)($row['modified_at'] ?? 0));
         $row['sha256'] = $this->normaliseSha256((string)($row['sha256'] ?? ''));
         $row['profile_signature'] = $profileSignature;
         $row['asset_variant_key'] = $this->normaliseSha256((string)($row['asset_variant_key'] ?? ''));
