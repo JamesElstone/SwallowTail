@@ -1521,8 +1521,7 @@ html.has-picture-viewer-fullscreen body {
 }
 
 .picture-viewer-status-pill[data-picture-viewer-state="loaded"] {
-  color: var(--success);
-  background: var(--success-soft);
+  display: none;
 }
 
 .picture-viewer-details {
