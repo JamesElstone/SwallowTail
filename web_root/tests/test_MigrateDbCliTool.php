@@ -151,6 +151,18 @@ $harness->check('migrateDb.php', 'tracks expected application tables for empty d
     }
 });
 
+$harness->check('migrateDb.php', 'includes migration filename in failure messages', function () use ($harness): void {
+    $message = eel_migration_failure_message(
+        new RuntimeException('Duplicate column name asset_variant_key'),
+        '2026_06_28_001_rawtherapee_sample_asset_variants.sql'
+    );
+
+    $harness->assertSame(
+        'Migration failed while applying 2026_06_28_001_rawtherapee_sample_asset_variants.sql: Duplicate column name asset_variant_key',
+        $message
+    );
+});
+
 $harness->check('migrateDb.php', 'can parse the baseline schema used to hydrate an empty database', function () use ($harness): void {
     $schemaFile = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'db_schema' . DIRECTORY_SEPARATOR . 'eelKit.schema.sql';
     $sql = file_get_contents($schemaFile);
