@@ -24,6 +24,8 @@ final class TableFramework
     private array $exportFormats = [
         'csv' => 'CSV',
         'xlsx' => 'XLSX',
+        'tsv' => 'TSV',
+        'ascii' => 'ASCII',
     ];
     private int $exportLimit = 5000;
     private array $filters = [];
@@ -401,7 +403,7 @@ final class TableFramework
             }
 
             $format = strtolower(trim((string)$format));
-            if (!in_array($format, ['csv', 'xlsx'], true)) {
+            if (!in_array($format, ['csv', 'xlsx', 'tsv', 'ascii'], true)) {
                 continue;
             }
 
@@ -431,8 +433,12 @@ final class TableFramework
     public function renderTable(): string
     {
         $columns = $this->resolvedColumns();
-        $classAttribute = $this->tableClass !== ''
-            ? ' class="' . HelperFramework::escape($this->tableClass) . '"'
+        $tableClasses = array_values(array_filter([
+            $this->tableClass,
+            $this->tableCondensedDefaultEnabled() && $this->wrapperClass === '' ? 'table-condensed' : '',
+        ]));
+        $classAttribute = $tableClasses !== []
+            ? ' class="' . HelperFramework::escape(implode(' ', $tableClasses)) . '"'
             : '';
         $headerHtml = '';
 
@@ -465,7 +471,9 @@ final class TableFramework
             return $table;
         }
 
-        return '<div class="' . HelperFramework::escape($this->wrapperClass) . '">' . $table . '</div>';
+        $wrapperClasses = trim($this->wrapperClass . ($this->tableCondensedDefaultEnabled() ? ' table-condensed' : ''));
+
+        return '<div class="' . HelperFramework::escape($wrapperClasses) . '">' . $table . '</div>';
     }
 
     private function renderHeaderCell(TableColumnFramework $column): string
@@ -533,24 +541,66 @@ final class TableFramework
 
     public function exportCsv(): string
     {
+        return $this->exportDelimited(',');
+    }
+
+    public function exportTsv(): string
+    {
+        return $this->exportDelimited("\t");
+    }
+
+    public function exportAscii(): string
+    {
+        $columns = $this->exportColumns();
+        $headers = array_map(
+            fn(TableColumnFramework $column): string => $this->normaliseAsciiTableValue($column->label()),
+            $columns
+        );
+        $rows = [];
+        $widths = array_map('strlen', $headers);
+
+        foreach ($this->exportRows() as $row) {
+            $row = is_array($row) ? $row : ['value' => $row];
+            $values = array_map(
+                fn(TableColumnFramework $column): string => $this->normaliseAsciiTableValue($column->exportValue($row)),
+                $columns
+            );
+            foreach ($values as $index => $value) {
+                $widths[$index] = max((int)($widths[$index] ?? 0), strlen($value));
+            }
+            $rows[] = $values;
+        }
+
+        $border = $this->asciiTableBorder($widths);
+        $lines = [$border, $this->asciiTableRow($headers, $widths), $border];
+        foreach ($rows as $row) {
+            $lines[] = $this->asciiTableRow($row, $widths);
+        }
+        $lines[] = $border;
+
+        return implode("\n", $lines) . "\n";
+    }
+
+    private function exportDelimited(string $delimiter): string
+    {
         $handle = fopen('php://temp', 'r+');
         if ($handle === false) {
             return '';
         }
 
         $columns = $this->exportColumns();
-        fputcsv($handle, array_map(static fn(TableColumnFramework $column): string => $column->label(), $columns), ',', '"', '');
+        fputcsv($handle, array_map(static fn(TableColumnFramework $column): string => $column->label(), $columns), $delimiter, '"', '');
 
         foreach ($this->exportRows() as $row) {
             $row = is_array($row) ? $row : ['value' => $row];
-            fputcsv($handle, array_map(static fn(TableColumnFramework $column): string => $column->exportValue($row), $columns), ',', '"', '');
+            fputcsv($handle, array_map(static fn(TableColumnFramework $column): string => $column->exportValue($row), $columns), $delimiter, '"', '');
         }
 
         rewind($handle);
-        $csv = stream_get_contents($handle);
+        $export = stream_get_contents($handle);
         fclose($handle);
 
-        return is_string($csv) ? $csv : '';
+        return is_string($export) ? $export : '';
     }
 
     public function exportXlsx(): string
@@ -618,6 +668,22 @@ final class TableFramework
             );
         }
 
+        if ($format === 'tsv') {
+            return ResponseFramework::download(
+                $this->exportTsv(),
+                $this->downloadFilename('tsv'),
+                'text/tab-separated-values; charset=utf-8'
+            );
+        }
+
+        if ($format === 'ascii') {
+            return ResponseFramework::download(
+                $this->exportAscii(),
+                $this->downloadFilename('txt'),
+                'text/plain; charset=utf-8'
+            );
+        }
+
         return ResponseFramework::download(
             $this->exportCsv(),
             $this->downloadFilename('csv'),
@@ -642,9 +708,19 @@ final class TableFramework
             return '';
         }
 
-        return '<button class="button table-condensed-toggle" type="button" data-table-key="'
+        $condensedDefaultEnabled = $this->tableCondensedDefaultEnabled();
+        $buttonClass = $condensedDefaultEnabled ? 'button primary table-condensed-toggle' : 'button table-condensed-toggle';
+
+        return '<button class="' . $buttonClass . '" type="button" data-table-key="'
             . HelperFramework::escape($this->key)
-            . '" aria-pressed="false">Condensed View</button>';
+            . '" data-table-condensed-default="' . ($condensedDefaultEnabled ? '1' : '0') . '" aria-pressed="'
+            . ($condensedDefaultEnabled ? 'true' : 'false')
+            . '">Condensed View</button>';
+    }
+
+    private function tableCondensedDefaultEnabled(): bool
+    {
+        return $this->exportsEnabled && (bool)AppConfigurationStore::get('table_condensed_default', false);
     }
 
     private function renderExportButton(array $context, string $format, string $label, array $hiddenFields): string
@@ -666,6 +742,33 @@ final class TableFramework
         return '<form method="post" data-ajax="true">' . $this->hiddenInputs($fields) . '<button class="button primary" type="submit">'
             . HelperFramework::escape($label)
             . '</button></form>';
+    }
+
+    private function normaliseAsciiTableValue(string $value): string
+    {
+        $value = preg_replace('/[\r\n\t]+/', ' ', $value) ?? $value;
+
+        return trim($value);
+    }
+
+    private function asciiTableBorder(array $widths): string
+    {
+        $segments = array_map(
+            static fn(int $width): string => str_repeat('-', max(0, $width) + 2),
+            $widths
+        );
+
+        return '+' . implode('+', $segments) . '+';
+    }
+
+    private function asciiTableRow(array $values, array $widths): string
+    {
+        $cells = [];
+        foreach ($widths as $index => $width) {
+            $cells[] = ' ' . str_pad((string)($values[$index] ?? ''), (int)$width, ' ', STR_PAD_RIGHT) . ' ';
+        }
+
+        return '|' . implode('|', $cells) . '|';
     }
 
     private function renderFilters(): string
