@@ -770,12 +770,41 @@ $harness->check(SwallowtailJobStatisticsService::class, 'summarises job statisti
     $harness->assertSame('4 in 2', (string)($profile['total'] ?? ''));
 });
 
+$harness->check(SwallowtailJobStatisticsService::class, 'counts unknown profile statuses only in the profile total', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+    InterfaceDB::execute("INSERT INTO photo_profile_data (photo_id, type, `key`, value, value_type) VALUES
+        (5, 'swallowtail', 'status', 'unknown', 'string')");
+
+    $profile = (new SwallowtailJobStatisticsService())->metadataProfileRows()[1] ?? [];
+
+    $harness->assertSame(1, (int)($profile['ready'] ?? 0));
+    $harness->assertSame(1, (int)($profile['failed'] ?? 0));
+    $harness->assertSame(1, (int)($profile['queued'] ?? 0));
+    $harness->assertSame(1, (int)($profile['processing'] ?? 0));
+    $harness->assertSame('5 in 2', (string)($profile['total'] ?? ''));
+});
+
+$harness->check(SwallowtailJobStatisticsService::class, 'returns zero profile counts when no status rows exist', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+    InterfaceDB::execute("DELETE FROM photo_profile_data WHERE type = 'swallowtail' AND `key` = 'status'");
+
+    $profile = (new SwallowtailJobStatisticsService())->metadataProfileRows()[1] ?? [];
+
+    $harness->assertSame(0, (int)($profile['ready'] ?? 0));
+    $harness->assertSame(0, (int)($profile['failed'] ?? 0));
+    $harness->assertSame(0, (int)($profile['queued'] ?? 0));
+    $harness->assertSame(0, (int)($profile['processing'] ?? 0));
+    $harness->assertSame('0 in 2', (string)($profile['total'] ?? ''));
+});
+
 $harness->check(SwallowtailJobStatisticsService::class, 'does not use schema introspection in job statistics service', function () use ($harness): void {
     $source = (string)file_get_contents(__DIR__ . '/../classes/swallowtail/service/SwallowtailJobStatisticsService.php');
 
     $harness->assertSame(false, str_contains($source, 'tableExists('));
     $harness->assertSame(false, str_contains($source, 'columnExists('));
     $harness->assertSame(false, str_contains($source, 'columnsExists('));
+    $harness->assertTrue(str_contains($source, "InterfaceDB::driverName() === 'sqlite'"));
+    $harness->assertTrue(str_contains($source, 'FORCE INDEX (idx_photo_profile_data_status_value)'));
 });
 
 $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess forms', function () use ($harness, $seedJobStatisticsTables): void {

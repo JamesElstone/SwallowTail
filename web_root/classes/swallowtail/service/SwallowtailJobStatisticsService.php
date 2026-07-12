@@ -91,27 +91,25 @@ final class SwallowtailJobStatisticsService
     private function profileRow(): array
     {
         $counts = $this->blankMetadataCounts();
-        $rows = InterfaceDB::fetchAll(
-            "SELECT value, COUNT(*) AS row_count
-             FROM photo_profile_data
+        $indexHint = InterfaceDB::driverName() === 'sqlite'
+            ? ''
+            : ' FORCE INDEX (idx_photo_profile_data_status_value)';
+        $row = InterfaceDB::fetchOne(
+            "SELECT
+                COUNT(CASE WHEN value = 'processed' THEN 1 END) AS ready,
+                COUNT(CASE WHEN value = 'failed' THEN 1 END) AS failed,
+                COUNT(CASE WHEN value = 'queued' THEN 1 END) AS queued,
+                COUNT(CASE WHEN value = 'processing' THEN 1 END) AS processing,
+                COUNT(*) AS total
+             FROM photo_profile_data" . $indexHint . "
              WHERE type = 'swallowtail'
-               AND `key` = 'status'
-             GROUP BY value"
+               AND `key` = 'status'"
         );
 
-        foreach ($rows as $row) {
-            $status = match ((string)($row['value'] ?? '')) {
-                'processed' => 'ready',
-                'failed' => 'failed',
-                'queued' => 'queued',
-                'processing' => 'processing',
-                default => '',
-            };
-            $count = max(0, (int)($row['row_count'] ?? 0));
-            if ($status !== '') {
-                $counts[$status] = $count;
+        if (is_array($row)) {
+            foreach (['ready', 'failed', 'queued', 'processing', 'total'] as $key) {
+                $counts[$key] = max(0, (int)($row[$key] ?? 0));
             }
-            $counts['total'] += $count;
         }
 
         return $this->metadataProfileRow(
