@@ -15,6 +15,7 @@ use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
 use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
+use Swallowtail\Service\SwallowtailRedisPipelineService;
 use Swallowtail\Service\SwallowtailServiceStatusService;
 use Swallowtail\Service\SwallowtailStatisticsService;
 use Swallowtail\Service\SwallowtailStoragePermissionRepairService;
@@ -28,7 +29,7 @@ $harness = new GeneratedServiceClassTestHarness();
 $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI pages', function () use ($harness): void {
     $factory = new PageFactoryFramework();
 
-    foreach (['upload', 'gallery', 'view', 'edit', 'profiles', 'download', 'events'] as $pageKey) {
+    foreach (['upload', 'gallery', 'view', 'edit', 'profiles', 'download', 'events', 'queues'] as $pageKey) {
         $page = $factory->create($pageKey);
         $harness->assertSame($pageKey, $page->id());
     }
@@ -37,7 +38,7 @@ $harness->check(PageFactoryFramework::class, 'resolves SwallowTail photo UI page
 $harness->check(CardFactoryFramework::class, 'resolves SwallowTail photo UI cards', function () use ($harness): void {
     $factory = new CardFactoryFramework();
 
-    foreach (['cr2_upload', 'storage_available', 'jobs', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtherapee_profiles', 'combined_profile_preview', 'event_downloads', 'event_permissions', 'photo_audit_log'] as $cardKey) {
+    foreach (['cr2_upload', 'storage_available', 'jobs', 'redis_pipeline', 'timezone_settings', 'storage_summary', 'service_status', 'statistics', 'browse_gallery', 'picture_viewer', 'recent_uploads', 'internal_profiles', 'rawtherapee_profiles', 'combined_profile_preview', 'event_downloads', 'event_permissions', 'photo_audit_log'] as $cardKey) {
         $card = $factory->create($cardKey);
         $harness->assertSame($cardKey, $card->key());
     }
@@ -473,11 +474,11 @@ $harness->check(SwallowtailServiceStatusService::class, 'reports stale Redis ser
     $harness->assertSame('Stale', (string)($status['status'] ?? ''));
 });
 
-$harness->check(_settings::class, 'includes reusable storage card', function () use ($harness): void {
+$harness->check(_settings::class, 'keeps settings cards separate from queue operations', function () use ($harness): void {
     $settings = new _settings();
 
     $harness->assertTrue(in_array('storage_available', $settings->cards(), true));
-    $harness->assertTrue(in_array('jobs', $settings->cards(), true));
+    $harness->assertSame(false, in_array('jobs', $settings->cards(), true));
     $harness->assertTrue(in_array('timezone_settings', $settings->cards(), true));
 });
 
@@ -532,7 +533,8 @@ $seedJobStatisticsTables = static function (): void {
     InterfaceDB::execute("CREATE TABLE photo_metadata (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         photo_id INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'deferred'
+        status TEXT NOT NULL DEFAULT 'deferred',
+        next_attempt_at TEXT NULL
     )");
     InterfaceDB::execute("CREATE TABLE photo_profile_data (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -760,6 +762,7 @@ $harness->check(SwallowtailJobStatisticsService::class, 'summarises job statisti
     $harness->assertSame(1, (int)($metadata['ready'] ?? 0));
     $harness->assertSame(2, (int)($metadata['failed'] ?? 0));
     $harness->assertSame(1, (int)($metadata['deferred'] ?? 0));
+    $harness->assertSame(0, (int)($metadata['queued'] ?? 0));
     $harness->assertSame('4', (string)($metadata['total'] ?? ''));
 
     $harness->assertSame('Profile', (string)($profile['job_type'] ?? ''));
@@ -768,6 +771,10 @@ $harness->check(SwallowtailJobStatisticsService::class, 'summarises job statisti
     $harness->assertSame(1, (int)($profile['queued'] ?? 0));
     $harness->assertSame(1, (int)($profile['processing'] ?? 0));
     $harness->assertSame('4 in 2', (string)($profile['total'] ?? ''));
+});
+
+$harness->check(_queues::class, 'exposes database and Redis queue cards', function () use ($harness): void {
+    $harness->assertSame(['jobs', 'redis_pipeline'], (new _queues())->cards());
 });
 
 $harness->check(SwallowtailJobStatisticsService::class, 'counts unknown profile statuses only in the profile total', function () use ($harness, $seedJobStatisticsTables): void {
@@ -782,6 +789,18 @@ $harness->check(SwallowtailJobStatisticsService::class, 'counts unknown profile 
     $harness->assertSame(1, (int)($profile['queued'] ?? 0));
     $harness->assertSame(1, (int)($profile['processing'] ?? 0));
     $harness->assertSame('5 in 2', (string)($profile['total'] ?? ''));
+});
+
+$harness->check(SwallowtailJobStatisticsService::class, 'counts missing and due deferred metadata as queued work', function () use ($harness, $seedJobStatisticsTables): void {
+    $seedJobStatisticsTables();
+    InterfaceDB::execute("INSERT INTO photos (original_filename, original_extension, upload_state) VALUES
+        ('E.CR2', 'cr2', 'uploaded'),
+        ('F.CR2', 'cr2', 'uploaded')");
+    InterfaceDB::execute("INSERT INTO photo_metadata (photo_id, status, next_attempt_at) VALUES
+        (6, 'deferred', datetime('now', '-1 minute'))");
+
+    $metadata = (new SwallowtailJobStatisticsService())->metadataProfileRows()[0] ?? [];
+    $harness->assertSame(2, (int)($metadata['queued'] ?? 0));
 });
 
 $harness->check(SwallowtailJobStatisticsService::class, 'returns zero profile counts when no status rows exist', function () use ($harness, $seedJobStatisticsTables): void {
@@ -844,6 +863,8 @@ $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess f
     $harness->assertTrue(str_contains($html, 'name="jobs_action" value="reprocess_exceptions"'));
     $harness->assertTrue(str_contains($html, 'name="job_type" value="conversion"'));
     $harness->assertTrue(str_contains($html, 'name="csrf_token" value="test-csrf"'));
+    $harness->assertTrue(str_contains($html, 'action="?page=queues"'));
+    $harness->assertSame(10000, $card->refreshIntervalMs($context));
     $harness->assertTrue(str_contains($html, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
     $harness->assertSame(0, substr_count($html, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
     $harness->assertTrue(str_contains($html, 'name="_table_export_prepare" value="csv"'));
@@ -871,6 +892,58 @@ $harness->check(_jobsCard::class, 'renders job statistics tables and reprocess f
 
     $harness->assertSame(4, substr_count($disabledHtml, '<button class="button primary" type="submit" disabled>Reprocess Exceptions</button>'));
     $harness->assertSame(0, substr_count($disabledHtml, '<button class="button primary" type="submit">Reprocess Exceptions</button>'));
+});
+
+$harness->check(SwallowtailRedisPipelineService::class, 'summarises oldest Redis pipeline messages safely', function () use ($harness): void {
+    $redis = new class {
+        public array $ranges = [];
+        public function listLength(string $key): ?int { return str_contains($key, 'urgent') ? 7 : 0; }
+        public function listRange(string $key, int $start, int $stop): ?array
+        {
+            $this->ranges[] = [$key, $start, $stop];
+            return [
+                json_encode(['photo_id' => 22, 'reason' => 'newer', 'queued_at' => time(), 'output_path' => '/private/library/newer.jpg']),
+                json_encode(['photo_id' => 11, 'reason' => 'oldest', 'queued_at' => time() - 120, 'output_path' => '/private/library/oldest.jpg']),
+            ];
+        }
+    };
+    $rows = (new SwallowtailRedisPipelineService($redis))->pipelineRows();
+    $urgent = $rows[0] ?? [];
+    $messages = (array)($urgent['messages'] ?? []);
+
+    $harness->assertSame(8, count($rows));
+    $harness->assertSame(7, (int)($urgent['length'] ?? 0));
+    $harness->assertSame([-5, -1], array_slice($redis->ranges[0] ?? [], 1));
+    $harness->assertTrue(str_contains((string)($messages[0]['summary'] ?? ''), 'Photo: 11'));
+    $harness->assertTrue(str_contains((string)($messages[0]['summary'] ?? ''), 'File: oldest.jpg'));
+    $harness->assertSame(false, str_contains((string)($messages[0]['summary'] ?? ''), '/private/library'));
+});
+
+$harness->check(SwallowtailRedisPipelineService::class, 'reports unavailable and malformed Redis messages without failing', function () use ($harness): void {
+    $redis = new class {
+        public function listLength(string $key): ?int { return str_contains($key, 'normal') ? null : 1; }
+        public function listRange(string $key, int $start, int $stop): ?array { return ['not-json']; }
+    };
+    $rows = (new SwallowtailRedisPipelineService($redis))->pipelineRows();
+
+    $harness->assertSame(false, (bool)($rows[1]['available'] ?? true));
+    $harness->assertSame('Malformed or non-JSON message', (string)($rows[0]['messages'][0]['summary'] ?? ''));
+});
+
+$harness->check(_redis_pipelineCard::class, 'renders Redis lengths, insight, empty-state explanation and refresh', function () use ($harness): void {
+    $card = new _redis_pipelineCard();
+    $html = $card->render(['services' => ['redis_pipeline_rows' => [
+        ['name' => 'Conversion urgent', 'purpose' => 'High-priority conversion wake-ups', 'key' => 'test:urgent', 'length' => 2, 'available' => true, 'messages' => [['summary' => 'Photo: 11', 'queued_at' => time() - 60]]],
+        ['name' => 'Conversion normal', 'purpose' => 'Normal conversion wake-ups', 'key' => 'test:normal', 'length' => 0, 'available' => true, 'messages' => []],
+        ['name' => 'Unavailable pipeline', 'purpose' => 'Unavailable test', 'key' => 'test:down', 'length' => null, 'available' => false, 'messages' => []],
+    ]]]);
+
+    $harness->assertTrue(str_contains($html, 'Conversion urgent: 2'));
+    $harness->assertTrue(str_contains($html, 'Photo: 11'));
+    $harness->assertTrue(str_contains($html, 'Conversion normal: 0'));
+    $harness->assertTrue(str_contains($html, 'Unavailable pipeline: Unavailable'));
+    $harness->assertTrue(str_contains($html, 'does not mean the durable database workload is empty'));
+    $harness->assertSame(5000, $card->refreshIntervalMs([]));
 });
 
 $harness->check(SwallowtailJobStatisticsService::class, 'reprocesses only failed exception rows', function () use ($harness, $seedJobStatisticsTables): void {

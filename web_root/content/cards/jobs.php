@@ -18,7 +18,7 @@ final class _jobsCard extends CardBaseFramework
 
     public function title(): string
     {
-        return 'Jobs';
+        return 'Database Queues';
     }
 
     public function services(): array
@@ -39,7 +39,12 @@ final class _jobsCard extends CardBaseFramework
 
     public function helper(array $context): string
     {
-        return 'Database-backed job engine statistics and exception reprocessing.';
+        return 'Durable database-backed workload, processing outcomes, and exception reprocessing.';
+    }
+
+    public function refreshIntervalMs(array $context): ?int
+    {
+        return 10000;
     }
 
     protected function additionalInvalidationFacts(): array
@@ -50,9 +55,11 @@ final class _jobsCard extends CardBaseFramework
     public function render(array $context): string
     {
         return '<div class="jobs-statistics">
+            <div class="panel-soft">These figures show durable database work. Redis pipeline signals are reported separately below.</div>
             <h3>Job Queue</h3>
             ' . $this->jobQueueTable($context, $this->jobQueueRows($context))->render($context, $this->exportHiddenFields($context)) . '
             <h3>Metadata/Profile Jobs</h3>
+            <p class="helper">Metadata queued is the actionable worker backlog (missing records plus deferred retries now due), so it can overlap the recorded deferred outcome count.</p>
             ' . $this->metadataProfileTable($context, $this->metadataProfileRows($context))->render($context, $this->exportHiddenFields($context)) . '
         </div>';
     }
@@ -160,7 +167,7 @@ final class _jobsCard extends CardBaseFramework
 
         $disabled = $enabled ? '' : ' disabled';
 
-        return '<form method="post" action="?page=settings" data-ajax="true">
+        return '<form method="post" action="?page=queues" data-ajax="true">
             <input type="hidden" name="card_action" value="Jobs">
             <input type="hidden" name="jobs_action" value="reprocess_exceptions">
             <input type="hidden" name="job_type" value="' . HelperFramework::escape($jobKey) . '">

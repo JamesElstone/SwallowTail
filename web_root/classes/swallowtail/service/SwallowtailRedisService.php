@@ -51,6 +51,23 @@ final class SwallowtailRedisService
         return $pushed;
     }
 
+    public function listLength(string $key): ?int
+    {
+        $response = $this->command('LLEN', $key);
+
+        return is_int($response) ? max(0, $response) : null;
+    }
+
+    public function listRange(string $key, int $start, int $stop): ?array
+    {
+        $response = $this->command('LRANGE', $key, (string)$start, (string)$stop);
+        if (!is_array($response)) {
+            return null;
+        }
+
+        return array_values(array_filter($response, static fn(mixed $item): bool => is_string($item)));
+    }
+
     public function ping(): bool
     {
         return $this->command('PING') === 'PONG';

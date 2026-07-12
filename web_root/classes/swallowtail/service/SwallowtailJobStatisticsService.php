@@ -83,6 +83,13 @@ final class SwallowtailJobStatisticsService
         $counts['ready'] = $statusCounts['ready'];
         $counts['failed'] = $statusCounts['failed'];
         $counts['deferred'] = $statusCounts['deferred'];
+        $counts['queued'] = max(0, (int)InterfaceDB::fetchColumn(
+            "SELECT COUNT(*)
+               FROM photos p
+               LEFT JOIN photo_metadata pm ON pm.photo_id = p.id
+              WHERE p.upload_state = 'uploaded'
+                AND (pm.photo_id IS NULL OR (pm.status = 'deferred' AND pm.next_attempt_at <= CURRENT_TIMESTAMP))"
+        ));
         $counts['total'] = $statusCounts['total'];
 
         return $this->metadataProfileRow('Metadata', $counts, $this->formatCount($counts['total']));
