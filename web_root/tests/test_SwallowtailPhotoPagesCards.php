@@ -756,7 +756,7 @@ $harness->check(SwallowtailJobStatisticsService::class, 'summarises job statisti
     $harness->assertSame(2, (int)($migration['failed'] ?? 0));
     $harness->assertSame(1, (int)($migration['queued'] ?? 0));
     $harness->assertSame(1, (int)($migration['processing'] ?? 0));
-    $harness->assertSame('5 in 2', (string)($migration['total'] ?? ''));
+    $harness->assertSame('5 items in 2 jobs', (string)($migration['total'] ?? ''));
 
     $harness->assertSame('Metadata', (string)($metadata['job_type'] ?? ''));
     $harness->assertSame(1, (int)($metadata['ready'] ?? 0));
@@ -938,10 +938,13 @@ $harness->check(_redis_pipelineCard::class, 'renders Redis lengths, insight, emp
         ['name' => 'Unavailable pipeline', 'purpose' => 'Unavailable test', 'key' => 'test:down', 'length' => null, 'available' => false, 'messages' => []],
     ]]]);
 
-    $harness->assertTrue(str_contains($html, 'Conversion urgent: 2'));
+    $harness->assertTrue(str_contains($html, 'class="summary-grid four"'));
+    $harness->assertSame(3, substr_count($html, 'class="summary-card '));
+    $harness->assertTrue(str_contains($html, 'Conversion urgent'));
     $harness->assertTrue(str_contains($html, 'Photo: 11'));
-    $harness->assertTrue(str_contains($html, 'Conversion normal: 0'));
-    $harness->assertTrue(str_contains($html, 'Unavailable pipeline: Unavailable'));
+    $harness->assertTrue(str_contains($html, 'Conversion normal'));
+    $harness->assertTrue(str_contains($html, 'Unavailable pipeline'));
+    $harness->assertTrue(str_contains($html, 'Unavailable'));
     $harness->assertTrue(str_contains($html, 'does not mean the durable database workload is empty'));
     $harness->assertSame(5000, $card->refreshIntervalMs([]));
 });

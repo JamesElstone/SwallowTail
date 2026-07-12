@@ -55,7 +55,6 @@ final class _jobsCard extends CardBaseFramework
     public function render(array $context): string
     {
         return '<div class="jobs-statistics">
-            <div class="panel-soft">These figures show durable database work. Redis pipeline signals are reported separately below.</div>
             <h3>Job Queue</h3>
             ' . $this->jobQueueTable($context, $this->jobQueueRows($context))->render($context, $this->exportHiddenFields($context)) . '
             <h3>Metadata/Profile Jobs</h3>

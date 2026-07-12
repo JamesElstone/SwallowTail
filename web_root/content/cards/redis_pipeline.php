@@ -39,10 +39,12 @@ final class _redis_pipelineCard extends CardBaseFramework
     {
         $rows = array_values(array_filter((array)(($context['services'] ?? [])['redis_pipeline_rows'] ?? []), 'is_array'));
         $html = '<div class="panel-soft">Redis lists are transient priority and wake-up signals. An empty pipeline does not mean the durable database workload is empty.</div>';
+        $summaryCards = '';
         foreach ($rows as $row) {
-            $html .= $this->pipelineHtml($row);
+            $summaryCards .= $this->pipelineHtml($row);
         }
-        return '<div class="redis-pipeline-statistics">' . $html . '</div>';
+        return '<div class="redis-pipeline-statistics">' . $html
+            . '<div class="summary-grid four">' . $summaryCards . '</div></div>';
     }
 
     public function handleError(string $serviceKey, array $error, array $context): string
@@ -64,8 +66,9 @@ final class _redis_pipelineCard extends CardBaseFramework
                 . ($age === '' ? '' : ' <span class="helper">(' . HelperFramework::escape($age) . ')</span>') . '</li>';
         }
         $sample = $items === '' ? '' : '<p class="helper">Oldest pending messages (up to five):</p><ol>' . $items . '</ol>';
-        return '<section class="panel-soft ' . ($available && (int)($row['length'] ?? 0) === 0 ? 'success' : 'warn') . '">
-            <h3>' . HelperFramework::escape((string)($row['name'] ?? 'Redis pipeline')) . ': ' . HelperFramework::escape($length) . '</h3>
+        return '<section class="summary-card ' . ($available && (int)($row['length'] ?? 0) === 0 ? 'success' : 'warn') . '">
+            <div class="summary-label">' . HelperFramework::escape((string)($row['name'] ?? 'Redis pipeline')) . '</div>
+            <div class="summary-value">' . HelperFramework::escape($length) . '</div>
             <p>' . HelperFramework::escape((string)($row['purpose'] ?? '')) . '</p>
             <p class="helper">' . HelperFramework::escape((string)($row['key'] ?? '')) . '</p>' . $sample . '</section>';
     }

@@ -73,7 +73,11 @@ final class SwallowtailJobStatisticsService
         ));
         $jobCount = max(0, (int)InterfaceDB::fetchColumn('SELECT COUNT(*) FROM storage_migration_jobs'));
 
-        return $this->queueRow('Migration', $counts, $this->formatCount($counts['total']) . ' in ' . $this->formatCount($jobCount));
+        return $this->queueRow(
+            'Migration',
+            $counts,
+            $this->formatCount($counts['total']) . ' items in ' . $this->formatCount($jobCount) . ' jobs'
+        );
     }
 
     private function metadataRow(): array
