@@ -235,7 +235,7 @@ class ConfigLoadingTest(unittest.TestCase):
 
             config = load_php_app_config("secure/app.php", "php", default_config())
 
-        self.assertEqual(5.0, config.storage.full_threshold_percent)
+        self.assertEqual(6.0, config.storage.full_threshold_percent)
         self.assertFalse(config.storage.store_on_root_partition)
         self.assertEqual(3600, config.storage.storage_blocked_poll_interval_seconds)
 
@@ -1206,6 +1206,37 @@ class StorageManagerTest(unittest.TestCase):
         self.assertTrue(any("old_threshold_bytes=100" in line for line in logs.output))
         self.assertTrue(any(f"new_base={str(new_base.resolve()) + os.sep}" in line for line in logs.output))
         self.assertTrue(any(f"{checksum}_source.cr2" in line and f"{checksum}_source.pp3" in line for line in logs.output))
+
+    def test_refreshes_stale_job_paths_after_storage_migration(self) -> None:
+        checksum = "d" * 64
+        old_base = self.root / "storage-old"
+        current_base = self.root / "storage-current"
+        current_base.mkdir(parents=True)
+
+        class FakeDb:
+            def storage_location_properties(self):
+                return []
+
+            def photo_storage(self, _photo_id: int):
+                return {"original_sha256": checksum, "storage_base_location": str(current_base)}
+
+        manager = ConversionStorageManager(
+            StorageConfig(
+                full_threshold_percent=10.0,
+                store_on_root_partition=False,
+                storage_blocked_poll_interval_seconds=3600,
+                project_root=str(self.root),
+            ),
+            FakeDb(),
+            disk_usage=lambda _path: SimpleNamespace(total=1000, used=800, free=200),
+            mount_reader=lambda: [str(current_base)],
+            zfs_reader=lambda: {},
+        )
+        stale_input = old_base / "swallowtail-data" / checksum[:2] / checksum[2:4] / f"{checksum}_source.cr2"
+        stale_output = old_base / "swallowtail-data" / checksum[:2] / checksum[2:4] / f"{checksum}_preview.jpg"
+        refreshed = manager.relocate_job_if_needed(job(self.root, input_path=str(stale_input), output_path=str(stale_output)))
+        self.assertIn(str(current_base), refreshed.input_path)
+        self.assertIn(str(current_base), refreshed.output_path)
 
     def test_relocation_skips_unwritable_storage_destination(self) -> None:
         checksum = "b" * 64

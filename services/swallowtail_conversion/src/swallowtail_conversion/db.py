@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import datetime, timedelta
 from typing import Any
 
 from .config import DatabaseConfig, WorkerConfig
@@ -142,6 +143,13 @@ class ConversionDatabase:
         return {"id": int(row["id"]), "priority": int(row["priority"] or 0)}
 
     def claim_job(self, job_id: int) -> ConversionJob | None:
+        candidate = self._fetchone("SELECT photo_id FROM photo_conversion_jobs WHERE id = %s AND status = 'queued' LIMIT 1", (job_id,))
+        self._rollback_read()
+        if candidate is None:
+            return None
+        photo_id = int(candidate["photo_id"])
+        if not self.acquire_photo_lease(photo_id, job_id):
+            return None
         cursor = self._execute(
             """
             UPDATE photo_conversion_jobs
@@ -158,6 +166,7 @@ class ConversionDatabase:
         )
         if cursor.rowcount != 1:
             self.connection.rollback()
+            self.release_photo_lease(photo_id, job_id)
             return None
 
         row = self._fetchone("SELECT * FROM photo_conversion_jobs WHERE id = %s LIMIT 1", (job_id,))
@@ -165,6 +174,33 @@ class ConversionDatabase:
             self._refresh_photo_conversion_state(int(row["photo_id"]))
         self.connection.commit()
         return ConversionJob.from_row(row) if row else None
+
+    def _lease_owner(self, job_id: int) -> str:
+        return f"conversion:{self.worker.worker_id}:{job_id}"
+
+    def acquire_photo_lease(self, photo_id: int, job_id: int, ttl_seconds: int = 900) -> bool:
+        try:
+            self._execute("DELETE FROM photo_operation_leases WHERE photo_id = %s AND expires_at <= CURRENT_TIMESTAMP", (photo_id,))
+            self._execute(
+                "INSERT INTO photo_operation_leases (photo_id, operation_type, owner_token, expires_at) VALUES (%s, 'conversion', %s, %s)",
+                (photo_id, self._lease_owner(job_id), datetime.now() + timedelta(seconds=max(30, ttl_seconds))),
+            )
+            self.connection.commit()
+            return True
+        except Exception:
+            self.connection.rollback()
+            return False
+
+    def heartbeat_photo_lease(self, photo_id: int, job_id: int, ttl_seconds: int = 900) -> None:
+        self._execute(
+            "UPDATE photo_operation_leases SET heartbeat_at = CURRENT_TIMESTAMP, expires_at = %s WHERE photo_id = %s AND owner_token = %s",
+            (datetime.now() + timedelta(seconds=max(30, ttl_seconds)), photo_id, self._lease_owner(job_id)),
+        )
+        self.connection.commit()
+
+    def release_photo_lease(self, photo_id: int, job_id: int) -> None:
+        self._execute("DELETE FROM photo_operation_leases WHERE photo_id = %s AND owner_token = %s", (photo_id, self._lease_owner(job_id)))
+        self.connection.commit()
 
     def is_stale_preview(self, job: ConversionJob) -> bool:
         return False

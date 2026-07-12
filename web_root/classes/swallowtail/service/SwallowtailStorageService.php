@@ -90,7 +90,7 @@ final class SwallowtailStorageService
             $property = (array)($properties[$propertyKey] ?? []);
             $isExcluded = !empty($property['is_excluded']);
             $isRoot = $this->isRootLocation($baseLocation);
-            $belowThreshold = $freePercent !== null && $freePercent < $threshold;
+            $belowThreshold = $freePercent !== null && $freePercent <= $threshold;
             $isSelectedZfsDataset = $isZfs
                 && $zpoolName !== ''
                 && $datasetName !== ''
@@ -142,6 +142,20 @@ final class SwallowtailStorageService
             throw new RuntimeException('No writable SwallowTail storage location has enough free space.');
         }
 
+        return $location;
+    }
+
+    public function writableLiveLocationForChecksumExcluding(string $checksum, int $requiredBytes = 0, array $excludedBaseLocations = []): array
+    {
+        $excluded = array_map(fn(string $path): string => $this->normaliseAbsoluteDirectory($path), $excludedBaseLocations);
+        $locations = array_values(array_filter(
+            $this->prepareLocationsForRequest($this->liveStorageLocations(), $requiredBytes, $checksum),
+            static fn(array $location): bool => !in_array((string)($location['storage_base_location'] ?? ''), $excluded, true)
+        ));
+        $location = $this->chooseWritableLocation($checksum, $requiredBytes, $locations);
+        if ($location === null) {
+            throw new RuntimeException('No writable SwallowTail storage location has enough free space.');
+        }
         return $location;
     }
 
@@ -1142,7 +1156,7 @@ final class SwallowtailStorageService
 
     private function fullThresholdPercent(): float
     {
-        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 5);
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 6);
 
         return max(0.0, min(100.0, $threshold));
     }

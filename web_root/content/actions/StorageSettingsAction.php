@@ -65,6 +65,16 @@ final class StorageSettingsAction implements ActionInterfaceFramework
             return $this->requestMigrateLocation($request, $session);
         }
 
+        if ($storageAction === 'request_rebalance') {
+            $jobIds = (new SwallowtailStorageMigrationService())->enqueueRebalance($this->currentUserId($session));
+            return ActionResultFramework::success(['storage.available'], [[
+                'type' => 'success',
+                'message' => $jobIds === []
+                    ? 'No storage locations currently need or can be rebalanced.'
+                    : 'Storage rebalance queued for ' . count($jobIds) . ' location' . (count($jobIds) === 1 ? '.' : 's.'),
+            ]]);
+        }
+
         if ($storageAction === 'fix_permissions') {
             return $this->fixPermissions($request);
         }
@@ -77,7 +87,7 @@ final class StorageSettingsAction implements ActionInterfaceFramework
         \Swallowtail\Store\SwallowtailConfigurationStore::set('storage.round_robin_locations', $this->checkboxValue($request, 'round_robin_locations'));
         \Swallowtail\Store\SwallowtailConfigurationStore::set(
             'storage.full_threshold_percent',
-            max(0.0, min(100.0, (float)$request->input('full_threshold_percent', 5)))
+            max(0.0, min(100.0, (float)$request->input('full_threshold_percent', 6)))
         );
         \Swallowtail\Store\SwallowtailConfigurationStore::set(
             'storage.storage_blocked_poll_interval_seconds',

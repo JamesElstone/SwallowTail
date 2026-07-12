@@ -120,7 +120,7 @@ class ConversionWorker:
             result = self.embedded.extract(job, str(temp_dir)) if job.image_type == "embedded" else self.runner.render(
                 job,
                 str(temp_dir),
-                should_cancel=lambda: self._should_preempt(job),
+                should_cancel=lambda: self._heartbeat_and_should_preempt(job),
             )
             render_duration = result.duration_seconds
             if getattr(result, "cancelled", False):
@@ -171,7 +171,24 @@ class ConversionWorker:
             self.log.exception("Conversion job %s failed", job.id)
             self.db.fail_job(job, str(exc), retryable=True, duration=render_duration)
         finally:
+            if hasattr(self.db, "release_photo_lease"):
+                try:
+                    self.db.release_photo_lease(job.photo_id, job.id)
+                except Exception:
+                    self.log.warning("Unable to release photo operation lease job=%s photo=%s", job.id, job.photo_id)
+            getattr(self, "_lease_heartbeat_times", {}).pop(job.id, None)
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _heartbeat_and_should_preempt(self, job: ConversionJob) -> bool:
+        now = time.monotonic()
+        heartbeat_times = getattr(self, "_lease_heartbeat_times", None)
+        if heartbeat_times is None:
+            heartbeat_times = {}
+            self._lease_heartbeat_times = heartbeat_times
+        if hasattr(self.db, "heartbeat_photo_lease") and now - heartbeat_times.get(job.id, 0.0) >= 30.0:
+            self.db.heartbeat_photo_lease(job.photo_id, job.id)
+            heartbeat_times[job.id] = now
+        return self._should_preempt(job)
 
     def _next_job_id(self) -> int | None:
         target = self._consume_preempt_target()

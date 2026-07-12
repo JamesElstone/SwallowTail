@@ -31,7 +31,7 @@ final class SwallowtailConfigurationStore
             'storage' => [
                 'store_on_root_partition' => false,
                 'round_robin_locations' => false,
-                'full_threshold_percent' => 5,
+                'full_threshold_percent' => 6,
                 'storage_blocked_poll_interval_seconds' => 3600,
             ],
             'redis' => [

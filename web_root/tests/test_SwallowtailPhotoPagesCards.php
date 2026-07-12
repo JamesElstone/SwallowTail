@@ -1278,6 +1278,27 @@ $harness->check(_storage_availableCard::class, 'shows PHP permission failures be
     $harness->assertTrue(str_contains($locationHtml, 'name="storage_settings_action" value="fix_permissions"'));
 });
 
+$harness->check(_storage_availableCard::class, 'offers rebalance only when a below-threshold source has a writable destination', function () use ($harness): void {
+    $card = new _storage_availableCard();
+    $method = new ReflectionMethod($card, 'rebalanceForm');
+    $method->setAccessible(true);
+    $context = [
+        'page' => ['csrf_token' => 'test-csrf', 'page_cards' => ['storage_available']],
+        'current_user' => ['role_id' => RoleAssignmentService::ADMIN_ROLE_ID],
+    ];
+    $html = (string)$method->invoke($card, [
+        ['storage_base_location' => '/storage/1', 'is_excluded' => false, 'is_full' => true, 'can_write' => false],
+        ['storage_base_location' => '/storage/2', 'is_excluded' => false, 'is_full' => false, 'can_write' => true],
+    ], $context);
+    $harness->assertTrue(str_contains($html, 'value="request_rebalance"'));
+    $harness->assertTrue(str_contains($html, '>Rebalance</button>'));
+
+    $unavailable = (string)$method->invoke($card, [
+        ['storage_base_location' => '/storage/1', 'is_excluded' => false, 'is_full' => true, 'can_write' => false],
+    ], $context);
+    $harness->assertSame('', $unavailable);
+});
+
 $harness->check(_storage_availableCard::class, 'offers one action for multiple storage permission failures', function () use ($harness): void {
     $card = new _storage_availableCard();
     $context = [

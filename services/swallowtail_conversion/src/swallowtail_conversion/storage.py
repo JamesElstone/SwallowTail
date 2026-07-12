@@ -78,6 +78,8 @@ class ConversionStorageManager:
         if checksum == "" or old_base == "":
             return job
 
+        job = self._refresh_job_paths(job, old_base)
+
         if self.location_is_usable(old_base):
             return job
 
@@ -122,6 +124,27 @@ class ConversionStorageManager:
             input_path=job.input_path.replace(old_root, new_root),
             output_path=job.output_path.replace(old_root, new_root),
             profile_path=job.profile_path.replace(old_root, new_root) if job.profile_path else None,
+        )
+
+    def _refresh_job_paths(self, job: ConversionJob, current_base: str) -> ConversionJob:
+        current_root = Path(self.data_root(current_base))
+
+        def refreshed(value: str | None) -> str | None:
+            if not value:
+                return value
+            path = Path(value)
+            parts = path.parts
+            try:
+                marker = parts.index(self.DATA_DIRECTORY)
+            except ValueError:
+                return value
+            return str(current_root.joinpath(*parts[marker + 1 :]))
+
+        return replace(
+            job,
+            input_path=str(refreshed(job.input_path) or job.input_path),
+            output_path=str(refreshed(job.output_path) or job.output_path),
+            profile_path=refreshed(job.profile_path),
         )
 
     def data_root(self, base: str) -> str:

@@ -49,6 +49,7 @@ final class _storage_availableCard extends CardBaseFramework
         }
 
         $html .= $this->storageExhaustedWarning($locations);
+        $html .= $this->rebalanceForm($locations, $context);
         $html .= $this->allPermissionsRepairForm($locations, $context);
 
         $html .= '<div class="storage-location-grid">';
@@ -130,7 +131,7 @@ final class _storage_availableCard extends CardBaseFramework
         $totalBytes = $location['total_bytes'] ?? null;
         $freePercent = $location['free_percent'] ?? null;
         $cr2FileCount = max(0, (int)($location['cr2_file_count'] ?? 0));
-        $threshold = (float)($location['full_threshold_percent'] ?? 5);
+        $threshold = (float)($location['full_threshold_percent'] ?? 6);
         $permissionError = trim((string)($location['permission_error'] ?? ''));
         $permissionCheckedPath = trim((string)($location['permission_checked_path'] ?? ''));
         $statusClass = $canWrite ? 'success' : 'warning';
@@ -306,7 +307,7 @@ final class _storage_availableCard extends CardBaseFramework
         $csrfToken = (string)($context['page']['csrf_token'] ?? '');
         $storeOnRoot = (bool)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.store_on_root_partition', false);
         $roundRobin = (bool)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.round_robin_locations', false);
-        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 5);
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 6);
         $blockedPollInterval = (int)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.storage_blocked_poll_interval_seconds', 3600);
 
         return '<form method="post" action="?page=settings" data-ajax="true" class="storage-settings-form">
@@ -348,7 +349,7 @@ final class _storage_availableCard extends CardBaseFramework
         $included = 0;
         $writable = 0;
         $belowThreshold = 0;
-        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 5);
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 6);
 
         foreach ($locations as $location) {
             if (!is_array($location) || !empty($location['is_excluded'])) {
@@ -378,6 +379,52 @@ final class _storage_availableCard extends CardBaseFramework
             . '. Uploads and conversion jobs will pause until storage is added, files are moved, or the threshold is changed. Conversion workers will check again every '
             . HelperFramework::escape((string)$blockedPollInterval)
             . ' seconds.</div>';
+    }
+
+    /** @param array<int, mixed> $locations */
+    private function rebalanceForm(array $locations, array $context): string
+    {
+        if (!$this->canManageStorageLocationActions($context)) {
+            return '';
+        }
+        $below = [];
+        $writable = [];
+        foreach ($locations as $location) {
+            if (!is_array($location) || !empty($location['is_excluded'])) {
+                continue;
+            }
+            if (!empty($location['is_zfs']) && empty($location['is_selected_zfs_dataset'])) {
+                continue;
+            }
+            $base = rtrim(str_replace('\\', '/', (string)($location['storage_base_location'] ?? '')), '/') . '/';
+            if (!empty($location['is_full'])) {
+                $below[$base] = true;
+            }
+            if (!empty($location['can_write'])) {
+                $writable[$base] = true;
+            }
+        }
+        if ($below === [] || array_diff_key($writable, $below) === []) {
+            return '';
+        }
+        if (InterfaceDB::tableExists('storage_migration_jobs') && InterfaceDB::columnExists('storage_migration_jobs', 'migration_mode')) {
+            $active = (int)InterfaceDB::fetchColumn(
+                "SELECT COUNT(*) FROM storage_migration_jobs WHERE migration_mode = 'rebalance' AND status IN ('queued','processing','failed')"
+            );
+            if ($active > 0) {
+                return '<div class="panel-soft">A storage rebalance is already queued or processing.</div>';
+            }
+        }
+        $threshold = (float)\Swallowtail\Store\SwallowtailConfigurationStore::get('storage.full_threshold_percent', 6);
+        $csrfToken = (string)($context['page']['csrf_token'] ?? '');
+        return '<form method="post" action="?page=settings" data-ajax="true" class="storage-location-actions storage-rebalance-action">'
+            . $this->hiddenFields($context)
+            . '<input type="hidden" name="card_action" value="StorageSettings">'
+            . '<input type="hidden" name="storage_settings_action" value="request_rebalance">'
+            . '<input type="hidden" name="csrf_token" value="' . HelperFramework::escape($csrfToken) . '">'
+            . '<button class="button warn" type="submit" data-chicken-check="true" data-chicken-title="Rebalance storage" '
+            . 'data-chicken-message="Move the minimum complete photo families needed to return below-threshold locations to '
+            . HelperFramework::escape(number_format($threshold, 1)) . '% free space." data-chicken-confirm-text="Rebalance">Rebalance</button></form>';
     }
 
     /**

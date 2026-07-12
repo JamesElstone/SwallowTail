@@ -268,6 +268,7 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
     InterfaceDB::execute('PRAGMA foreign_keys = OFF');
 
     foreach ([
+        'photo_operation_leases',
         'photo_audit',
         'storage_migration_job_items',
         'storage_migration_jobs',
@@ -492,9 +493,13 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         zpool_name TEXT NULL,
         dataset_name TEXT NULL,
         requested_by_user_id INTEGER NULL,
+        migration_mode TEXT NOT NULL DEFAULT 'evacuate',
+        target_free_percent REAL NULL,
         status TEXT NOT NULL DEFAULT 'queued',
         total_photos INTEGER NOT NULL DEFAULT 0,
+        planned_bytes INTEGER NOT NULL DEFAULT 0,
         moved_photos INTEGER NOT NULL DEFAULT 0,
+        moved_bytes INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NULL,
         started_at TEXT NULL,
         completed_at TEXT NULL,
@@ -510,10 +515,21 @@ $swallowtailCreateSqliteSchema = static function () use ($swallowtailEnableRootS
         destination_base_location TEXT NULL,
         status TEXT NOT NULL DEFAULT 'queued',
         file_count INTEGER NOT NULL DEFAULT 0,
+        planned_bytes INTEGER NOT NULL DEFAULT 0,
+        moved_bytes INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NULL,
         completed_at TEXT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    InterfaceDB::execute("CREATE TABLE photo_operation_leases (
+        photo_id INTEGER PRIMARY KEY,
+        operation_type TEXT NOT NULL,
+        owner_token TEXT NOT NULL,
+        acquired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        heartbeat_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT NOT NULL
     )");
 };
 
@@ -1152,6 +1168,15 @@ $harness->check(SwallowtailStorageMigrationService::class, 'moves checksum file 
         $harness->assertTrue(!is_file($sourcePath));
         $harness->assertTrue(!is_file($previewPath));
         $harness->assertTrue(!is_file($sourceProfilePath));
+        $expectedFamilyBytes = strlen('source-bytes') + strlen('preview-bytes') + strlen('source-profile-bytes');
+        $harness->assertSame($expectedFamilyBytes, (int)InterfaceDB::fetchColumn(
+            'SELECT moved_bytes FROM storage_migration_job_items WHERE job_id = :job_id',
+            ['job_id' => $jobId]
+        ));
+        $harness->assertSame($expectedFamilyBytes, (int)InterfaceDB::fetchColumn(
+            'SELECT moved_bytes FROM storage_migration_jobs WHERE id = :job_id',
+            ['job_id' => $jobId]
+        ));
         $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', [
             'photo_id' => $photoId,
             'action_type' => 'storage_location_migrated',

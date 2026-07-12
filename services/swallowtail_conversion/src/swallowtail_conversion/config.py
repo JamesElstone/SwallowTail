@@ -111,7 +111,7 @@ def default_config() -> AppConfig:
             temp_retention_hours=24,
         ),
         storage=StorageConfig(
-            full_threshold_percent=5.0,
+            full_threshold_percent=6.0,
             store_on_root_partition=False,
             storage_blocked_poll_interval_seconds=3600,
             project_root="/usr/local/swallowtail",

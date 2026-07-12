@@ -18,6 +18,7 @@ final class SwallowtailStorageMigrationService
     public function __construct(
         private readonly SwallowtailStorageService $storageService = new SwallowtailStorageService(),
         private readonly SwallowtailPhotoLibraryService $photoLibraryService = new SwallowtailPhotoLibraryService(),
+        private readonly SwallowtailPhotoOperationLeaseService $leaseService = new SwallowtailPhotoOperationLeaseService(),
     ) {
     }
 
@@ -34,6 +35,101 @@ final class SwallowtailStorageMigrationService
     public function enqueueIfPhotosExist(string $sourceBaseLocation, ?string $destinationBaseLocation, ?string $zpoolName, ?string $datasetName, ?int $requestedByUserId): ?int
     {
         return $this->planMigration($sourceBaseLocation, $destinationBaseLocation, $zpoolName, $datasetName, $requestedByUserId, false);
+    }
+
+    /** @return array<int, int> */
+    public function enqueueRebalance(?int $requestedByUserId): array
+    {
+        $jobs = [];
+        $snapshot = $this->storageService->storageSnapshot(true);
+        foreach ((array)($snapshot['locations'] ?? []) as $location) {
+            if (!is_array($location) || empty($location['is_full']) || !empty($location['is_excluded'])) {
+                continue;
+            }
+            if (!empty($location['is_zfs']) && empty($location['is_selected_zfs_dataset'])) {
+                continue;
+            }
+            $source = $this->normaliseBase((string)($location['storage_base_location'] ?? ''));
+            if ($source === DIRECTORY_SEPARATOR || $this->activeRebalanceExists($source)) {
+                continue;
+            }
+            $jobId = $this->planRebalance($source, $location, $requestedByUserId);
+            if ($jobId !== null) {
+                $jobs[] = $jobId;
+            }
+        }
+        return $jobs;
+    }
+
+    private function planRebalance(string $source, array $location, ?int $requestedByUserId): ?int
+    {
+        $total = max(0, (int)($location['total_bytes'] ?? 0));
+        $available = max(0, (int)($location['available_bytes'] ?? 0));
+        $threshold = max(0.0, min(100.0, (float)($location['full_threshold_percent'] ?? 6)));
+        $required = max(0, (int)floor(($total * $threshold / 100) - $available) + 1);
+        if ($total <= 0 || $required <= 0) {
+            return null;
+        }
+
+        $photos = InterfaceDB::fetchAll(
+            "SELECT p.id, p.original_sha256
+             FROM photos p
+             WHERE p.storage_base_location = :source
+               AND NOT EXISTS (
+                   SELECT 1 FROM storage_migration_job_items i
+                   INNER JOIN storage_migration_jobs j ON j.id = i.job_id
+                   WHERE i.photo_id = p.id AND i.status IN ('queued','processing')
+                     AND j.status IN ('queued','processing','failed')
+               )
+             ORDER BY p.id",
+            ['source' => $source]
+        );
+        $selected = [];
+        $plannedBytes = 0;
+        foreach ($photos as $photo) {
+            $bytes = $this->checksumFamilyBytes($source, (string)($photo['original_sha256'] ?? ''));
+            if ($bytes <= 0) {
+                continue;
+            }
+            $selected[] = ['id' => (int)$photo['id'], 'bytes' => $bytes];
+            $plannedBytes += $bytes;
+            if ($plannedBytes >= $required) {
+                break;
+            }
+        }
+        if ($selected === []) {
+            return null;
+        }
+
+        return InterfaceDB::transaction(function () use ($source, $threshold, $requestedByUserId, $selected, $plannedBytes): int {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO storage_migration_jobs
+                    (source_base_location, requested_by_user_id, migration_mode, target_free_percent, status, total_photos, planned_bytes)
+                 VALUES (:source, :user_id, 'rebalance', :threshold, 'queued', :total, :planned_bytes)",
+                ['source' => $source, 'user_id' => ($requestedByUserId ?? 0) > 0 ? $requestedByUserId : null,
+                    'threshold' => $threshold, 'total' => count($selected), 'planned_bytes' => $plannedBytes]
+            );
+            $jobId = (int)InterfaceDB::fetchColumn('SELECT MAX(id) FROM storage_migration_jobs');
+            foreach ($selected as $photo) {
+                InterfaceDB::prepareExecute(
+                    "INSERT INTO storage_migration_job_items
+                        (job_id, photo_id, source_base_location, destination_base_location, status, planned_bytes)
+                     VALUES (:job_id, :photo_id, :source, NULL, 'queued', :planned_bytes)",
+                    ['job_id' => $jobId, 'photo_id' => $photo['id'], 'source' => $source, 'planned_bytes' => $photo['bytes']]
+                );
+            }
+            return $jobId;
+        });
+    }
+
+    private function activeRebalanceExists(string $source): bool
+    {
+        return (int)InterfaceDB::fetchColumn(
+            "SELECT COUNT(*) FROM storage_migration_jobs
+             WHERE source_base_location = :source AND migration_mode = 'rebalance'
+               AND status IN ('queued','processing','failed')",
+            ['source' => $source]
+        ) > 0;
     }
 
     private function planMigration(string $sourceBaseLocation, ?string $destinationBaseLocation, ?string $zpoolName, ?string $datasetName, ?int $requestedByUserId, bool $excludeSource): ?int
@@ -236,6 +332,13 @@ final class SwallowtailStorageMigrationService
     {
         $jobId = (int)($job['id'] ?? 0);
         $itemId = (int)($item['id'] ?? 0);
+        $ownerToken = 'storage-migration:' . $jobId . ':' . $itemId . ':' . bin2hex(random_bytes(8));
+        $photoId = (int)($item['photo_id'] ?? 0);
+        if (!$this->leaseService->acquire($photoId, 'migration', $ownerToken)) {
+            return;
+        }
+
+        try {
         $photo = InterfaceDB::fetchOne(
             'SELECT id, original_sha256, storage_base_location FROM photos WHERE id = :id LIMIT 1',
             ['id' => (int)($item['photo_id'] ?? 0)]
@@ -249,11 +352,22 @@ final class SwallowtailStorageMigrationService
         $checksum = (string)($photo['original_sha256'] ?? '');
         $source = $this->normaliseBase((string)($item['source_base_location'] ?? $job['source_base_location'] ?? ''));
 
+        if ($this->normaliseBase((string)($photo['storage_base_location'] ?? '')) !== $source) {
+            $this->skipJobItem($itemId, 'Photo no longer resides on the planned source.');
+            return;
+        }
+        if (($job['migration_mode'] ?? 'evacuate') === 'rebalance' && $this->sourceReachedTarget($source, (float)($job['target_free_percent'] ?? 6))) {
+            $this->skipJobItem($itemId, 'Source has reached the rebalance target.');
+            return;
+        }
+
+        $familyBytes = $this->checksumFamilyBytes($source, $checksum);
+
         try {
             $destination = $this->optionalString($item['destination_base_location'] ?? null)
                 ?? $this->optionalString($job['destination_base_location'] ?? null)
                 ?? (string)$this->storageService
-                ->writableLocationForChecksumExcluding($checksum, 0, [$source])['storage_base_location'];
+                ->writableLiveLocationForChecksumExcluding($checksum, $familyBytes, [$source])['storage_base_location'];
 
             InterfaceDB::prepareExecute(
                 "UPDATE storage_migration_job_items
@@ -268,8 +382,8 @@ final class SwallowtailStorageMigrationService
                 ]
             );
 
-            $files = $this->copyChecksumFamily($source, $destination, $checksum);
-            InterfaceDB::transaction(function () use ($photoId, $source, $destination, $files): void {
+            $files = $this->copyChecksumFamily($source, $destination, $checksum, $photoId, $ownerToken);
+            InterfaceDB::transaction(function () use ($photoId, $source, $destination, $files, $familyBytes): void {
                 InterfaceDB::prepareExecute(
                     'UPDATE photos SET storage_base_location = :destination, updated_at = CURRENT_TIMESTAMP WHERE id = :id AND storage_base_location = :source',
                     [
@@ -282,6 +396,7 @@ final class SwallowtailStorageMigrationService
                     'source_base_location' => $source,
                     'destination_base_location' => $destination,
                     'files' => array_map('basename', $files),
+                    'bytes' => $familyBytes,
                 ]);
             });
             foreach ($files as $oldPath => $_newPath) {
@@ -292,15 +407,60 @@ final class SwallowtailStorageMigrationService
                 "UPDATE storage_migration_job_items
                  SET status = 'succeeded',
                      file_count = :file_count,
+                     moved_bytes = :moved_bytes,
                      last_error = NULL,
                      completed_at = CURRENT_TIMESTAMP,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = :id",
-                ['id' => $itemId, 'file_count' => count($files)]
+                ['id' => $itemId, 'file_count' => count($files), 'moved_bytes' => $familyBytes]
             );
         } catch (Throwable $exception) {
             $this->failJobItem($jobId, $itemId, $exception->getMessage());
         }
+        } finally {
+            try {
+                $this->leaseService->release($photoId, $ownerToken);
+            } catch (Throwable) {
+                // The lease expires automatically; do not overwrite the migration result.
+            }
+        }
+    }
+
+    private function skipJobItem(int $itemId, string $message): void
+    {
+        InterfaceDB::prepareExecute(
+            "UPDATE storage_migration_job_items SET status = 'skipped', last_error = :message,
+             completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = :id",
+            ['id' => $itemId, 'message' => $message]
+        );
+    }
+
+    private function sourceReachedTarget(string $source, float $threshold): bool
+    {
+        foreach ($this->storageService->liveStorageLocations() as $location) {
+            if (!is_array($location) || $this->normaliseBase((string)($location['storage_base_location'] ?? '')) !== $source) {
+                continue;
+            }
+            $total = max(0, (int)($location['total_bytes'] ?? 0));
+            $available = max(0, (int)($location['available_bytes'] ?? 0));
+            return $total > 0 && ($available * 100 / $total) > $threshold;
+        }
+        return false;
+    }
+
+    public function checksumFamilyBytes(string $base, string $checksum): int
+    {
+        if ($checksum === '') {
+            return 0;
+        }
+        $folder = dirname($this->storageService->imagePath($base, $checksum, 'source'));
+        $total = 0;
+        foreach (glob($folder . DIRECTORY_SEPARATOR . $checksum . '_*.*') ?: [] as $path) {
+            if (is_file($path)) {
+                $total += max(0, (int)filesize($path));
+            }
+        }
+        return $total;
     }
 
     private function failJobItem(int $jobId, int $itemId, string $message): void
@@ -343,11 +503,12 @@ final class SwallowtailStorageMigrationService
                 "UPDATE storage_migration_jobs
                  SET status = 'succeeded',
                      moved_photos = :moved_photos,
+                     moved_bytes = (SELECT COALESCE(SUM(moved_bytes), 0) FROM storage_migration_job_items WHERE job_id = :job_id_sum),
                      last_error = NULL,
                      completed_at = CURRENT_TIMESTAMP,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = :id",
-                ['id' => $jobId, 'moved_photos' => $succeeded]
+                ['id' => $jobId, 'job_id_sum' => $jobId, 'moved_photos' => $succeeded]
             );
             return;
         }
@@ -356,17 +517,18 @@ final class SwallowtailStorageMigrationService
             "UPDATE storage_migration_jobs
              SET status = 'processing',
                  moved_photos = :moved_photos,
+                 moved_bytes = (SELECT COALESCE(SUM(moved_bytes), 0) FROM storage_migration_job_items WHERE job_id = :job_id_sum),
                  completed_at = NULL,
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = :id",
-            ['id' => $jobId, 'moved_photos' => $succeeded]
+            ['id' => $jobId, 'job_id_sum' => $jobId, 'moved_photos' => $succeeded]
         );
     }
 
     /**
      * @return array<string, string>
      */
-    private function copyChecksumFamily(string $source, string $destination, string $checksum): array
+    private function copyChecksumFamily(string $source, string $destination, string $checksum, int $photoId = 0, string $ownerToken = ''): array
     {
         $sourcePath = $this->storageService->imagePath($source, $checksum, 'source');
         $sourceFolder = dirname($sourcePath);
@@ -379,6 +541,9 @@ final class SwallowtailStorageMigrationService
         foreach ($files as $oldPath) {
             if (!is_file($oldPath)) {
                 continue;
+            }
+            if ($photoId > 0 && $ownerToken !== '') {
+                $this->leaseService->heartbeat($photoId, $ownerToken);
             }
 
             $newPath = dirname($this->storageService->imagePath($destination, $checksum, 'source'))
