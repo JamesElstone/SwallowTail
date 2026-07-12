@@ -35,6 +35,7 @@ final class TableFramework
     private string $sortDirection = '';
     private array $sortHiddenFields = [];
     private bool $sortingConfigured = false;
+    private string $csrfToken = '';
 
     private function __construct(private readonly string $key, private readonly array $rows)
     {
@@ -425,6 +426,8 @@ final class TableFramework
 
     public function render(array $context, array $exportHiddenFields = []): string
     {
+        $this->csrfToken = (string)($context['page']['csrf_token'] ?? '');
+
         return $this->renderToolbar($context, $exportHiddenFields)
             . $this->renderTable()
             . $this->renderFooter();
@@ -437,9 +440,11 @@ final class TableFramework
             $this->tableClass,
             $this->tableCondensedDefaultEnabled() && $this->wrapperClass === '' ? 'table-condensed' : '',
         ]));
-        $classAttribute = $tableClasses !== []
-            ? ' class="' . HelperFramework::escape(implode(' ', $tableClasses)) . '"'
-            : '';
+        $tableAttributes = [];
+        if ($tableClasses !== []) {
+            $tableAttributes['class'] = implode(' ', $tableClasses);
+        }
+        $tableAttributes = array_merge($tableAttributes, $this->paginationTableAttributes());
         $headerHtml = '';
 
         foreach ($columns as $column) {
@@ -465,7 +470,7 @@ final class TableFramework
             $bodyHtml = '<tr><td colspan="' . max(1, count($columns)) . '">' . HelperFramework::escape($this->emptyMessage) . '</td></tr>';
         }
 
-        $table = '<table' . $classAttribute . '><thead><tr>' . $headerHtml . '</tr></thead><tbody>' . $bodyHtml . '</tbody></table>';
+        $table = '<table' . $this->attributeHtml($tableAttributes) . '><thead><tr>' . $headerHtml . '</tr></thead><tbody>' . $bodyHtml . '</tbody></table>';
 
         if ($this->wrapperClass === '') {
             return $table;
@@ -506,8 +511,43 @@ final class TableFramework
             . '</th>';
     }
 
+    private function paginationTableAttributes(): array
+    {
+        if ($this->pagination === null || trim($this->paginationPageField) === '') {
+            return [];
+        }
+
+        return [
+            'data-table-framework' => 'true',
+            'data-table-key' => $this->key,
+            'data-table-pagination-field' => trim($this->paginationPageField),
+            'data-table-pagination-page' => (string)max(1, (int)($this->pagination['page'] ?? 1)),
+        ];
+    }
+
+    private function attributeHtml(array $attributes): string
+    {
+        $html = '';
+        foreach ($attributes as $name => $value) {
+            if (is_array($value) || is_object($value) || $value === null) {
+                continue;
+            }
+
+            $name = trim((string)$name);
+            if ($name === '') {
+                continue;
+            }
+
+            $html .= ' ' . HelperFramework::escape($name) . '="' . HelperFramework::escape((string)$value) . '"';
+        }
+
+        return $html;
+    }
+
     public function renderToolbar(array $context, array $exportHiddenFields = []): string
     {
+        $this->csrfToken = (string)($context['page']['csrf_token'] ?? '');
+
         if (!$this->exportsEnabled && $this->filters === [] && $this->toolbarActionsHtml === '') {
             return '';
         }
@@ -530,11 +570,18 @@ final class TableFramework
             return '';
         }
 
+        $currentPage = max(1, (int)($this->pagination['page'] ?? 1));
+        $lastPage = max(1, (int)($this->pagination['total_pages'] ?? $this->pagination['page_count'] ?? $currentPage));
+        $hasPreviousPage = (bool)($this->pagination['has_previous_page'] ?? $currentPage > 1);
+        $hasNextPage = (bool)($this->pagination['has_next_page'] ?? $currentPage < $lastPage);
+
         return '<div class="card-toolbar table-footer">
             <div class="helper">' . HelperFramework::escape(HelperFramework::paginationItemsLabel($this->pagination, $this->paginationItemLabel)) . '</div>
             <div class="actions-row">'
-                . $this->renderPaginationButton('< Prev', -1)
-                . $this->renderPaginationButton('Next >', 1)
+                . $this->renderPaginationButton('|< First', 1, $hasPreviousPage)
+                . $this->renderPaginationButton('< Prev', max(1, $currentPage - 1), $hasPreviousPage)
+                . $this->renderPaginationButton('Next >', min($lastPage, $currentPage + 1), $hasNextPage)
+                . $this->renderPaginationButton('Last >|', $lastPage, $hasNextPage)
             . '</div>
         </div>';
     }
@@ -735,6 +782,7 @@ final class TableFramework
                 '_table_export_prepare' => $format,
                 'table_key' => $this->key,
             ],
+            $this->csrfHiddenFields(),
             $hiddenFields,
             $this->sortHiddenFields()
         );
@@ -786,7 +834,7 @@ final class TableFramework
 
             $fieldId = 'table-filter-' . $this->key . '-' . preg_replace('/[^A-Za-z0-9_-]+/', '-', (string)$filter['name']);
             $html .= '<form method="post" data-ajax="true" class="toolbar">'
-                . $this->hiddenInputs(array_merge((array)$filter['hidden_fields'], $this->sortHiddenFields()))
+                . $this->hiddenInputs(array_merge($this->csrfHiddenFields(), (array)$filter['hidden_fields'], $this->sortHiddenFields()))
                 . '<div class="form-row table-filter-row">'
                 . '<label for="' . HelperFramework::escape($fieldId) . '">' . HelperFramework::escape((string)$filter['label']) . '</label>'
                 . '<select class="selector-input" id="' . HelperFramework::escape($fieldId) . '" name="' . HelperFramework::escape((string)$filter['name']) . '">'
@@ -799,23 +847,18 @@ final class TableFramework
         return $html;
     }
 
-    private function renderPaginationButton(string $label, int $direction): string
+    private function renderPaginationButton(string $label, int $page, bool $enabled): string
     {
         if ($this->pagination === null) {
             return '';
         }
-
-        $enabled = $direction < 0
-            ? (bool)($this->pagination['has_previous_page'] ?? false)
-            : (bool)($this->pagination['has_next_page'] ?? false);
-        $page = max(1, (int)($this->pagination['page'] ?? 1) + $direction);
 
         return HelperFramework::paginationFormButton(
             $label,
             $page,
             $enabled,
             $this->paginationPageField,
-            array_merge($this->paginationHiddenFields, $this->sortHiddenFields()),
+            array_merge($this->csrfHiddenFields(), $this->paginationHiddenFields, $this->sortHiddenFields()),
             '',
             'post',
             ['data-ajax' => 'true'],
@@ -830,7 +873,7 @@ final class TableFramework
 
     private function sortButtonFields(TableColumnFramework $column): array
     {
-        $fields = array_merge(['_pagination' => '1'], $this->sortHiddenFields);
+        $fields = array_merge(['_pagination' => '1'], $this->csrfHiddenFields(), $this->sortHiddenFields);
         $fields[$this->sortFieldName()] = $column->key();
         $fields[$this->sortDirectionFieldName()] = $this->nextSortDirection($column);
 
@@ -839,6 +882,13 @@ final class TableFramework
         }
 
         return $fields;
+    }
+
+    private function csrfHiddenFields(): array
+    {
+        return $this->csrfToken !== ''
+            ? [CsrfGuardFramework::tokenField() => $this->csrfToken]
+            : [];
     }
 
     private function sortIndicator(TableColumnFramework $column): string

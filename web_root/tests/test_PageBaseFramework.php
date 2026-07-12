@@ -61,6 +61,78 @@ $harness->check(PageBaseFramework::class, 'provides empty default cards list', f
     $harness->assertSame([], $page->cards());
 });
 
+$harness->check(PageBaseFramework::class, 'defaults ajax pending blur to none', function () use ($harness): void {
+    $page = new class extends PageBaseFramework {
+        public function id(): string { return 'default_ajax_pending_blur_test'; }
+        public function title(): string { return 'Default AJAX Pending Blur Test'; }
+        public function subtitle(): string { return ''; }
+        public function services(): array { return []; }
+    };
+
+    $harness->assertSame('none', $page->ajaxPendingBlurScope());
+});
+
+$harness->check(PageBaseFramework::class, 'limits initial handling to eager and selected on-demand tab cards', function () use ($harness): void {
+    $page = new class extends PageBaseFramework {
+        public function id(): string { return 'on_demand_handle_test'; }
+        public function title(): string { return 'On-demand Handle Test'; }
+        public function subtitle(): string { return ''; }
+        public function services(): array { return []; }
+        public function cardLayout(): array
+        {
+            return [
+                ['tab' => 'Main', 'cards' => ['alpha']],
+                ['tab' => 'History', 'on_demand' => true, 'cards' => ['beta', 'gamma']],
+            ];
+        }
+    };
+
+    $method = new ReflectionMethod(PageBaseFramework::class, 'initiallyRenderedCardKeys');
+    $method->setAccessible(true);
+
+    $defaultRequest = new RequestFramework([], [], ['REQUEST_METHOD' => 'GET'], [], []);
+    $harness->assertSame(
+        ['alpha', 'unplaced'],
+        $method->invoke($page, $defaultRequest, ActionResultFramework::none(), ['alpha', 'beta', 'gamma', 'unplaced'])
+    );
+
+    $selectedRequest = new RequestFramework([], ['show_card' => 'gamma'], ['REQUEST_METHOD' => 'GET'], [], []);
+    $harness->assertSame(
+        ['alpha', 'beta', 'gamma'],
+        $method->invoke($page, $selectedRequest, ActionResultFramework::none(), ['alpha', 'beta', 'gamma'])
+    );
+
+    $harness->assertSame(
+        ['alpha', 'beta', 'gamma'],
+        $method->invoke(
+            $page,
+            $defaultRequest,
+            ActionResultFramework::success([], [], ['show_card' => 'beta']),
+            ['alpha', 'beta', 'gamma']
+        )
+    );
+});
+
+$harness->check(PageBaseFramework::class, 'identifies only explicitly on-demand card keys', function () use ($harness): void {
+    $page = new class extends PageBaseFramework {
+        public function id(): string { return 'on_demand_keys_test'; }
+        public function title(): string { return ''; }
+        public function subtitle(): string { return ''; }
+        public function services(): array { return []; }
+        public function cardLayout(): array
+        {
+            return [
+                ['tab' => 'Main', 'cards' => ['alpha']],
+                ['tab' => 'History', 'on_demand' => true, 'cards' => ['beta', 'gamma']],
+            ];
+        }
+    };
+
+    $method = new ReflectionMethod(PageBaseFramework::class, 'declaredOnDemandCardKeys');
+    $method->setAccessible(true);
+    $harness->assertSame(['beta', 'gamma'], $method->invoke($page));
+});
+
 $harness->check(PageBaseFramework::class, 'injects authenticated user metadata into request context', function () use ($harness): void {
     $page = new PageBaseAuthContextTestPage(123, 2);
     $services = new PageServiceFramework(new AppService(APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp'));
@@ -70,6 +142,18 @@ $harness->check(PageBaseFramework::class, 'injects authenticated user metadata i
 
     $harness->assertSame(123, $context['auth']['user_id'] ?? null);
     $harness->assertSame(2, $context['auth']['role_id'] ?? null);
+});
+
+$harness->check(PageBaseFramework::class, 'injects CSRF token into page context', function () use ($harness): void {
+    $page = new PageBaseAuthContextTestPage(123, 2);
+    $services = new PageServiceFramework(new AppService(APP_ROOT . 'tests' . DIRECTORY_SEPARATOR . 'tmp'));
+    $request = new RequestFramework(['page' => $page->id()], [], ['REQUEST_METHOD' => 'GET'], [], []);
+
+    $context = $page->buildContextForRequest($request, $services, ActionResultFramework::none());
+
+    $token = (string)($context['page']['csrf_token'] ?? '');
+    $harness->assertTrue($token !== '');
+    $harness->assertTrue((new SessionAuthenticationService())->isValidCsrfToken($token));
 });
 
 $harness->check(PageBaseFramework::class, 'uses zero auth metadata for unauthenticated request context', function () use ($harness): void {

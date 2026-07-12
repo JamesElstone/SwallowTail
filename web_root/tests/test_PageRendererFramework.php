@@ -38,6 +38,7 @@ final class PageRendererCardLayoutTestPage extends PageRendererLegacyLayoutTestP
             [
                 'tab' => 'Review',
                 'layout' => 'split',
+                'on_demand' => true,
                 'cards' => ['gamma', 'denied'],
             ],
             [
@@ -50,6 +51,18 @@ final class PageRendererCardLayoutTestPage extends PageRendererLegacyLayoutTestP
                 'cards' => ['delta'],
             ],
         ];
+    }
+}
+
+final class PageRendererAjaxPendingBlurTestPage extends PageRendererLegacyLayoutTestPage
+{
+    public function __construct(private readonly string $scope)
+    {
+    }
+
+    public function ajaxPendingBlurScope(): string
+    {
+        return $this->scope;
     }
 }
 
@@ -87,6 +100,8 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
     $renderDeveloperOptionsStatus->setAccessible(true);
     $renderFlashMessages = new ReflectionMethod(PageRendererFramework::class, 'renderFlashMessages');
     $renderFlashMessages->setAccessible(true);
+    $ajaxPendingBlurScope = new ReflectionMethod(PageRendererFramework::class, 'ajaxPendingBlurScope');
+    $ajaxPendingBlurScope->setAccessible(true);
 
     $harness->check(PageRendererFramework::class, 'normalises legacy cards to one stack layout without tabs', function () use ($harness, $instance, $resolveCardLayout, $shouldRenderTabs): void {
         $layout = $resolveCardLayout->invoke($instance, new PageRendererLegacyLayoutTestPage(), [
@@ -101,6 +116,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
                 'layout' => 'stack',
                 'cards' => ['alpha', 'beta'],
                 'explicit' => false,
+                'on_demand' => false,
             ],
         ], $layout);
         $harness->assertSame(false, $shouldRenderTabs->invoke($instance, $layout));
@@ -119,18 +135,21 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
                 'layout' => 'stack',
                 'cards' => ['alpha', 'beta', 'epsilon'],
                 'explicit' => true,
+                'on_demand' => false,
             ],
             [
                 'tab' => 'Review',
                 'layout' => 'split',
                 'cards' => ['gamma'],
                 'explicit' => true,
+                'on_demand' => true,
             ],
             [
                 'tab' => 'Unsupported',
                 'layout' => 'stack',
                 'cards' => ['delta'],
                 'explicit' => true,
+                'on_demand' => false,
             ],
         ], $layout);
         $harness->assertSame(true, $shouldRenderTabs->invoke($instance, $layout));
@@ -173,6 +192,7 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
                 'layout' => 'split',
                 'cards' => ['gamma'],
                 'explicit' => true,
+                'on_demand' => true,
             ],
         ];
         $request = new RequestFramework(
@@ -220,6 +240,36 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
             $request,
             ActionResultFramework::success()
         ));
+    });
+
+    $harness->check(PageRendererFramework::class, 'normalises ajax pending blur page scopes', function () use ($harness, $instance, $ajaxPendingBlurScope): void {
+        $harness->assertSame('none', $ajaxPendingBlurScope->invoke($instance, new PageRendererLegacyLayoutTestPage()));
+        $harness->assertSame('none', $ajaxPendingBlurScope->invoke($instance, new PageRendererAjaxPendingBlurTestPage('')));
+        $harness->assertSame('none', $ajaxPendingBlurScope->invoke($instance, new PageRendererAjaxPendingBlurTestPage('sidebar')));
+        $harness->assertSame('card', $ajaxPendingBlurScope->invoke($instance, new PageRendererAjaxPendingBlurTestPage(' CARD ')));
+        $harness->assertSame('page', $ajaxPendingBlurScope->invoke($instance, new PageRendererAjaxPendingBlurTestPage('page')));
+    });
+
+    $harness->check(PageRendererFramework::class, 'renders ajax pending blur scope on page stack', function () use ($harness): void {
+        $source = file_get_contents(APP_CLASSES . 'framework' . DIRECTORY_SEPARATOR . 'PageRendererFramework.php');
+
+        if (!is_string($source)) {
+            throw new RuntimeException('Unable to read page renderer source.');
+        }
+
+        $harness->assertTrue(str_contains($source, 'data-ajax-pending-blur="'));
+        $harness->assertTrue(str_contains($source, '$this->ajaxPendingBlurScope($page)'));
+    });
+
+    $harness->check(PageRendererFramework::class, 'renders collapsed sidebar tooltip labels on navigation icons', function () use ($harness): void {
+        $source = file_get_contents(APP_CLASSES . 'framework' . DIRECTORY_SEPARATOR . 'PageRendererFramework.php');
+
+        if (!is_string($source)) {
+            throw new RuntimeException('Unable to read page renderer source.');
+        }
+
+        $harness->assertTrue(str_contains($source, 'data-nav-tooltip="'));
+        $harness->assertTrue(str_contains($source, 'data-nav-tooltip="\' . HelperFramework::escape((string)$item[\'label\']) . \'"'));
     });
 
     $harness->check(PageRendererFramework::class, 'reads the sidebar brand mark from application config', function () use ($harness, $instance, $brandMark): void {
@@ -389,26 +439,48 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
             throw new RuntimeException('Unable to read frontend script.');
         }
 
-        $replacePosition = strpos($script, 'current.replaceWith(replacement);');
-        $rebindPosition = strpos($script, 'initialisePageCardTabs(replacement);');
-
-        $harness->assertTrue($replacePosition !== false);
-        $harness->assertTrue($rebindPosition !== false);
-        $harness->assertTrue($replacePosition < $rebindPosition);
+        $harness->assertTrue(str_contains(
+            $script,
+            "current.replaceWith(replacement);\r\n                    initialisePageCardTabs(replacement);"
+        ) || str_contains(
+            $script,
+            "current.replaceWith(replacement);\n                    initialisePageCardTabs(replacement);"
+        ));
     });
 
-    $harness->check(PageRendererFramework::class, 'frontend refreshes maximized card state after AJAX card replacement', function () use ($harness): void {
+    $harness->check(PageRendererFramework::class, 'frontend loads on-demand tab cards once with retry support', function () use ($harness): void {
         $script = file_get_contents(APP_JS . 'index.js');
 
         if (!is_string($script)) {
             throw new RuntimeException('Unable to read frontend script.');
         }
 
-        $harness->assertTrue(str_contains($script, 'updateCardMaximizedBodyState();'));
-        $harness->assertTrue(str_contains($script, 'function setCardMaximized(card, maximized, focusToggle = false)'));
-        $harness->assertTrue(str_contains($script, "card.classList.toggle('card-maximized', maximized);"));
-        $harness->assertTrue(str_contains($script, 'current.replaceWith(replacement);'));
-        $harness->assertTrue(str_contains($script, 'current.remove();'));
+        foreach ([
+            "loadOnDemandTabPanel(panel);",
+            "_on_demand_cards: '1'",
+            "state === 'loading' || state === 'loaded'",
+            "panel.dataset.pageCardOnDemandState = 'error';",
+            "button.textContent = 'Retry';",
+        ] as $expected) {
+            $harness->assertTrue(str_contains($script, $expected));
+        }
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend syncs collapsed sidebar navigation icon titles', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        foreach ([
+            "const collapsed = body.classList.contains('sidebar-collapsed');",
+            "document.querySelectorAll('.nav-icon-wrap[data-nav-tooltip]')",
+            "iconWrap.setAttribute('title', iconWrap.dataset.navTooltip || '');",
+            "iconWrap.removeAttribute('title');",
+        ] as $expected) {
+            $harness->assertTrue(str_contains($script, $expected));
+        }
     });
 
     $harness->check(PageRendererFramework::class, 'frontend page card switchers can target page-level tab root', function () use ($harness): void {
@@ -424,6 +496,138 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         ));
     });
 
+    $harness->check(PageRendererFramework::class, 'frontend reveals requested cards after AJAX card replacement', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        $replaceCardsPosition = strpos($script, "applyAjaxPayloadFragment('cards', () => replaceCards(payload.cards));");
+        $revealCardPosition = strpos($script, "applyAjaxPayloadFragment('visible card', () => revealPageCard(payload.show_card, { source: 'ajax' }));");
+
+        $harness->assertTrue(is_int($replaceCardsPosition));
+        $harness->assertTrue(is_int($revealCardPosition));
+        $harness->assertTrue($replaceCardsPosition < $revealCardPosition);
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend wraps ajax submit requests in pending blur lifecycle', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        foreach ([
+            'function ajaxPendingBlurTarget(form)',
+            "document.querySelector('.page-stack[data-ajax-pending-blur]')",
+            "scope === 'page'",
+            "form.closest('.card[data-card-key]')",
+            "card.querySelector('.card-body')",
+            'function normaliseAjaxPendingBlurScope(value)',
+            'function controlAjaxPendingBlurScope(control)',
+            'function setFormPendingBlurOverride(form, control)',
+            'control.dataset.blurScope',
+            'form.dataset.ajaxPendingBlurOverride = scope;',
+            'setFormPendingBlurOverride(form, event.submitter);',
+            'setFormPendingBlurOverride(form, submitOnChangeControl);',
+            'setFormPendingBlurOverride(form, select);',
+            'function beginAjaxPendingBlur(form)',
+            "target.classList.add('is-ajax-pending');",
+            "target.setAttribute('aria-busy', 'true');",
+            "target.classList.remove('is-ajax-pending');",
+            'delete target.dataset.ajaxPendingCount;',
+            'delete form.dataset.ajaxPendingBlurOverride;',
+        ] as $expected) {
+            $harness->assertTrue(str_contains($script, $expected));
+        }
+
+        $beginPosition = strpos($script, 'const restorePendingBlur = beginAjaxPendingBlur(form);');
+        $sendPosition = strpos($script, 'const payload = await sendAjax(requestUrl, {');
+        $finallyPosition = is_int($sendPosition) ? strpos($script, '} finally {', $sendPosition) : false;
+        $restorePosition = strpos($script, 'restorePendingBlur();');
+
+        $harness->assertTrue(is_int($beginPosition));
+        $harness->assertTrue(is_int($sendPosition));
+        $harness->assertTrue(is_int($finallyPosition));
+        $harness->assertTrue(is_int($restorePosition));
+        $harness->assertTrue($beginPosition < $sendPosition);
+        $harness->assertTrue($finallyPosition < $restorePosition);
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend preserves table pagination on ajax form submissions', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        foreach ([
+            'function appendTablePaginationStateToFormData(formData, form, submitter = null)',
+            'function tablePaginationPreservationDisabled(form, submitter)',
+            'function tablePaginationTablesForForm(form)',
+            'function tableFormAssociatedControls(form)',
+            'form.dataset.preserveTablePagination',
+            'submitter.dataset.preserveTablePagination',
+            "form.closest('table[data-table-pagination-field][data-table-pagination-page]')",
+            'document.querySelectorAll(`[form="${escapeCssIdentifier(form.id)}"]`)',
+            'formData.has(field)',
+            'formData.append(field, page)',
+            'appendTablePaginationStateToFormData(formData, form, event.submitter);',
+        ] as $expected) {
+            $harness->assertTrue(str_contains($script, $expected));
+        }
+
+        $formDataPosition = strpos($script, 'const formData = new FormData(form);');
+        $appendPosition = strpos($script, 'appendTablePaginationStateToFormData(formData, form, event.submitter);');
+        $payloadPosition = strpos($script, "const requestBody = method === 'GET' ? null : JSON.stringify(formDataToJsonPayload(formData));");
+
+        $harness->assertTrue(is_int($formDataPosition));
+        $harness->assertTrue(is_int($appendPosition));
+        $harness->assertTrue(is_int($payloadPosition));
+        $harness->assertTrue($formDataPosition < $appendPosition);
+        $harness->assertTrue($appendPosition < $payloadPosition);
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend reveal helper activates tabs scrolls and focuses requested cards', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        foreach ([
+            'function revealPageCard(cardKey, options = {})',
+            'activatePageCardTab(tab);',
+            'window.requestAnimationFrame(() => {',
+            "target.closest('.page-stack')",
+            'scrollPageStackToTarget(pageStack, target, behavior)',
+            'target.scrollIntoView({',
+            "window.matchMedia('(prefers-reduced-motion: reduce)').matches",
+            'focusRevealedCard(card);',
+            'target.focus({ preventScroll: true });',
+        ] as $expected) {
+            $harness->assertTrue(str_contains($script, $expected));
+        }
+    });
+
+    $harness->check(PageRendererFramework::class, 'frontend reveal helper reads show card from initial load query', function () use ($harness): void {
+        $script = file_get_contents(APP_JS . 'index.js');
+
+        if (!is_string($script)) {
+            throw new RuntimeException('Unable to read frontend script.');
+        }
+
+        $harness->assertTrue(str_contains(
+            $script,
+            "new URLSearchParams(window.location.search).get('show_card')"
+        ));
+        $harness->assertTrue(str_contains(
+            $script,
+            "revealPageCard(requestedCard, { source: 'initial-load' });"
+        ));
+    });
+
     $harness->check(PageRendererFramework::class, 'frontend picture editor contains portrait previews in stage', function () use ($harness): void {
         $stylesheet = file_get_contents(APP_CSS . 'project.css');
 
@@ -435,15 +639,12 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(str_contains($editorMatches[0], 'align-items: start;'));
         $harness->assertTrue(str_contains($editorMatches[0], 'height: 100%;'));
         $harness->assertTrue(str_contains($editorMatches[0], 'min-height: 0;'));
-
         $harness->assertTrue(preg_match('~\.picture-editor-main \{[^}]+\}~', $stylesheet, $mainMatches) === 1);
         $harness->assertTrue(str_contains($mainMatches[0], 'align-self: stretch;'));
         $harness->assertTrue(str_contains($mainMatches[0], 'height: 100%;'));
         $harness->assertTrue(str_contains($mainMatches[0], 'min-height: 0;'));
-
         $harness->assertTrue(preg_match('~\.picture-editor-controls \{[^}]+\}~', $stylesheet, $controlsMatches) === 1);
         $harness->assertTrue(str_contains($controlsMatches[0], 'align-self: start;'));
-
         $harness->assertTrue(preg_match('~\.picture-editor-stage \{[^}]+\}~', $stylesheet, $stageMatches) === 1);
         $harness->assertTrue(str_contains($stageMatches[0], 'display: flex;'));
         $harness->assertTrue(str_contains($stageMatches[0], 'align-items: center;'));
@@ -452,7 +653,6 @@ $harness->run(PageRendererFramework::class, function (GeneratedServiceClassTestH
         $harness->assertTrue(str_contains($stageMatches[0], 'max-height: 100%;'));
         $harness->assertTrue(!str_contains($stageMatches[0], 'display: grid;'));
         $harness->assertTrue(!str_contains($stageMatches[0], 'place-items: center;'));
-
         $harness->assertTrue(preg_match('~\.picture-editor-stage img \{[^}]+\}~', $stylesheet, $imageMatches) === 1);
         $harness->assertTrue(str_contains($imageMatches[0], 'width: auto;'));
         $harness->assertTrue(str_contains($imageMatches[0], 'max-height: 100%;'));

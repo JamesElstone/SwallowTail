@@ -29,6 +29,7 @@
   --toolbar: #d7e2f0;
   --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
   --radius: 18px;
+  --page-card-reveal-offset: 96px;
 }
 
 @font-face {
@@ -1388,6 +1389,12 @@ body.card-maximized-active {
   padding: 20px;
   min-width: 0;
   position: relative;
+  transition: filter 0.18s ease, opacity 0.18s ease;
+}
+
+.card-body.is-ajax-pending {
+  filter: blur(2px);
+  opacity: 0.72;
 }
 
 .indexed-section {
@@ -1886,8 +1893,13 @@ table.table-condensed .select {
 }
 
 .chart-pie-slice {
+  stroke: none;
+}
+
+.chart-pie-separator {
   stroke: var(--panel);
   stroke-width: 2;
+  stroke-linecap: butt;
 }
 
 .chart-donut-segment {
@@ -2001,6 +2013,13 @@ table.table-condensed .select {
 }
 
 .calendar-heatmap-year-select {
+  width: auto;
+  min-width: 92px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.calendar-heatmap-range-select {
   width: auto;
   min-width: 92px;
   padding-top: 6px;
@@ -3293,10 +3312,39 @@ label {
   min-width: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  transition: filter 0.18s ease, opacity 0.18s ease;
+}
+
+.card-on-demand-placeholder .card-body {
+  min-height: 7rem;
+  display: grid;
+  place-items: center;
+}
+
+.card-on-demand-status {
+  color: var(--muted);
+  text-align: center;
+}
+
+.page-stack.is-ajax-pending {
+  filter: blur(2px);
+  opacity: 0.72;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-stack,
+  .card-body {
+    transition: none;
+  }
 }
 
 .page-stack > * {
   flex: 0 0 auto;
+}
+
+.page-stack-card,
+.card {
+  scroll-margin-top: var(--page-card-reveal-offset, 96px);
 }
 
 .page-stack.page-stack-banking {

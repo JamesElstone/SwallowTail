@@ -1,5 +1,238 @@
 # eelKit Changes
 
+## On-demand tab cards
+
+Feature name: `on_demand_tab_cards`.
+
+Pages that use `cardLayout()` can now defer the cards in an inactive tab until the user opens that tab. This is opt-in per tab; existing tab layouts remain eagerly handled and rendered by default.
+
+```php
+public function cardLayout(): array
+{
+    return [
+        [
+            'tab' => 'Summary',
+            'cards' => ['account_summary'],
+        ],
+        [
+            'tab' => 'History',
+            'on_demand' => true,
+            'cards' => ['audit_history', 'login_history'],
+        ],
+    ];
+}
+```
+
+On the initial request, eelKit renders the selected tab normally. An inactive tab with `on_demand => true` receives stable placeholder cards instead, and eelKit does not call those cards' `handle()`, `services()`, `helper()`, or `render()` methods. Page-level context and page services still run normally, so expensive tab-specific reads should remain in card services rather than being moved into the page context.
+
+When the tab is first activated, `web_root/js/index.js` sends one read-only AJAX request containing the tab's permitted card keys. The server intersects those keys with both the page's role-authorized cards and the cards declared in an on-demand tab, then renders them through the normal `CardRendererFramework` pipeline. The browser replaces the placeholders through the existing AJAX card replacement path, reinitializes card controls, and marks the tab as loaded.
+
+On-demand tabs have the following lifecycle behaviour:
+
+- A tab is loaded at most once during the current page visit; switching away and back does not request it again.
+- Repeated clicks while loading are coalesced into the current request.
+- A failed request leaves the placeholders in place and shows a retry control.
+- Keyboard tab activation uses the same loading path as pointer activation.
+- Card auto-refresh starts only after the real card markup has been loaded.
+- A full navigation or reload clears the client-side loaded state.
+
+`show_card` remains compatible with on-demand tabs. If the initial request or an action-result query targets a card in an on-demand tab, eelKit selects and renders that tab eagerly so the requested card is immediately available for reveal and focus. Cards returned by `cards()` but omitted from `cardLayout()` retain the existing behavior of being appended to the first tab and follow that tab's loading mode.
+
+The AJAX load uses the internal `_on_demand_cards` request marker. Downstream cards and actions should not submit this marker themselves; applications opt in only through `on_demand => true` in `cardLayout()`.
+
+## Table pagination preservation for row AJAX forms
+
+Feature name: `table_ajax_pagination_preservation`.
+
+Paginated `TableFramework` tables now render pagination metadata on the table element. eelKit's shared AJAX submit handler reads that metadata when a submitted form belongs to a table row and carries the current table page field into the AJAX payload before serialization.
+
+This covers forms physically inside a table row and form-associated controls that live in a row but point at an external form with `form="..."`, such as a select control that autosaves through a hidden submit button. Explicit hidden fields still win, so existing table pagination buttons, sort forms, and filter forms keep their current behavior, including intentional page resets.
+
+Forms or submit buttons can opt out with:
+
+```html
+data-preserve-table-pagination="false"
+```
+
+## Framework CSRF guard
+
+Feature name: `framework_csrf_guard`.
+
+eelKit now provides framework-level CSRF support for page and shared card actions. The framework still uses the existing session-backed token from `SessionAuthenticationService::csrfToken()` and validates it with `SessionAuthenticationService::isValidCsrfToken()`, but downstream projects no longer need to hand-roll the same validation pattern in every action before they can adopt a consistent CSRF policy.
+
+The default mode is compatibility-first:
+
+```php
+'security' => [
+    'csrf_mode' => 'supplied',
+],
+```
+
+Supported modes are:
+
+- `supplied`: validate `csrf_token` when a POST action supplies one, but allow legacy forms without a token. This is the default.
+- `required`: require a valid `csrf_token` for POST requests that submit `action` or `card_action`.
+- `off`: disable framework CSRF enforcement.
+
+Downstream projects that want strict CSRF protection should first make sure their forms render a token, then set `security.csrf_mode` to `required` in their app configuration.
+
+Every page context now includes the current token at:
+
+```php
+$context['page']['csrf_token']
+```
+
+Cards can render the standard hidden input with:
+
+```php
+return '<form method="post" data-ajax="true">
+    ' . HelperFramework::csrfHiddenInput($context) . '
+    <input type="hidden" name="card_action" value="Example">
+    <button class="button primary" type="submit">Save</button>
+</form>';
+```
+
+The helper renders:
+
+```html
+<input type="hidden" name="csrf_token" value="...">
+```
+
+Framework-generated POST forms now include CSRF where the page token is available, including table sorting, table filtering, table pagination, table export preparation, card pagination controls, and site-context selector forms. Existing AJAX nonce checks are unchanged and remain separate from CSRF validation.
+
+If an invalid token is supplied, eelKit stops before page action or shared card action logic runs and returns a standard security-token-expired flash message. Existing downstream manual CSRF checks remain safe; validating the same stable session token twice is harmless.
+
+## Cross-page card action handoff
+
+Feature name: `cross_page_card_action_handoff`.
+
+The approved way for a card on one page to send a user to another page, while carrying button payload for a card on the target page, is to submit the source card form directly to the destination page URL.
+
+For example, a `Source` card on page `one` can send a payload to page `two` like this:
+
+```php
+return '<form method="post" action="?page=two" data-ajax="true">
+    <input type="hidden" name="show_card" value="target">
+    <input type="hidden" name="source_id" value="' . HelperFramework::escape((string)$sourceId) . '">
+    <button type="submit" class="button primary">Open target</button>
+</form>';
+```
+
+When the AJAX response is rendered by page `two`, eelKit's `web_root/js/index.js` sees that the response `page` differs from the current page and navigates the browser to the response `url`. Downstream projects should use this normal page request flow rather than inventing a custom `redirect` property in card action JSON.
+
+If the handoff also needs to run a command, include the target page's shared card action in the submitted payload:
+
+```html
+<form method="post" action="?page=two" data-ajax="true">
+    <input type="hidden" name="card_action" value="Target">
+    <input type="hidden" name="show_card" value="target">
+    <input type="hidden" name="source_id" value="123">
+    <button type="submit" class="button primary">Open target</button>
+</form>
+```
+
+The target card should read request values in `handle()`, place any durable render state under a clear context key, and then render from context:
+
+```php
+public function handle(
+    RequestFramework $request,
+    PageServiceFramework $services,
+    array $context,
+    ActionResultFramework $actionResult
+): array {
+    $context = parent::handle($request, $services, $context, $actionResult);
+    $context['target']['source_id'] = (int)$request->input('source_id', 0);
+
+    return $context;
+}
+```
+
+Use `show_card` when the destination page has multiple cards or tabs and should reveal the target card after navigation. Use normal `ActionResultFramework` changed facts, flash messages, query values, and context for the target page render; `ActionResultFramework` does not provide a first-class cross-page redirect property.
+
+## AJAX pending blur scopes
+
+Feature name: `ajax_pending_blur_scopes`.
+
+Pages can now opt into a pending blur while an AJAX form submission is in flight. This gives users visible feedback when a card-level control updates other cards, or when a long-running action affects the whole page stack.
+
+Page classes can set the default blur scope with:
+
+```php
+public function ajaxPendingBlurScope(): string
+{
+    return 'page'; // 'none', 'card', or 'page'
+}
+```
+
+Supported scopes are:
+
+- `none`: no blur; this is the default for existing pages.
+- `card`: blur the submitting card's `.card-body`.
+- `page`: blur the page `.page-stack`.
+
+Individual AJAX controls can override the page default for a single submission with CSP-safe `data-blur-scope` attributes:
+
+```html
+<select data-blur-scope="page">...</select>
+<button data-blur-scope="card">Save</button>
+<input data-blur-scope="none">
+```
+
+The override is supported on controls that trigger the existing AJAX form lifecycle, including submit buttons, `data-submit-on-change` inputs, and auto-submitting selects. No inline script is required; eelKit's external `web_root/js/index.js` reads the rendered page and control attributes, so the feature works with CSP policies that block inline JavaScript.
+
+## Pie and donut legend toggle
+
+Feature name: `pie_donut_legend_toggle`.
+
+`ChartService::pie()` and `ChartService::donut()` now accept `legend => false` to hide the built-in SVG key. This lets downstream applications render their own table or summary beside the chart while reusing caller-supplied segment colours.
+
+```php
+$segments = [
+    ['label' => 'Complete', 'value' => 46, 'color' => '#16a34a'],
+    ['label' => 'Review', 'value' => 22, 'color' => '#d97706'],
+    ['label' => 'Queued', 'value' => 32, 'color' => '#1d4ed8'],
+];
+
+$html = (new ChartService())->pie($segments, [
+    'title' => 'Status mix',
+    'legend' => false,
+]);
+```
+
+Existing pie and donut calls keep rendering the built-in key by default. Supplying `color` on each segment remains optional, but it is the recommended pattern when the downstream application will display matching colour swatches in an external table.
+
+## Calendar heatmap date range selector
+
+Feature name: `calendar_heatmap_date_range_selector`.
+
+`ChartService::calendarHeatmap()` now supports a date-valued `range_control` selector for period, accounting-year, or reporting-window navigation while preserving the existing year picker by default.
+
+```php
+$html = (new ChartService())->calendarHeatmap($days, [
+    'title' => 'Claim calendar',
+    'id' => 'expense-claim-calendar',
+    'start_date' => '2026-04-01',
+    'end_date' => '2027-03-31',
+    'selected_date' => '2026-05-01',
+    'input_name' => 'expense_heatmap_date',
+    'range_control' => [
+        'type' => 'date',
+        'name' => 'expense_heatmap_period_start',
+        'id_suffix' => 'period-start',
+        'label' => 'Period',
+        'options' => [
+            ['value' => '2025-04-01', 'label' => '2025/26'],
+            ['value' => '2026-04-01', 'label' => '2026/27'],
+        ],
+        'selected_value' => '2026-04-01',
+    ],
+]);
+```
+
+Date selector option values are validated with the same strict `Y-m-d` parser used by heatmap dates. Invalid date options are omitted, labels are escaped, and `selected_value` is independent from the highlighted `selected_date`. If date mode has no valid options, eelKit omits the selector instead of falling back to a year value.
+
+Existing calls without `range_control`, or with `type => 'year'`, continue to render the year selector with the existing `year_input_name`, `years`, `calendar-heatmap-year-select` class, and generated `-year` id behaviour. Date mode renders `calendar-heatmap-range-select` and does not change day-button submission or AJAX data attributes.
+
 ## Warning flash messages
 
 Feature name: `warning_flash_messages`.

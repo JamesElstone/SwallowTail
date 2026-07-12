@@ -47,6 +47,64 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARAT
             $harness->assertTrue(str_contains($html, 'Test line'));
         });
 
+        $harness->check(ChartService::class, 'renders line chart with negative values', static function () use ($harness, $service): void {
+            $html = $service->line([
+                ['label' => 'One', 'value' => -5.2],
+                ['label' => 'Two', 'value' => 3.8],
+            ], ['title' => 'Test negative line']);
+
+            $harness->assertTrue(str_contains($html, '<svg'));
+            $harness->assertTrue(str_contains($html, 'chart-line-path'));
+            $harness->assertTrue(substr_count($html, 'chart-line-point') === 2);
+            $harness->assertTrue(str_contains($html, 'chart-zero-axis-line'));
+            $harness->assertTrue(str_contains($html, 'chart-zero-axis-label'));
+            $harness->assertTrue(str_contains($html, '>2</text>'));
+            $harness->assertTrue(!str_contains($html, '>1.55</text>'));
+            $harness->assertTrue(str_contains($html, 'One: -5.2'));
+        });
+
+        $harness->check(ChartService::class, 'renders line chart with nice whole number y axis values', static function () use ($harness, $service): void {
+            $html = $service->line([
+                ['label' => 'Income', 'points' => [
+                    ['label' => '09/2022', 'value' => 0.00],
+                    ['label' => '10/2022', 'value' => 295.00],
+                    ['label' => '11/2022', 'value' => 285.00],
+                    ['label' => '12/2022', 'value' => 1097.02],
+                    ['label' => '01/2023', 'value' => 60.00],
+                    ['label' => '02/2023', 'value' => 310.90],
+                    ['label' => '03/2023', 'value' => 1355.60],
+                    ['label' => '04/2023', 'value' => 550.00],
+                    ['label' => '05/2023', 'value' => 2125.26],
+                    ['label' => '06/2023', 'value' => 1560.79],
+                    ['label' => '07/2023', 'value' => 345.58],
+                    ['label' => '08/2023', 'value' => 1060.00],
+                ]],
+                ['label' => 'Net', 'points' => [
+                    ['label' => '09/2022', 'value' => 0.00],
+                    ['label' => '10/2022', 'value' => -824.18],
+                    ['label' => '11/2022', 'value' => 39.18],
+                    ['label' => '12/2022', 'value' => -393.77],
+                    ['label' => '01/2023', 'value' => -40.17],
+                    ['label' => '02/2023', 'value' => 54.42],
+                    ['label' => '03/2023', 'value' => -92.55],
+                    ['label' => '04/2023', 'value' => 323.74],
+                    ['label' => '05/2023', 'value' => 510.92],
+                    ['label' => '06/2023', 'value' => 493.10],
+                    ['label' => '07/2023', 'value' => -138.83],
+                    ['label' => '08/2023', 'value' => -323.13],
+                ]],
+            ], ['title' => 'Finance trend']);
+
+            foreach (['-1000', '-500', '500', '1000', '1500', '2000', '2500'] as $label) {
+                $harness->assertTrue(str_contains($html, '>' . $label . '</text>'));
+            }
+
+            $harness->assertTrue(str_contains($html, 'chart-zero-axis-label'));
+            $harness->assertTrue(!str_contains($html, '>-87</text>'));
+            $harness->assertTrue(!str_contains($html, '>651</text>'));
+            $harness->assertTrue(!str_contains($html, '>1388</text>'));
+        });
+
         $harness->check(ChartService::class, 'renders multi series line chart SVG', static function () use ($harness, $service, $points): void {
             $html = $service->line([
                 ['label' => 'First', 'points' => $points],
@@ -67,7 +125,32 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARAT
 
             $harness->assertTrue(str_contains($html, '<svg'));
             $harness->assertTrue(str_contains($html, 'chart-pie-slice'));
+            $harness->assertTrue(str_contains($html, 'chart-pie-separator'));
             $harness->assertTrue(str_contains($html, 'Test pie'));
+        });
+
+        $harness->check(ChartService::class, 'renders pie separators away from centre point', static function () use ($harness, $service, $points): void {
+            $html = $service->pie($points, ['title' => 'Test pie separators']);
+
+            $harness->assertTrue(str_contains($html, 'chart-pie-separator'));
+            $harness->assertTrue(!str_contains($html, 'class="chart-pie-separator" x1="142.8" y1="150"'));
+            $harness->assertTrue(!str_contains($html, 'class="chart-pie-separator" x1="142.8" y1="148"'));
+            $harness->assertTrue(str_contains($html, 'class="chart-pie-separator" x1="142.8" y1="139.8"'));
+        });
+
+        $harness->check(ChartService::class, 'hides pie chart legend when disabled', static function () use ($harness, $service): void {
+            $html = $service->pie([
+                ['label' => 'One', 'value' => 1, 'color' => '#16a34a'],
+                ['label' => 'Two', 'value' => 2, 'color' => '#d97706'],
+            ], [
+                'title' => 'Test pie without legend',
+                'legend' => false,
+            ]);
+
+            $harness->assertTrue(str_contains($html, '<svg'));
+            $harness->assertTrue(str_contains($html, 'chart-pie-slice'));
+            $harness->assertTrue(!str_contains($html, 'chart-legend-swatch'));
+            $harness->assertTrue(!str_contains($html, 'chart-legend-label'));
         });
 
         $harness->check(ChartService::class, 'renders donut chart SVG', static function () use ($harness, $service, $points): void {
@@ -76,6 +159,21 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARAT
             $harness->assertTrue(str_contains($html, '<svg'));
             $harness->assertTrue(str_contains($html, 'chart-donut-segment'));
             $harness->assertTrue(str_contains($html, 'Test donut'));
+        });
+
+        $harness->check(ChartService::class, 'hides donut chart legend when disabled', static function () use ($harness, $service): void {
+            $html = $service->donut([
+                ['label' => 'One', 'value' => 1, 'color' => '#16a34a'],
+                ['label' => 'Two', 'value' => 2, 'color' => '#d97706'],
+            ], [
+                'title' => 'Test donut without legend',
+                'legend' => false,
+            ]);
+
+            $harness->assertTrue(str_contains($html, '<svg'));
+            $harness->assertTrue(str_contains($html, 'chart-donut-segment'));
+            $harness->assertTrue(!str_contains($html, 'chart-legend-swatch'));
+            $harness->assertTrue(!str_contains($html, 'chart-legend-label'));
         });
 
         $harness->check(ChartService::class, 'renders gauge SVG', static function () use ($harness, $service): void {
@@ -148,6 +246,68 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'testFramework' . DIRECTORY_SEPARAT
             $harness->assertTrue(str_contains($html, 'calendar-heatmap-day-level-0'));
             $harness->assertTrue(str_contains($html, 'title="0 records on 1 January 2026"'));
             $harness->assertTrue(!str_contains($html, 'calendar-heatmap-empty'));
+        });
+
+        $harness->check(ChartService::class, 'renders calendar heatmap date range selector', static function () use ($harness, $service): void {
+            $html = $service->calendarHeatmap([
+                ['date' => '2026-04-01', 'value' => 2],
+                ['date' => '2026-05-01', 'value' => 1],
+            ], [
+                'title' => 'Period calendar heatmap',
+                'id' => 'expense-claim-calendar',
+                'start_date' => '2026-04-01',
+                'end_date' => '2027-03-31',
+                'selected_date' => '2026-05-01',
+                'input_name' => 'expense_heatmap_date',
+                'range_control' => [
+                    'type' => 'date',
+                    'name' => 'expense_heatmap_period_start',
+                    'id_suffix' => 'period-start',
+                    'label' => 'Period <selector>',
+                    'options' => [
+                        ['value' => '2025-04-01', 'label' => '2025/26'],
+                        ['value' => '2026-04-01', 'label' => '2026/27 & current'],
+                        ['value' => 'not-a-date', 'label' => '<script>alert(1)</script>'],
+                        ['value' => '2026-02-31', 'label' => 'Invalid rollover'],
+                    ],
+                    'selected_value' => '2026-04-01',
+                ],
+            ]);
+
+            $harness->assertTrue(str_contains($html, 'class="select calendar-heatmap-range-select"'));
+            $harness->assertTrue(str_contains($html, 'id="expense-claim-calendar-period-start"'));
+            $harness->assertTrue(str_contains($html, 'name="expense_heatmap_period_start"'));
+            $harness->assertTrue(str_contains($html, '<label class="sr-only" for="expense-claim-calendar-period-start">Period &lt;selector&gt;</label>'));
+            $harness->assertTrue(str_contains($html, '<option value="2025-04-01">2025/26</option>'));
+            $harness->assertTrue(str_contains($html, '<option value="2026-04-01" selected>2026/27 &amp; current</option>'));
+            $harness->assertTrue(str_contains($html, 'value="2026-05-01"'));
+            $harness->assertTrue(str_contains($html, 'is-selected'));
+            $harness->assertTrue(!str_contains($html, 'calendar-heatmap-year-select'));
+            $harness->assertTrue(!str_contains($html, 'not-a-date'));
+            $harness->assertTrue(!str_contains($html, '2026-02-31'));
+            $harness->assertTrue(!str_contains(strtolower($html), '<script'));
+            $harness->assertTrue(preg_match('/\son[a-z]+\s*=/i', $html) !== 1);
+        });
+
+        $harness->check(ChartService::class, 'omits calendar heatmap date selector when all date options are invalid', static function () use ($harness, $service): void {
+            $html = $service->calendarHeatmap([], [
+                'title' => 'Invalid period calendar heatmap',
+                'start_date' => '2026-04-01',
+                'end_date' => '2026-04-30',
+                'range_control' => [
+                    'type' => 'date',
+                    'options' => [
+                        ['value' => ''],
+                        ['value' => '2026-04-31', 'label' => 'Invalid date'],
+                        ['value' => 'not-a-date', 'label' => 'Invalid text'],
+                    ],
+                ],
+            ]);
+
+            $harness->assertTrue(str_contains($html, '<h3>Invalid period calendar heatmap</h3>'));
+            $harness->assertTrue(!str_contains($html, 'calendar-heatmap-range-select'));
+            $harness->assertTrue(!str_contains($html, 'calendar-heatmap-year-select'));
+            $harness->assertTrue(!str_contains($html, '<select'));
         });
 
         $harness->check(ChartService::class, 'renders month heatmap HTML', static function () use ($harness, $service): void {

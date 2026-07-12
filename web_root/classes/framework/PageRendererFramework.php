@@ -61,13 +61,19 @@ final class PageRendererFramework
                 ? 'page-card-tab-panel-layout split'
                 : 'page-card-tab-panel-layout stack';
             $panelCardsHtml = [];
+            $onDemand = !empty($entry['on_demand']) && !$selected;
 
             foreach ((array)($entry['cards'] ?? []) as $cardKey) {
-                $panelCardsHtml[] = $this->renderPageStackCard($page, (string)$cardKey, $context, $services);
+                $panelCardsHtml[] = $onDemand
+                    ? $this->renderOnDemandPlaceholder($page, (string)$cardKey)
+                    : $this->renderPageStackCard($page, (string)$cardKey, $context, $services);
             }
 
             $tabButtons[] = '<button class="page-card-tab' . ($selected ? ' is-active' : '') . '" type="button" role="tab" id="' . $tabId . '" aria-selected="' . ($selected ? 'true' : 'false') . '" aria-controls="' . $panelId . '" data-page-card-tab="' . $panelId . '">' . $tabLabel . '</button>';
-            $tabPanels[] = '<div class="page-card-tab-panel" id="' . $panelId . '" role="tabpanel" aria-labelledby="' . $tabId . '"' . ($selected ? '' : ' hidden') . '><div class="' . $layoutClass . '">' . implode("\n", $panelCardsHtml) . '</div></div>';
+            $onDemandAttributes = $onDemand
+                ? ' data-page-card-on-demand="true" data-page-card-on-demand-state="idle" data-page-card-on-demand-cards="' . HelperFramework::escape(json_encode(array_values($entry['cards']), JSON_THROW_ON_ERROR)) . '"'
+                : '';
+            $tabPanels[] = '<div class="page-card-tab-panel" id="' . $panelId . '" role="tabpanel" aria-labelledby="' . $tabId . '"' . ($selected ? '' : ' hidden') . $onDemandAttributes . '><div class="' . $layoutClass . '">' . implode("\n", $panelCardsHtml) . '</div></div>';
         }
 
         return '<div class="page-card-tabs"><div class="page-card-tab-shell"><div class="page-card-tablist" role="tablist">'
@@ -75,6 +81,16 @@ final class PageRendererFramework
             . '</div></div><div class="page-card-tab-content">'
             . implode("\n", $tabPanels)
             . '</div></div>';
+    }
+
+    private function renderOnDemandPlaceholder(PageInterfaceFramework $page, string $cardKey): string
+    {
+        $domId = HelperFramework::cardDomId($page->id(), $cardKey);
+
+        return '<div class="page-stack-card" data-page-stack-card="' . HelperFramework::escape($cardKey) . '">'
+            . '<section id="' . HelperFramework::escape($domId) . '" class="card card-on-demand-placeholder" data-card-key="' . HelperFramework::escape($cardKey) . '" aria-busy="false">'
+            . '<div class="card-body"><div class="card-on-demand-status" role="status">This card will load when the tab is opened.</div></div>'
+            . '</section></div>';
     }
 
     private function renderPageStackCard(
@@ -122,6 +138,10 @@ final class PageRendererFramework
         }
 
         $currentCards = array_values(array_intersect($currentCards, $this->pageCards($page, $context)));
+        $onDemandRequest = (string)$request->input('_on_demand_cards', '') === '1';
+        if ($onDemandRequest) {
+            $currentCards = array_values(array_intersect($currentCards, $this->onDemandCards($page, $context)));
+        }
 
         $cards = [];
         $changedFacts = $actionResult->changedFacts();
@@ -132,6 +152,11 @@ final class PageRendererFramework
         $invalidateAllCards = in_array('page.reload', $changedFacts, true);
 
         foreach ($currentCards as $cardKey) {
+            if ($onDemandRequest) {
+                $cards[HelperFramework::cardDomId($page->id(), $cardKey)] = $this->cards->render($page->id(), $cardKey, $context, $services);
+                continue;
+            }
+
             if (!$invalidateAllCards) {
                 if ($changedFacts === []) {
                     continue;
@@ -178,6 +203,10 @@ final class PageRendererFramework
             'url' => $request->pageUrl($actionResult->query()),
             'show_card' => $this->requestedVisibleCard($page, $request, $context, $actionResult),
             'ajax_nonce' => $this->ajaxNonceRefresh(),
+            'on_demand' => $onDemandRequest ? [
+                'success' => $currentCards !== [],
+                'requested_cards' => $currentCards,
+            ] : null,
         ]);
     }
 
@@ -197,6 +226,7 @@ final class PageRendererFramework
         $escapedAppName = HelperFramework::escape((string)($appName ?? 'eelKit Framework'));
         $pageStackClass = trim($page->pageStackClass());
         $pageStackClasses = 'page-stack' . ($pageStackClass !== '' ? ' ' . HelperFramework::escape($pageStackClass) : '');
+        $ajaxPendingBlurScope = $this->ajaxPendingBlurScope($page);
         $contentHtml = $this->pageCards($page, $context) !== [] ? $cardsHtml : $this->renderNoAccessState();
 
         return '<!DOCTYPE html>
@@ -214,7 +244,7 @@ final class PageRendererFramework
                     <main class="main" data-current-page="' . HelperFramework::escape($pageId) . '">
                         ' . $this->renderTopbar($page, $siteContextHtml) . '
                         <div id="flash-messages" class="flash-messages">' . $this->renderFlashMessages($actionResult->flashMessages()) . '</div>
-                        <section class="' . $pageStackClasses . '" data-page-id="' . HelperFramework::escape($pageId) . '">' . $contentHtml . '</section>
+                        <section class="' . $pageStackClasses . '" data-page-id="' . HelperFramework::escape($pageId) . '" data-ajax-pending-blur="' . HelperFramework::escape($ajaxPendingBlurScope) . '">' . $contentHtml . '</section>
                         ' . $this->renderPageFooter() . '
                     </main>
                 </div>
@@ -222,6 +252,16 @@ final class PageRendererFramework
                 <script src="js/index.js"></script>
             </body>
         </html>';
+    }
+
+    private function ajaxPendingBlurScope(PageInterfaceFramework $page): string
+    {
+        $scope = method_exists($page, 'ajaxPendingBlurScope')
+            ? (string)$page->ajaxPendingBlurScope()
+            : 'none';
+        $scope = strtolower(trim($scope));
+
+        return in_array($scope, ['none', 'card', 'page'], true) ? $scope : 'none';
     }
 
     private function renderAjaxSecurityBootstrap(RequestFramework $request): string
@@ -582,7 +622,7 @@ final class PageRendererFramework
             $iconHtml = $this->renderNavIcon($item);
 
             $html .= '<a class="nav-link' . $active . '" href="' . HelperFramework::escape((string)$item['url']) . '" data-ajax-link="true">
-                    <span class="nav-icon-wrap">' . $iconHtml . '</span>
+                    <span class="nav-icon-wrap" data-nav-tooltip="' . HelperFramework::escape((string)$item['label']) . '">' . $iconHtml . '</span>
                     <span class="nav-link-text">' . HelperFramework::escape((string)$item['label']) . '</span>
                     ' . ($showCollapsedLinkInitials ? '<span class="nav-link-short" aria-hidden="true">' . HelperFramework::escape((string)($item['short'] ?? '')) . '</span>' : '') . '
                 </a>';
@@ -756,6 +796,7 @@ final class PageRendererFramework
                 'layout' => in_array($layoutValue, ['stack', 'split'], true) ? $layoutValue : 'stack',
                 'cards' => $cards,
                 'explicit' => $usesCardLayout,
+                'on_demand' => $usesCardLayout && ($entry['on_demand'] ?? false) === true,
             ];
         }
 
@@ -774,6 +815,18 @@ final class PageRendererFramework
         }
 
         return $layout;
+    }
+
+    private function onDemandCards(PageInterfaceFramework $page, array $context): array
+    {
+        $cards = [];
+        foreach ($this->resolveCardLayout($page, $context) as $entry) {
+            if (!empty($entry['on_demand'])) {
+                $cards = array_merge($cards, (array)$entry['cards']);
+            }
+        }
+
+        return array_values(array_unique(array_map('strval', $cards)));
     }
 
     private function shouldRenderTabs(array $layout): bool

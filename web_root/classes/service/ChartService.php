@@ -169,6 +169,9 @@ final class ChartService
             $max += 1.0;
         }
 
+        $yAxisScale = $this->lineAxisScale($min, $max);
+        $min = $yAxisScale['min'];
+        $max = $yAxisScale['max'];
         $stepX = $plotWidth / max(1, count($xLabels) - 1);
         $lineHtml = '';
         $pointHtml = '';
@@ -207,7 +210,7 @@ final class ChartService
             $width,
             $height,
             (string)($options['title'] ?? 'Line chart'),
-            $this->gridLines($padding, $plotWidth, $plotHeight, $max, 4, $min) . $lineHtml . $pointHtml . $labelHtml . $legendHtml . $this->axisLines($padding, $plotWidth, $plotHeight),
+            $this->gridLinesForValues($padding, $plotWidth, $plotHeight, $min, $max, $yAxisScale['ticks']) . $this->zeroAxisLine($padding, $plotWidth, $plotHeight, $min, $max) . $lineHtml . $pointHtml . $labelHtml . $legendHtml . $this->axisLines($padding, $plotWidth, $plotHeight),
             'line'
         );
     }
@@ -231,7 +234,11 @@ final class ChartService
         $total = max(1.0, array_sum(array_column($segments, 'value')));
         $startAngle = -90.0;
         $pathsHtml = '';
+        $separatorHtml = '';
         $legendHtml = '';
+        $showLegend = ($options['legend'] ?? true) !== false;
+        $showSeparators = count($segments) > 1;
+        $separatorInset = max(8.0, min($radius * 0.1, 14.0));
 
         foreach ($segments as $index => $segment) {
             $angle = ($segment['value'] / $total) * 360.0;
@@ -246,9 +253,16 @@ final class ChartService
             $pathsHtml .= '<title>' . HelperFramework::escape($segment['label'] . ': ' . $this->formatValue($segment['value']) . ' (' . $percent . '%)') . '</title>';
             $pathsHtml .= '</path>';
 
-            $legendY = 62 + ($index * 28);
-            $legendHtml .= '<rect class="chart-legend-swatch" x="' . $this->number($width * 0.66) . '" y="' . $this->number($legendY - 11) . '" width="12" height="12" fill="' . HelperFramework::escape($color) . '"></rect>';
-            $legendHtml .= '<text class="chart-legend-label" x="' . $this->number(($width * 0.66) + 20) . '" y="' . $this->number($legendY) . '">' . HelperFramework::escape($segment['label'] . ' ' . $percent . '%') . '</text>';
+            if ($showSeparators && $angle > 0.0) {
+                $separatorStart = $this->polarPoint($centerX, $centerY, $separatorInset, $startAngle);
+                $separatorHtml .= '<line class="chart-pie-separator" x1="' . $this->number($separatorStart['x']) . '" y1="' . $this->number($separatorStart['y']) . '" x2="' . $this->number($start['x']) . '" y2="' . $this->number($start['y']) . '"></line>';
+            }
+
+            if ($showLegend) {
+                $legendY = 62 + ($index * 28);
+                $legendHtml .= '<rect class="chart-legend-swatch" x="' . $this->number($width * 0.66) . '" y="' . $this->number($legendY - 11) . '" width="12" height="12" fill="' . HelperFramework::escape($color) . '"></rect>';
+                $legendHtml .= '<text class="chart-legend-label" x="' . $this->number(($width * 0.66) + 20) . '" y="' . $this->number($legendY) . '">' . HelperFramework::escape($segment['label'] . ' ' . $percent . '%') . '</text>';
+            }
             $startAngle = $endAngle;
         }
 
@@ -256,7 +270,7 @@ final class ChartService
             $width,
             $height,
             (string)($options['title'] ?? 'Pie chart'),
-            $pathsHtml . $legendHtml,
+            $pathsHtml . $separatorHtml . $legendHtml,
             'pie'
         );
     }
@@ -283,6 +297,7 @@ final class ChartService
         $offset = 0.0;
         $segmentsHtml = '';
         $legendHtml = '';
+        $showLegend = ($options['legend'] ?? true) !== false;
 
         foreach ($segments as $index => $segment) {
             $share = $segment['value'] / $total;
@@ -295,9 +310,11 @@ final class ChartService
             $segmentsHtml .= '<title>' . HelperFramework::escape($segment['label'] . ': ' . $this->formatValue($segment['value']) . ' (' . $percent . '%)') . '</title>';
             $segmentsHtml .= '</circle>';
 
-            $legendY = 62 + ($index * 28);
-            $legendHtml .= '<rect class="chart-legend-swatch" x="' . $this->number($width * 0.66) . '" y="' . $this->number($legendY - 11) . '" width="12" height="12" fill="' . HelperFramework::escape($color) . '"></rect>';
-            $legendHtml .= '<text class="chart-legend-label" x="' . $this->number(($width * 0.66) + 20) . '" y="' . $this->number($legendY) . '">' . HelperFramework::escape($segment['label'] . ' ' . $percent . '%') . '</text>';
+            if ($showLegend) {
+                $legendY = 62 + ($index * 28);
+                $legendHtml .= '<rect class="chart-legend-swatch" x="' . $this->number($width * 0.66) . '" y="' . $this->number($legendY - 11) . '" width="12" height="12" fill="' . HelperFramework::escape($color) . '"></rect>';
+                $legendHtml .= '<text class="chart-legend-label" x="' . $this->number(($width * 0.66) + 20) . '" y="' . $this->number($legendY) . '">' . HelperFramework::escape($segment['label'] . ' ' . $percent . '%') . '</text>';
+            }
             $offset += $dash;
         }
 
@@ -476,6 +493,7 @@ final class ChartService
      * - input_name: Button name used when a day is submitted.
      * - year_input_name: Select name used for the year picker.
      * - years: Optional list of integer years to show in the year picker.
+     * - range_control: Optional selector config; type=date renders date-valued options, type=year keeps the year picker.
      * - ajax_target: Optional target id/data value for the framework AJAX handler.
      * - ajax_url: Optional formaction value applied to each day button.
      * - value_label: Label used in generated day titles, for example "records".
@@ -511,7 +529,7 @@ final class ChartService
 
         $headingHtml = '<div class="calendar-heatmap-heading">'
             . '<h3>' . HelperFramework::escape($chartTitle !== '' ? $chartTitle : 'Calendar heatmap') . '</h3>'
-            . $this->calendarHeatmapYearSelect($start, $end, $selectedDate, $yearInputName, $options, $controlId)
+            . $this->calendarHeatmapRangeControl($start, $end, $selectedDate, $yearInputName, $options, $controlId)
             . '</div>';
         $monthHtml = $this->calendarHeatmapMonthLabels($gridStart, $gridEnd, $weekCount);
         $dayHtml = '';
@@ -742,10 +760,10 @@ final class ChartService
                 'points' => [
                     ['label' => 'Jan', 'value' => 24],
                     ['label' => 'Feb', 'value' => 31],
-                    ['label' => 'Mar', 'value' => 29],
-                    ['label' => 'Apr', 'value' => 36],
-                    ['label' => 'May', 'value' => 52],
-                    ['label' => 'Jun', 'value' => 61],
+                    ['label' => 'Mar', 'value' => -12],
+                    ['label' => 'Apr', 'value' => -6],
+                    ['label' => 'May', 'value' => 18],
+                    ['label' => 'Jun', 'value' => 34],
                 ],
             ],
             [
@@ -1308,6 +1326,82 @@ final class ChartService
     /**
      * @param array<string, mixed> $options
      */
+    private function calendarHeatmapRangeControl(DateTimeImmutable $start, DateTimeImmutable $end, ?DateTimeImmutable $selectedDate, string $yearInputName, array $options, string $controlId): string
+    {
+        $rangeControl = $options['range_control'] ?? null;
+        if (!is_array($rangeControl) || (string)($rangeControl['type'] ?? 'year') !== 'date') {
+            return $this->calendarHeatmapYearSelect($start, $end, $selectedDate, $yearInputName, $options, $controlId);
+        }
+
+        return $this->calendarHeatmapDateSelect($rangeControl, $controlId);
+    }
+
+    /**
+     * @param array<string, mixed> $rangeControl
+     */
+    private function calendarHeatmapDateSelect(array $rangeControl, string $controlId): string
+    {
+        $options = $this->calendarHeatmapDateSelectOptions((array)($rangeControl['options'] ?? []));
+        if ($options === []) {
+            return '';
+        }
+
+        $name = trim((string)($rangeControl['name'] ?? 'heatmap_range'));
+        $name = $name !== '' ? $name : 'heatmap_range';
+        $idSuffix = $this->calendarHeatmapControlSuffix((string)($rangeControl['id_suffix'] ?? 'range'));
+        $selectId = $controlId . '-' . $idSuffix;
+        $label = trim((string)($rangeControl['label'] ?? 'Range'));
+        $label = $label !== '' ? $label : 'Range';
+        $selectedValue = $this->normaliseDateString((string)($rangeControl['selected_value'] ?? ''));
+        $html = '<label class="sr-only" for="' . HelperFramework::escape($selectId) . '">' . HelperFramework::escape($label) . '</label>'
+            . '<select class="select calendar-heatmap-range-select" id="' . HelperFramework::escape($selectId) . '" name="' . HelperFramework::escape($name) . '">';
+
+        foreach ($options as $option) {
+            $html .= '<option value="' . HelperFramework::escape($option['value']) . '"' . ($option['value'] === $selectedValue ? ' selected' : '') . '>' . HelperFramework::escape($option['label']) . '</option>';
+        }
+
+        return $html . '</select>';
+    }
+
+    /**
+     * @param array<int, mixed> $configuredOptions
+     * @return array<int, array{value: string, label: string}>
+     */
+    private function calendarHeatmapDateSelectOptions(array $configuredOptions): array
+    {
+        $options = [];
+
+        foreach ($configuredOptions as $configuredOption) {
+            if (!is_array($configuredOption)) {
+                continue;
+            }
+
+            $value = $this->normaliseDateString((string)($configuredOption['value'] ?? ''));
+            if ($value === null) {
+                continue;
+            }
+
+            $label = trim((string)($configuredOption['label'] ?? ''));
+            $options[] = [
+                'value' => $value,
+                'label' => $label !== '' ? $label : $value,
+            ];
+        }
+
+        return $options;
+    }
+
+    private function calendarHeatmapControlSuffix(string $suffix): string
+    {
+        $suffix = strtolower((string)preg_replace('/[^a-zA-Z0-9-]+/', '-', trim($suffix)));
+        $suffix = trim($suffix, '-_');
+
+        return $suffix !== '' ? $suffix : 'range';
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
     private function calendarHeatmapYearSelect(DateTimeImmutable $start, DateTimeImmutable $end, ?DateTimeImmutable $selectedDate, string $inputName, array $options, string $controlId): string
     {
         $years = $this->calendarHeatmapYearOptions((array)($options['years'] ?? []), $start, $end);
@@ -1414,6 +1508,40 @@ final class ChartService
 
             $value = (float)($point['value'] ?? 0);
             if (!is_finite($value) || $value < 0) {
+                continue;
+            }
+
+            $label = trim((string)($point['label'] ?? ('Item ' . ($index + 1))));
+            $item = [
+                'label' => $label !== '' ? $label : ('Item ' . ($index + 1)),
+                'value' => $value,
+            ];
+
+            if (isset($point['color'])) {
+                $item['color'] = (string)$point['color'];
+            }
+
+            $normalised[] = $item;
+        }
+
+        return $normalised;
+    }
+
+    /**
+     * @param array<int, array{label?: string, value?: int|float|string, color?: string}> $points
+     * @return array<int, array{label: string, value: float, color?: string}>
+     */
+    private function normaliseLinePoints(array $points): array
+    {
+        $normalised = [];
+
+        foreach ($points as $index => $point) {
+            if (!is_array($point)) {
+                continue;
+            }
+
+            $value = (float)($point['value'] ?? 0);
+            if (!is_finite($value)) {
                 continue;
             }
 
@@ -1613,7 +1741,7 @@ final class ChartService
     private function normaliseLineSeries(array $seriesInput, array $options): array
     {
         if (!$this->hasSeriesShape($seriesInput)) {
-            $points = $this->normalisePoints($seriesInput);
+            $points = $this->normaliseLinePoints($seriesInput);
 
             return $points === []
                 ? []
@@ -1625,7 +1753,7 @@ final class ChartService
         }
 
         return array_values(array_filter(
-            $this->normaliseSeries($seriesInput, 5),
+            $this->normaliseSeries($seriesInput, 5, true),
             static fn(array $series): bool => count($series['points']) >= 2
         ));
     }
@@ -1645,7 +1773,7 @@ final class ChartService
      * @param array<int, array{label?: string, color?: string, points?: array<int, array{label?: string, value?: int|float|string, color?: string}>}> $seriesInput
      * @return array<int, array{label: string, color: string, points: array<int, array{label: string, value: float, color?: string}>}>
      */
-    private function normaliseSeries(array $seriesInput, int $limit): array
+    private function normaliseSeries(array $seriesInput, int $limit, bool $allowNegativePoints = false): array
     {
         $series = [];
 
@@ -1654,7 +1782,10 @@ final class ChartService
                 continue;
             }
 
-            $points = $this->normalisePoints((array)($item['points'] ?? []));
+            $pointsInput = (array)($item['points'] ?? []);
+            $points = $allowNegativePoints
+                ? $this->normaliseLinePoints($pointsInput)
+                : $this->normalisePoints($pointsInput);
             if (count($points) < 1) {
                 continue;
             }
@@ -1712,6 +1843,54 @@ final class ChartService
     }
 
     /**
+     * @return array{min: float, max: float, ticks: array<int, float>}
+     */
+    private function lineAxisScale(float $min, float $max): array
+    {
+        $range = max(1.0, $max - $min);
+        $step = $this->niceWholeNumberStep($range / 6.0);
+        $axisMin = floor($min / $step) * $step;
+        $axisMax = ceil($max / $step) * $step;
+
+        if ($axisMax <= $axisMin) {
+            $axisMax = $axisMin + $step;
+        }
+
+        $ticks = [];
+        for ($value = $axisMin; $value <= $axisMax + ($step * 0.001); $value += $step) {
+            $ticks[] = round($value, 6);
+        }
+
+        return [
+            'min' => $axisMin,
+            'max' => $axisMax,
+            'ticks' => $ticks,
+        ];
+    }
+
+    private function niceWholeNumberStep(float $rawStep): float
+    {
+        if (!is_finite($rawStep) || $rawStep <= 0.0) {
+            return 1.0;
+        }
+
+        $magnitude = 10 ** floor(log10($rawStep));
+        $fraction = $rawStep / $magnitude;
+
+        if ($fraction <= 1.0) {
+            $step = 1.0;
+        } elseif ($fraction <= 2.0) {
+            $step = 2.0;
+        } elseif ($fraction <= 5.0) {
+            $step = 5.0;
+        } else {
+            $step = 10.0;
+        }
+
+        return max(1.0, $step * $magnitude);
+    }
+
+    /**
      * @param array{top: float, right: float, bottom: float, left: float} $padding
      */
     private function gridLines(array $padding, float $plotWidth, float $plotHeight, float $max, int $steps, float $min = 0.0): string
@@ -1732,11 +1911,50 @@ final class ChartService
 
     /**
      * @param array{top: float, right: float, bottom: float, left: float} $padding
+     * @param array<int, float> $values
+     */
+    private function gridLinesForValues(array $padding, float $plotWidth, float $plotHeight, float $min, float $max, array $values): string
+    {
+        $html = '';
+        $range = max(1.0, $max - $min);
+        $hasZeroAxis = $min < 0.0 && $max > 0.0;
+
+        foreach ($values as $value) {
+            $y = $padding['top'] + $plotHeight - (($value - $min) / $range * $plotHeight);
+            $html .= '<line class="chart-grid-line" x1="' . $this->number($padding['left']) . '" y1="' . $this->number($y) . '" x2="' . $this->number($padding['left'] + $plotWidth) . '" y2="' . $this->number($y) . '"></line>';
+
+            if ($hasZeroAxis && abs($value) < 0.001) {
+                continue;
+            }
+
+            $html .= '<text class="chart-axis-label" x="' . $this->number($padding['left'] - 10) . '" y="' . $this->number($y + 4) . '" text-anchor="end">' . HelperFramework::escape((string)(int)round($value)) . '</text>';
+        }
+
+        return $html;
+    }
+
+    /**
+     * @param array{top: float, right: float, bottom: float, left: float} $padding
      */
     private function axisLines(array $padding, float $plotWidth, float $plotHeight): string
     {
         return '<line class="chart-axis-line" x1="' . $this->number($padding['left']) . '" y1="' . $this->number($padding['top']) . '" x2="' . $this->number($padding['left']) . '" y2="' . $this->number($padding['top'] + $plotHeight) . '"></line>'
             . '<line class="chart-axis-line" x1="' . $this->number($padding['left']) . '" y1="' . $this->number($padding['top'] + $plotHeight) . '" x2="' . $this->number($padding['left'] + $plotWidth) . '" y2="' . $this->number($padding['top'] + $plotHeight) . '"></line>';
+    }
+
+    /**
+     * @param array{top: float, right: float, bottom: float, left: float} $padding
+     */
+    private function zeroAxisLine(array $padding, float $plotWidth, float $plotHeight, float $min, float $max): string
+    {
+        if ($min >= 0.0 || $max <= 0.0) {
+            return '';
+        }
+
+        $y = $padding['top'] + $plotHeight - ((0.0 - $min) / ($max - $min) * $plotHeight);
+
+        return '<line class="chart-axis-line chart-zero-axis-line" x1="' . $this->number($padding['left']) . '" y1="' . $this->number($y) . '" x2="' . $this->number($padding['left'] + $plotWidth) . '" y2="' . $this->number($y) . '"></line>'
+            . '<text class="chart-axis-label chart-zero-axis-label" x="' . $this->number($padding['left'] - 10) . '" y="' . $this->number($y + 4) . '" text-anchor="end">0</text>';
     }
 
     /**

@@ -85,10 +85,25 @@
             return;
         }
 
+        const collapsed = body.classList.contains('sidebar-collapsed');
+
         toggleButton.setAttribute(
             'aria-expanded',
-            body.classList.contains('sidebar-collapsed') ? 'false' : 'true'
+            collapsed ? 'false' : 'true'
         );
+
+        document.querySelectorAll('.nav-icon-wrap[data-nav-tooltip]').forEach((iconWrap) => {
+            if (!(iconWrap instanceof HTMLElement)) {
+                return;
+            }
+
+            if (collapsed) {
+                iconWrap.setAttribute('title', iconWrap.dataset.navTooltip || '');
+                return;
+            }
+
+            iconWrap.removeAttribute('title');
+        });
     }
 
     function updateNavScrollHints(shell) {
@@ -1314,6 +1329,71 @@
         }
     }
 
+    function appendTablePaginationStateToFormData(formData, form, submitter = null) {
+        if (!(formData instanceof FormData) || !(form instanceof HTMLFormElement)) {
+            return;
+        }
+
+        if (tablePaginationPreservationDisabled(form, submitter)) {
+            return;
+        }
+
+        tablePaginationTablesForForm(form).forEach((table) => {
+            const field = String(table.dataset.tablePaginationField || '').trim();
+            const page = String(table.dataset.tablePaginationPage || '').trim();
+
+            if (field === '' || page === '' || formData.has(field)) {
+                return;
+            }
+
+            formData.append(field, page);
+        });
+    }
+
+    function tablePaginationPreservationDisabled(form, submitter) {
+        const formSetting = form instanceof HTMLFormElement
+            ? String(form.dataset.preserveTablePagination || '').trim().toLowerCase()
+            : '';
+        const submitterSetting = submitter instanceof HTMLElement
+            ? String(submitter.dataset.preserveTablePagination || '').trim().toLowerCase()
+            : '';
+
+        return formSetting === 'false' || submitterSetting === 'false';
+    }
+
+    function tablePaginationTablesForForm(form) {
+        const tables = new Set();
+        const directTable = form.closest('table[data-table-pagination-field][data-table-pagination-page]');
+
+        if (directTable instanceof HTMLTableElement) {
+            tables.add(directTable);
+        }
+
+        tableFormAssociatedControls(form).forEach((control) => {
+            const table = control.closest('table[data-table-pagination-field][data-table-pagination-page]');
+
+            if (table instanceof HTMLTableElement) {
+                tables.add(table);
+            }
+        });
+
+        return Array.from(tables);
+    }
+
+    function tableFormAssociatedControls(form) {
+        if (!(form instanceof HTMLFormElement) || String(form.id || '').trim() === '') {
+            return [];
+        }
+
+        try {
+            return Array.from(document.querySelectorAll(`[form="${escapeCssIdentifier(form.id)}"]`))
+                .filter((control) => control instanceof HTMLElement);
+        } catch (error) {
+            console.error('Unable to inspect form-associated controls for table pagination state.', error);
+            return [];
+        }
+    }
+
     function collectSiteContextSelections() {
         const selections = [];
         const selects = document.querySelectorAll('.site-context-slot select[data-site-context-key]');
@@ -2398,9 +2478,145 @@
                 node.hidden = node !== panel;
             }
         });
+
+        loadOnDemandTabPanel(panel);
     }
 
-    function showPageCardTabForCard(cardKey) {
+    async function loadOnDemandTabPanel(panel) {
+        if (!(panel instanceof HTMLElement) || panel.dataset.pageCardOnDemand !== 'true') {
+            return;
+        }
+
+        const state = String(panel.dataset.pageCardOnDemandState || 'idle');
+        if (state === 'loading' || state === 'loaded') {
+            return;
+        }
+
+        let cards = [];
+        try {
+            const parsed = JSON.parse(String(panel.dataset.pageCardOnDemandCards || '[]'));
+            cards = Array.isArray(parsed) ? parsed.filter((key) => typeof key === 'string' && key !== '') : [];
+        } catch (error) {
+            console.error('Unable to parse on-demand tab cards.', error);
+        }
+
+        if (cards.length === 0) {
+            panel.dataset.pageCardOnDemandState = 'error';
+            updateOnDemandTabStatus(panel, 'Unable to determine which cards to load.', true);
+            return;
+        }
+
+        panel.dataset.pageCardOnDemandState = 'loading';
+        panel.setAttribute('aria-busy', 'true');
+        updateOnDemandTabStatus(panel, 'Loading…', false);
+
+        const payload = {
+            _ajax: '1',
+            _on_demand_cards: '1',
+            cards,
+        };
+        appendSiteContextSelectionsToPayload(payload);
+
+        try {
+            const response = await sendAjax(window.location.href, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' },
+            });
+
+            if (response?.on_demand?.success !== true) {
+                throw new Error('The server rejected the on-demand card request.');
+            }
+
+            applyAjaxPayloadFragment('site context', () => replaceSiteContextSlots(response.site_context_html));
+            applyAjaxPayloadFragment('cards', () => replaceCards(response.cards));
+            panel.dataset.pageCardOnDemandState = 'loaded';
+            panel.removeAttribute('data-page-card-on-demand');
+        } catch (error) {
+            panel.dataset.pageCardOnDemandState = 'error';
+            updateOnDemandTabStatus(panel, 'Unable to load this tab.', true);
+            console.error('Failed to load on-demand tab cards.', error);
+        } finally {
+            panel.setAttribute('aria-busy', 'false');
+        }
+    }
+
+    function updateOnDemandTabStatus(panel, message, retry) {
+        panel.querySelectorAll('.card-on-demand-placeholder').forEach((placeholder) => {
+            if (!(placeholder instanceof HTMLElement)) {
+                return;
+            }
+            placeholder.setAttribute('aria-busy', retry ? 'false' : 'true');
+            const status = placeholder.querySelector('.card-on-demand-status');
+            if (status instanceof HTMLElement) {
+                status.textContent = message;
+                if (retry) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'button card-on-demand-retry';
+                    button.textContent = 'Retry';
+                    button.addEventListener('click', () => loadOnDemandTabPanel(panel));
+                    status.append(' ', button);
+                }
+            }
+        });
+    }
+
+    function prefersReducedMotion() {
+        return window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    function scrollPageStackToTarget(pageStack, target, behavior) {
+        if (!(pageStack instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+            return false;
+        }
+
+        const canScroll = pageStack.scrollHeight > pageStack.clientHeight + 1;
+        if (!canScroll) {
+            return false;
+        }
+
+        const stackRect = pageStack.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const marginTop = Number.parseFloat(window.getComputedStyle(target).scrollMarginTop || '0');
+        const nextScrollTop = pageStack.scrollTop + targetRect.top - stackRect.top - (Number.isFinite(marginTop) ? marginTop : 0);
+
+        pageStack.scrollTo({
+            top: Math.max(0, nextScrollTop),
+            behavior,
+        });
+
+        return true;
+    }
+
+    function focusRevealedCard(card) {
+        if (!(card instanceof HTMLElement)) {
+            return;
+        }
+
+        const preferred = card.querySelector('[data-card-reveal-focus]');
+        const title = card.querySelector('.card-title');
+        const target = preferred instanceof HTMLElement
+            ? preferred
+            : (title instanceof HTMLElement ? title : card);
+
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        if (!target.hasAttribute('tabindex')) {
+            target.setAttribute('tabindex', '-1');
+        }
+
+        try {
+            target.focus({ preventScroll: true });
+        } catch (error) {
+            target.focus();
+        }
+    }
+
+    function revealPageCard(cardKey, options = {}) {
         const key = String(cardKey || '').trim();
         if (key === '') {
             return;
@@ -2415,6 +2631,22 @@
         if (tab instanceof HTMLButtonElement) {
             activatePageCardTab(tab);
         }
+
+        window.requestAnimationFrame(() => {
+            const target = card.closest('.page-stack-card') || card;
+            const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+            const pageStack = target instanceof HTMLElement ? target.closest('.page-stack') : null;
+
+            if (!scrollPageStackToTarget(pageStack, target, behavior) && target instanceof HTMLElement) {
+                target.scrollIntoView({
+                    block: 'start',
+                    inline: 'nearest',
+                    behavior,
+                });
+            }
+
+            focusRevealedCard(card);
+        });
     }
 
     function activatePageCardTabByLabel(control) {
@@ -2929,6 +3161,105 @@
         };
     }
 
+    function normaliseAjaxPendingBlurScope(value) {
+        const scope = String(value || '').trim().toLowerCase();
+
+        return ['none', 'card', 'page'].includes(scope) ? scope : '';
+    }
+
+    function controlAjaxPendingBlurScope(control) {
+        return control instanceof HTMLElement
+            ? normaliseAjaxPendingBlurScope(control.dataset.blurScope)
+            : '';
+    }
+
+    function setFormPendingBlurOverride(form, control) {
+        if (!(form instanceof HTMLFormElement)) {
+            return;
+        }
+
+        const scope = controlAjaxPendingBlurScope(control);
+        if (scope !== '') {
+            form.dataset.ajaxPendingBlurOverride = scope;
+            return;
+        }
+
+        delete form.dataset.ajaxPendingBlurOverride;
+    }
+
+    function ajaxPendingBlurScope(form) {
+        if (form instanceof HTMLFormElement) {
+            const overrideScope = normaliseAjaxPendingBlurScope(form.dataset.ajaxPendingBlurOverride);
+            if (overrideScope !== '') {
+                return overrideScope;
+            }
+        }
+
+        const pageStack = document.querySelector('.page-stack[data-ajax-pending-blur]');
+        return pageStack instanceof HTMLElement
+            ? normaliseAjaxPendingBlurScope(pageStack.dataset.ajaxPendingBlur)
+            : '';
+    }
+
+    function ajaxPendingBlurTarget(form) {
+        const scope = ajaxPendingBlurScope(form);
+        if (scope === 'page') {
+            const pageStack = document.querySelector('.page-stack[data-ajax-pending-blur]');
+
+            return pageStack instanceof HTMLElement ? pageStack : null;
+        }
+
+        if (scope !== 'card' || !(form instanceof HTMLFormElement)) {
+            return null;
+        }
+
+        const card = form.closest('.card[data-card-key]');
+        const cardBody = card instanceof HTMLElement ? card.querySelector('.card-body') : null;
+
+        return cardBody instanceof HTMLElement ? cardBody : null;
+    }
+
+    function beginAjaxPendingBlur(form) {
+        const target = ajaxPendingBlurTarget(form);
+        if (!(target instanceof HTMLElement)) {
+            return () => {};
+        }
+
+        const pendingCount = Math.max(0, Number.parseInt(String(target.dataset.ajaxPendingCount || '0'), 10) || 0);
+        if (pendingCount === 0) {
+            target.dataset.ajaxPendingHadAriaBusy = target.hasAttribute('aria-busy') ? 'true' : 'false';
+            target.dataset.ajaxPendingAriaBusy = target.getAttribute('aria-busy') || '';
+            target.classList.add('is-ajax-pending');
+            target.setAttribute('aria-busy', 'true');
+        }
+
+        target.dataset.ajaxPendingCount = String(pendingCount + 1);
+
+        return () => {
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+
+            const nextCount = Math.max(0, (Number.parseInt(String(target.dataset.ajaxPendingCount || '1'), 10) || 1) - 1);
+            if (nextCount > 0) {
+                target.dataset.ajaxPendingCount = String(nextCount);
+                return;
+            }
+
+            target.classList.remove('is-ajax-pending');
+            delete target.dataset.ajaxPendingCount;
+
+            if (target.dataset.ajaxPendingHadAriaBusy === 'true') {
+                target.setAttribute('aria-busy', target.dataset.ajaxPendingAriaBusy || 'false');
+            } else {
+                target.removeAttribute('aria-busy');
+            }
+
+            delete target.dataset.ajaxPendingHadAriaBusy;
+            delete target.dataset.ajaxPendingAriaBusy;
+        };
+    }
+
     function clearChickenCheck(refocus = false) {
         document.querySelectorAll('.chicken-check-backdrop').forEach((node) => node.remove());
         document.querySelectorAll('.chicken-check-window').forEach((node) => node.remove());
@@ -3029,6 +3360,10 @@
             return;
         }
 
+        if (event.submitter instanceof HTMLElement) {
+            setFormPendingBlurOverride(form, event.submitter);
+        }
+
         syncSubmitField(event.submitter);
 
         const formData = new FormData(form);
@@ -3036,6 +3371,7 @@
         formData.set('_ajax', '1');
         appendCurrentPageCardKeys(formData, form);
         appendRequestedVisibleCard(formData, event.submitter);
+        appendTablePaginationStateToFormData(formData, form, event.submitter);
         appendSiteContextSelectionsToFormData(formData, form);
 
         if (tableExportClipboardRequested(event.submitter)) {
@@ -3064,6 +3400,7 @@
         }
 
         const restoreProcessingState = beginButtonProcessingState(event.submitter);
+        const restorePendingBlur = beginAjaxPendingBlur(form);
 
         try {
             const payload = await sendAjax(requestUrl, {
@@ -3096,7 +3433,7 @@
             applyAjaxPayloadFragment('developer options status', () => replaceDeveloperOptionsStatus(payload.developer_options_status_html));
             applyAjaxPayloadFragment('cards', () => replaceCards(payload.cards));
             applyAjaxPayloadFragment('flash', () => replaceFlash(payload.flash_html));
-            applyAjaxPayloadFragment('visible card', () => showPageCardTabForCard(payload.show_card));
+            applyAjaxPayloadFragment('visible card', () => revealPageCard(payload.show_card, { source: 'ajax' }));
 
         } catch (error) {
             restoreAjaxNonce(ajaxNonce);
@@ -3113,6 +3450,8 @@
             console.error(error);
         } finally {
             clearTableExportClipboardIntent(event.submitter);
+            restorePendingBlur();
+            delete form.dataset.ajaxPendingBlurOverride;
             restoreProcessingState();
         }
     });
@@ -3193,6 +3532,7 @@
         if (submitOnChangeControl instanceof HTMLElement) {
             const form = submitOnChangeControl.closest('form[data-ajax="true"]');
             if (form instanceof HTMLFormElement) {
+                setFormPendingBlurOverride(form, submitOnChangeControl);
                 form.requestSubmit();
                 return;
             }
@@ -3212,6 +3552,7 @@
             return;
         }
 
+        setFormPendingBlurOverride(form, select);
         form.requestSubmit();
     });
 
@@ -3240,6 +3581,11 @@
     loadAjaxNonceBootstrap();
     afGetDeviceId();
     initialiseLoginCountdown();
+
+    const requestedCard = new URLSearchParams(window.location.search).get('show_card');
+    if (requestedCard) {
+        revealPageCard(requestedCard, { source: 'initial-load' });
+    }
 
     if (document.readyState === 'complete') {
         renderPageLoadTime();

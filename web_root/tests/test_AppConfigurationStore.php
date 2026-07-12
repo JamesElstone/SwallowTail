@@ -19,6 +19,7 @@ $harness->check(AppConfigurationStore::class, 'loads configuration from the test
     $harness->assertSame('', AppConfigurationStore::get('app_footer'));
     $harness->assertSame([], AppConfigurationStore::get('navigation.topbar_disabled_pages'));
     $harness->assertSame(false, AppConfigurationStore::get('table_condensed_default'));
+    $harness->assertSame(CsrfGuardFramework::MODE_SUPPLIED, AppConfigurationStore::get('security.csrf_mode'));
     $harness->assertSame(true, AppConfigurationStore::get('user_defaults.new_user_otp_required'));
     $harness->assertSame('Test strapline', AppConfigurationStore::appStrapline());
     $harness->assertSame(3600, (int)SwallowtailConfigurationStore::get('storage.storage_blocked_poll_interval_seconds'));
@@ -31,6 +32,7 @@ $harness->check(AppConfigurationStore::class, 'centralises the default applicati
 
     $harness->assertSame('A simple useful and secure PHP framework', $defaults['app_strapline'] ?? null);
     $harness->assertSame(false, $defaults['table_condensed_default'] ?? null);
+    $harness->assertSame(CsrfGuardFramework::MODE_SUPPLIED, $defaults['security']['csrf_mode'] ?? null);
     $harness->assertSame(true, $defaults['user_defaults']['new_user_otp_required'] ?? null);
 });
 
