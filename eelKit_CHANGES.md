@@ -718,7 +718,7 @@ The styles live in `web_root/css/index.css` and are CSS-only. No eelKit page ren
         <header class="indexed-section-header">
             <div>
                 <h3 class="indexed-section-title">Current Account</h3>
-                <div class="indexed-section-helper">Anna Money - 04-03-70 / 24067720</div>
+                <div class="indexed-section-helper">Example Bank - 00-00-00 / 00000000</div>
             </div>
             <div class="indexed-section-status">
                 <span class="badge success">Continuity pass</span>
