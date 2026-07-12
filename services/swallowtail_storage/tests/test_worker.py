@@ -86,6 +86,7 @@ class StorageWorkerTest(unittest.TestCase):
             interval_seconds=300,
             mount_poll_seconds=30,
             migration_item_limit=5,
+            migration_idle_batch_limit=12,
             redis_host="127.0.0.1",
             redis_port=6379,
             redis_timeout_seconds=5,
@@ -111,6 +112,42 @@ class StorageWorkerTest(unittest.TestCase):
         self.assertTrue(any('mount_points=["/storage/a","/storage/b"]' in line for line in logs.output))
         self.assertTrue(any('writable_mount_points=["/storage/a"]' in line for line in logs.output))
         self.assertTrue(any("Storage wake message sent queue=storage-wake" in line for line in logs.output))
+
+    def test_migrations_continue_in_bounded_batches_while_conversion_is_idle(self) -> None:
+        worker = self.worker()
+        responses = iter([
+            {"success": True, "processed_items": 5, "conversion_active_jobs": 0, "migration_items_remaining": 7},
+            {"success": True, "processed_items": 5, "conversion_active_jobs": 0, "migration_items_remaining": 2},
+            {"success": True, "processed_items": 2, "conversion_active_jobs": 0, "migration_items_remaining": 0},
+        ])
+        calls: list[tuple[str, ...]] = []
+
+        def php_json(*args: str) -> dict:
+            calls.append(args)
+            return next(responses)
+
+        worker.php_json = php_json
+        with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
+            worker.process_migrations_while_conversion_idle()
+
+        self.assertEqual(3, len(calls))
+        self.assertTrue(any("batches=3 items=12 stop_reason=complete" in line for line in logs.output))
+
+    def test_migrations_stop_after_current_batch_when_conversion_becomes_active(self) -> None:
+        worker = self.worker()
+        calls = 0
+
+        def php_json(*_args: str) -> dict:
+            nonlocal calls
+            calls += 1
+            return {"success": True, "processed_items": 5, "conversion_active_jobs": 1, "migration_items_remaining": 20}
+
+        worker.php_json = php_json
+        with self.assertLogs("swallowtail_storage.worker", level="INFO") as logs:
+            worker.process_migrations_while_conversion_idle()
+
+        self.assertEqual(1, calls)
+        self.assertTrue(any("stop_reason=conversion-active" in line for line in logs.output))
 
     def test_startup_logs_storage_wake_sent_when_storage_is_writable(self) -> None:
         redis = FakeRedis()

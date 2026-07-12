@@ -10,6 +10,7 @@ class StorageConfig:
     interval_seconds: int
     mount_poll_seconds: int
     migration_item_limit: int
+    migration_idle_batch_limit: int
     redis_host: str
     redis_port: int
     redis_timeout_seconds: int

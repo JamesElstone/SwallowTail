@@ -37,6 +37,15 @@ try {
         'process-migrations' => (static function () use ($argv): array {
             $limit = max(1, (int)($argv[2] ?? 10));
             $processed = (new SwallowtailStorageMigrationService())->processPending($limit);
+            $conversionActive = InterfaceDB::tableExists('photo_conversion_jobs')
+                ? (int)InterfaceDB::fetchColumn("SELECT COUNT(1) FROM photo_conversion_jobs WHERE status IN ('queued','processing')")
+                : 0;
+            $migrationRemaining = InterfaceDB::tableExists('storage_migration_job_items')
+                ? (int)InterfaceDB::fetchColumn("SELECT COUNT(1) FROM storage_migration_job_items WHERE status IN ('queued','failed')")
+                : 0;
+            $migrationFailed = InterfaceDB::tableExists('storage_migration_job_items')
+                ? (int)InterfaceDB::fetchColumn("SELECT COUNT(1) FROM storage_migration_job_items WHERE status = 'failed'")
+                : 0;
 
             return [
                 'success' => true,
@@ -44,6 +53,9 @@ try {
                 'migration_item_limit' => $limit,
                 'processed' => $processed,
                 'processed_items' => $processed,
+                'conversion_active_jobs' => $conversionActive,
+                'migration_items_remaining' => $migrationRemaining,
+                'migration_failed_items' => $migrationFailed,
             ];
         })(),
         'touch-service' => [

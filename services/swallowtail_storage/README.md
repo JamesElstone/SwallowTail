@@ -8,8 +8,11 @@ It runs `tools/php/storageCache.php discover` at startup and on its normal
 interval, writes the returned snapshot directly to Redis, checks the host mount
 signature every 30 seconds so it can refresh early when mounted storage changes,
 sends a conversion wake message when a refresh finds writable storage for the
-first time or when the writable storage set changes, and runs
-`tools/php/storageCache.php process-migrations <item-limit>` after each refresh.
+first time or when the writable storage set changes, and runs bounded
+`tools/php/storageCache.php process-migrations <item-limit>` batches after each
+refresh. While conversion is idle, migration batches continue immediately up
+to the configured idle batch limit. A queued or processing conversion job
+stops acceleration after the current batch.
 
 ## Install On FreeBSD
 
@@ -30,6 +33,7 @@ sysrc swallowtail_storage_php=/usr/local/bin/php
 sysrc swallowtail_storage_interval_seconds=300
 sysrc swallowtail_storage_mount_poll_seconds=30
 sysrc swallowtail_storage_migration_item_limit=10
+sysrc swallowtail_storage_migration_idle_batch_limit=12
 sysrc swallowtail_storage_redis_host=127.0.0.1
 sysrc swallowtail_storage_redis_port=6379
 sysrc swallowtail_storage_redis_storage_wake_queue=swallowtail:conversion:storage_wake

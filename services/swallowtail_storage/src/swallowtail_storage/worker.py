@@ -79,7 +79,7 @@ class StorageWorker:
         ok = discovered and cache_written
         if ok:
             self.last_mount_signature = self.mount_signature()
-        self.run_php("process-migrations", str(self.config.migration_item_limit))
+        self.process_migrations_while_conversion_idle()
         self.touch_status()
         self.log.info(
             "Storage refresh completed reason=%s ok=%s mount_points=%s writable_mount_points=%s",
@@ -95,6 +95,46 @@ class StorageWorker:
         if not discovered:
             self.log_refresh_failure(reason, payload)
         return ok
+
+    def process_migrations_while_conversion_idle(self) -> None:
+        total_processed = 0
+        batches = 0
+        stop_reason = "no-work"
+        while not self.shutdown_requested.is_set() and batches < self.config.migration_idle_batch_limit:
+            payload = self.php_json("process-migrations", str(self.config.migration_item_limit))
+            if not bool(payload.get("success")):
+                stop_reason = "command-failed"
+                break
+
+            batches += 1
+            processed = max(0, int(payload.get("processed_items", payload.get("processed", 0)) or 0))
+            conversion_active = max(0, int(payload.get("conversion_active_jobs", 0) or 0))
+            remaining = max(0, int(payload.get("migration_items_remaining", 0) or 0))
+            failed = max(0, int(payload.get("migration_failed_items", 0) or 0))
+            total_processed += processed
+
+            if conversion_active > 0:
+                stop_reason = "conversion-active"
+                break
+            if failed > 0:
+                stop_reason = "migration-failed"
+                break
+            if remaining <= 0:
+                stop_reason = "complete"
+                break
+            if processed < self.config.migration_item_limit:
+                stop_reason = "short-batch"
+                break
+        else:
+            stop_reason = "batch-limit" if not self.shutdown_requested.is_set() else "shutdown"
+
+        if total_processed > 0 or batches > 1:
+            self.log.info(
+                "Storage migrations processed batches=%s items=%s stop_reason=%s",
+                batches,
+                total_processed,
+                stop_reason,
+            )
 
     def maybe_notify_storage_wake(self, snapshot: dict, writable_mount_points: list[str]) -> None:
         previous_signature = self.last_writable_mount_signature
@@ -202,6 +242,8 @@ class StorageWorker:
             "project_root": self.config.project_root,
             "interval_seconds": self.config.interval_seconds,
             "mount_poll_seconds": self.config.mount_poll_seconds,
+            "migration_item_limit": self.config.migration_item_limit,
+            "migration_idle_batch_limit": self.config.migration_idle_batch_limit,
             "last_mount_signature": self.last_mount_signature,
         }
         return payload

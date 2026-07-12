@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=int, default=_env_int("INTERVAL_SECONDS", 300), help="Storage refresh interval")
     parser.add_argument("--mount-poll-seconds", type=int, default=_env_int("MOUNT_POLL_SECONDS", 30), help="Mount change check interval")
     parser.add_argument("--migration-item-limit", type=int, default=_env_int("MIGRATION_ITEM_LIMIT", 10), help="Migration job items to process per refresh")
+    parser.add_argument("--migration-idle-batch-limit", type=int, default=_env_int("MIGRATION_IDLE_BATCH_LIMIT", 12), help="Consecutive bounded migration batches allowed while conversion is idle")
     parser.add_argument("--redis-host", default=_env("REDIS_HOST", "127.0.0.1"), help="Redis host")
     parser.add_argument("--redis-port", type=int, default=_env_int("REDIS_PORT", 6379), help="Redis port")
     parser.add_argument("--redis-timeout-seconds", type=int, default=_env_int("REDIS_TIMEOUT_SECONDS", 5), help="Redis socket timeout")
@@ -44,6 +45,7 @@ def main() -> int:
         interval_seconds=max(10, args.interval_seconds),
         mount_poll_seconds=max(5, args.mount_poll_seconds),
         migration_item_limit=max(1, args.migration_item_limit),
+        migration_idle_batch_limit=max(1, args.migration_idle_batch_limit),
         redis_host=args.redis_host,
         redis_port=max(1, args.redis_port),
         redis_timeout_seconds=max(1, args.redis_timeout_seconds),
