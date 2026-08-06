@@ -22,16 +22,21 @@ if ($error instanceof ResponseFramework) {
     return;
 }
 
+$userId = $security->userId();
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 $download = new SwallowtailDownloadService();
 $temporaryPath = null;
 
 try {
     $kind = strtolower(trim((string)$request->query('kind', 'event')));
     if ($kind === 'photo') {
-        $asset = $download->singleJpeg($security->userId(), max(0, (int)$request->query('photo_id', 0)));
+        $asset = $download->singleJpeg($userId, max(0, (int)$request->query('photo_id', 0)));
     } else {
         $asset = $download->eventZip(
-            $security->userId(),
+            $userId,
             max(0, (int)$request->query('event_id', 0)),
             (string)$request->query('type', 'preview')
         );

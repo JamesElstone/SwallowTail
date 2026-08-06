@@ -12,7 +12,17 @@
   const galleryAutoScrollStorageKey = 'gallery:auto-scroll:browse_gallery';
   const galleryAutoRefreshIntervalMs = 5000;
   const galleryCardRefreshIntervalMs = 30000;
-  const galleryViewerPrefetchImages = new Map();
+  const galleryViewerPrefetchDelayMs = 750;
+  const galleryViewerPrefetchMinimumBytesPerSecond = 5000000;
+  const galleryViewerPrefetchMinimumSampleBytes = 65536;
+  const galleryViewerPrefetchMinimumSampleDurationMs = 50;
+  const galleryViewerPrefetchCompletedUrls = new Set();
+  const galleryViewerPrefetchState = {
+    timer: null,
+    link: null,
+    url: '',
+    controller: null,
+  };
   let activeGalleryEventCreateButton = null;
 
   function statusLabel(status) {
@@ -2044,31 +2054,220 @@
     });
   }
 
-  function prefetchGalleryViewerImage(link) {
+  function galleryViewerPrefetchLinkFromEvent(event) {
+    const link = event.target instanceof Element ? event.target.closest('[data-gallery-viewer-prefetch-url]') : null;
+    return link instanceof HTMLAnchorElement ? link : null;
+  }
+
+  function galleryViewerPreviewThroughputBytesPerSecond() {
+    if (!window.performance || typeof window.performance.getEntriesByType !== 'function') {
+      return null;
+    }
+
+    const rates = window.performance.getEntriesByType('resource')
+      .filter((entry) => {
+        if (entry.initiatorType !== 'img'
+          || Number(entry.transferSize || 0) <= 0
+          || Number(entry.encodedBodySize || 0) < galleryViewerPrefetchMinimumSampleBytes
+          || Number(entry.responseEnd || 0) - Number(entry.responseStart || 0) < galleryViewerPrefetchMinimumSampleDurationMs
+        ) {
+          return false;
+        }
+
+        try {
+          const resourceUrl = new URL(String(entry.name || ''), window.location.href);
+          const imageType = String(resourceUrl.searchParams.get('type') || '').toLowerCase();
+          return resourceUrl.origin === window.location.origin
+            && resourceUrl.pathname === '/api/photo-imaging.php'
+            && ['preview', 'thumbnail'].includes(imageType);
+        } catch (error) {
+          return false;
+        }
+      })
+      .map((entry) => Number(entry.encodedBodySize) / ((Number(entry.responseEnd) - Number(entry.responseStart)) / 1000))
+      .filter((rate) => Number.isFinite(rate) && rate > 0)
+      .slice(-8)
+      .sort((left, right) => left - right);
+
+    if (rates.length < 2) {
+      return null;
+    }
+    if (rates[rates.length - 1] > rates[0] * 2) {
+      return null;
+    }
+
+    const middle = Math.floor(rates.length / 2);
+    return rates.length % 2 === 0
+      ? (rates[middle - 1] + rates[middle]) / 2
+      : rates[middle];
+  }
+
+  function galleryViewerConnectionThroughputBytesPerSecond() {
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!connection || connection.saveData === true) {
+      return connection && connection.saveData === true ? 0 : null;
+    }
+
+    const downlinkMbps = Number(connection.downlink || 0);
+    if (!Number.isFinite(downlinkMbps) || downlinkMbps <= 0) {
+      return null;
+    }
+
+    return String(connection.effectiveType || '').toLowerCase() === '4g'
+      ? downlinkMbps * 125000
+      : 0;
+  }
+
+  function galleryViewerPrefetchAllowed() {
+    if (typeof window.fetch !== 'function' || typeof window.AbortController !== 'function') {
+      return false;
+    }
+
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (connection && connection.saveData === true) {
+      return false;
+    }
+
+    const estimates = [
+      galleryViewerPreviewThroughputBytesPerSecond(),
+      galleryViewerConnectionThroughputBytesPerSecond(),
+    ].filter((estimate) => Number.isFinite(estimate));
+
+    return estimates.length > 0
+      && estimates.every((estimate) => estimate >= galleryViewerPrefetchMinimumBytesPerSecond);
+  }
+
+  function cancelGalleryViewerPrefetch(link = null) {
+    if (link instanceof HTMLAnchorElement && galleryViewerPrefetchState.link !== link) {
+      return;
+    }
+
+    const activeLink = galleryViewerPrefetchState.link;
+    if (galleryViewerPrefetchState.timer !== null) {
+      window.clearTimeout(galleryViewerPrefetchState.timer);
+    }
+    if (galleryViewerPrefetchState.controller && typeof galleryViewerPrefetchState.controller.abort === 'function') {
+      galleryViewerPrefetchState.controller.abort();
+    }
+    if (activeLink instanceof HTMLAnchorElement && activeLink.dataset.galleryViewerPrefetchStarted !== 'complete') {
+      delete activeLink.dataset.galleryViewerPrefetchStarted;
+    }
+
+    galleryViewerPrefetchState.timer = null;
+    galleryViewerPrefetchState.link = null;
+    galleryViewerPrefetchState.url = '';
+    galleryViewerPrefetchState.controller = null;
+  }
+
+  async function startGalleryViewerPrefetch(link, url) {
+    const remainsIntentional = link instanceof HTMLAnchorElement
+      && link.isConnected
+      && (link.matches(':hover') || document.activeElement === link);
+    if (!(link instanceof HTMLAnchorElement)
+      || !remainsIntentional
+      || galleryViewerPrefetchState.link !== link
+      || galleryViewerPrefetchState.url !== url
+      || !galleryViewerPrefetchAllowed()
+    ) {
+      cancelGalleryViewerPrefetch(link);
+      return;
+    }
+
+    const controller = new window.AbortController();
+    galleryViewerPrefetchState.timer = null;
+    galleryViewerPrefetchState.controller = controller;
+    link.dataset.galleryViewerPrefetchStarted = '1';
+
+    try {
+      const response = await window.fetch(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'default',
+        priority: 'low',
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Gallery viewer prefetch failed with HTTP ${String(response.status)}.`);
+      }
+
+      if (!response.body || typeof response.body.getReader !== 'function') {
+        throw new Error('Gallery viewer prefetch requires a streaming response body.');
+      }
+
+      const reader = response.body.getReader();
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          break;
+        }
+      }
+
+      galleryViewerPrefetchCompletedUrls.add(url);
+      link.dataset.galleryViewerPrefetchStarted = 'complete';
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.warn('Gallery viewer prefetch did not complete.', error);
+      }
+      if (link.dataset.galleryViewerPrefetchStarted !== 'complete') {
+        delete link.dataset.galleryViewerPrefetchStarted;
+      }
+    } finally {
+      if (galleryViewerPrefetchState.controller === controller) {
+        galleryViewerPrefetchState.timer = null;
+        galleryViewerPrefetchState.link = null;
+        galleryViewerPrefetchState.url = '';
+        galleryViewerPrefetchState.controller = null;
+      }
+    }
+  }
+
+  function scheduleGalleryViewerPrefetch(link) {
     if (!(link instanceof HTMLAnchorElement)) {
       return;
     }
 
-    const url = String(link.dataset.galleryViewerPrefetchUrl || '').trim();
-    if (url === '' || link.dataset.galleryViewerPrefetchStarted === '1' || galleryViewerPrefetchImages.has(url)) {
+    const rawUrl = String(link.dataset.galleryViewerPrefetchUrl || '').trim();
+    let url = '';
+    try {
+      const candidate = new URL(rawUrl, window.location.href);
+      url = candidate.origin === window.location.origin ? candidate.href : '';
+    } catch (error) {
+      url = '';
+    }
+    if (url === '' || galleryViewerPrefetchCompletedUrls.has(url)) {
+      return;
+    }
+    if (galleryViewerPrefetchState.link === link && galleryViewerPrefetchState.url === url) {
       return;
     }
 
-    link.dataset.galleryViewerPrefetchStarted = '1';
-    const image = new Image();
-    image.decoding = 'async';
-    if ('fetchPriority' in image) {
-      image.fetchPriority = 'high';
-    }
-    image.src = url;
-    galleryViewerPrefetchImages.set(url, image);
+    cancelGalleryViewerPrefetch();
+    galleryViewerPrefetchState.link = link;
+    galleryViewerPrefetchState.url = url;
+    galleryViewerPrefetchState.timer = window.setTimeout(() => {
+      void startGalleryViewerPrefetch(link, url);
+    }, galleryViewerPrefetchDelayMs);
   }
 
-  function prefetchGalleryViewerImageFromEvent(event) {
-    const link = event.target instanceof Element ? event.target.closest('[data-gallery-viewer-prefetch-url]') : null;
-    if (link instanceof HTMLAnchorElement) {
-      prefetchGalleryViewerImage(link);
+  function galleryViewerPrefetchEnter(event) {
+    const link = galleryViewerPrefetchLinkFromEvent(event);
+    if (!(link instanceof HTMLAnchorElement)
+      || (typeof window.PointerEvent === 'function' && event instanceof window.PointerEvent && event.pointerType === 'touch')
+      || (event.relatedTarget instanceof Node && link.contains(event.relatedTarget))
+    ) {
+      return;
     }
+    scheduleGalleryViewerPrefetch(link);
+  }
+
+  function galleryViewerPrefetchLeave(event) {
+    const link = galleryViewerPrefetchLinkFromEvent(event);
+    if (!(link instanceof HTMLAnchorElement)
+      || (event.relatedTarget instanceof Node && link.contains(event.relatedTarget))
+    ) {
+      return;
+    }
+    cancelGalleryViewerPrefetch(link);
   }
 
   function galleryAutoRefreshEnabled() {
@@ -2639,10 +2838,11 @@
 
   document.addEventListener('DOMContentLoaded', () => initialise(document));
 
-  document.addEventListener('pointerover', prefetchGalleryViewerImageFromEvent);
-  document.addEventListener('pointerdown', prefetchGalleryViewerImageFromEvent);
-  document.addEventListener('focusin', prefetchGalleryViewerImageFromEvent);
-  document.addEventListener('touchstart', prefetchGalleryViewerImageFromEvent, { passive: true });
+  document.addEventListener('pointerover', galleryViewerPrefetchEnter);
+  document.addEventListener('pointerout', galleryViewerPrefetchLeave);
+  document.addEventListener('focusin', galleryViewerPrefetchEnter);
+  document.addEventListener('focusout', galleryViewerPrefetchLeave);
+  window.addEventListener('pagehide', () => cancelGalleryViewerPrefetch());
 
   document.addEventListener('submit', (event) => {
     const form = event.target;
@@ -2655,7 +2855,7 @@
   });
 
   document.addEventListener('click', (event) => {
-    prefetchGalleryViewerImageFromEvent(event);
+    cancelGalleryViewerPrefetch();
 
     const target = event.target;
     if (!(target instanceof Element)) {

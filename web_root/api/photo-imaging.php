@@ -20,10 +20,16 @@ if ($error instanceof ResponseFramework) {
     return;
 }
 
+$userId = $security->userId();
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
+
 $photoId = max(0, (int)$request->query('photo_id', 0));
 $type = trim((string)$request->query('type', 'preview'));
 $profileSignature = strtolower(trim((string)$request->query('profile_signature', '')));
-$image = (new SwallowtailImageServeService())->derivativeImage($photoId, $type, $security->userId(), $profileSignature);
+$imageService = new SwallowtailImageServeService();
+$image = $imageService->derivativeImage($photoId, $type, $userId, $profileSignature);
 
 if ($image === null) {
     http_response_code(404);
@@ -33,29 +39,45 @@ if ($image === null) {
     return;
 }
 
+$queryValues = $request->queryValues();
+$requestedVersion = array_key_exists('v', $queryValues) && is_scalar($queryValues['v'])
+    ? (string)$queryValues['v']
+    : (array_key_exists('v', $queryValues) ? '' : null);
+$cachePolicy = $imageService->cachePolicyForVersion((string)($image['cache_version'] ?? ''), $requestedVersion);
+if (!$cachePolicy['valid']) {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: ' . $cachePolicy['cache_control']);
+    echo 'Image version was not found.';
+    return;
+}
+
 $etag = (string)$image['etag'];
 $lastModified = (string)$image['last_modified'];
+$cacheControl = (string)$cachePolicy['cache_control'];
 $ifNoneMatch = trim((string)$request->header('If-None-Match', ''));
 $ifModifiedSince = trim((string)$request->header('If-Modified-Since', ''));
+
+if (!headers_sent()) {
+    header_remove('Expires');
+    header_remove('Pragma');
+    header_remove('X-Powered-By');
+    header_remove('X-XSS-Protection');
+}
 
 if ($ifNoneMatch === $etag || ($ifNoneMatch === '' && $ifModifiedSince === $lastModified)) {
     http_response_code(304);
     header('ETag: ' . $etag);
     header('Last-Modified: ' . $lastModified);
-    header('Cache-Control: private, max-age=300, must-revalidate');
+    header('Cache-Control: ' . $cacheControl);
     return;
-}
-
-if (!headers_sent()) {
-    header_remove('X-Powered-By');
-    header_remove('X-XSS-Protection');
 }
 
 http_response_code(200);
 header('Content-Type: ' . (string)$image['content_type']);
 header('Content-Length: ' . (string)$image['bytes']);
 header('Content-Disposition: inline; filename="' . str_replace('"', '', (string)$image['filename']) . '"');
-header('Cache-Control: private, max-age=300, must-revalidate');
+header('Cache-Control: ' . $cacheControl);
 header('ETag: ' . $etag);
 header('Last-Modified: ' . $lastModified);
 header('X-Frame-Options: SAMEORIGIN');

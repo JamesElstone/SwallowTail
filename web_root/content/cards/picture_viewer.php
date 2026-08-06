@@ -10,6 +10,7 @@ declare(strict_types=1);
 use Swallowtail\Service\SwallowtailCombinedProfileService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailPreviewProfileService;
 
 final class _picture_viewerCard extends CardBaseFramework
 {
@@ -31,6 +32,21 @@ final class _picture_viewerCard extends CardBaseFramework
         );
     }
 
+    public function services(): array
+    {
+        return [
+            [
+                'key' => 'viewer_state',
+                'service' => SwallowtailPreviewProfileService::class,
+                'method' => 'pictureViewerState',
+                'params' => [
+                    'photoId' => ':page.photo_id',
+                    'userId' => ':auth.user_id',
+                ],
+            ],
+        ];
+    }
+
     public function render(array $context): string
     {
         $photoId = (int)($context['page']['photo_id'] ?? 0);
@@ -44,12 +60,15 @@ final class _picture_viewerCard extends CardBaseFramework
             return '<div class="panel-soft warn">The selected photo was not found or is not available to your account.</div>';
         }
 
-        $viewerState = [
-            'display_type' => '',
-            'display_url' => '',
-            'final_status' => 'queued',
-            'state_url' => '/api/photo-info.php?view=viewer&photo_id=' . rawurlencode((string)$photoId),
-        ];
+        $serviceState = $context['services']['viewer_state'] ?? null;
+        $viewerState = is_array($serviceState) && !empty($serviceState['success'])
+            ? $serviceState
+            : [
+                'display_type' => '',
+                'display_url' => '',
+                'final_status' => 'queued',
+                'state_url' => '/api/photo-info.php?view=viewer&photo_id=' . rawurlencode((string)$photoId),
+            ];
         $metadata = $this->metadataForPhoto($photoId);
 
         return '<div class="picture-viewer-layout is-details-collapsed" data-picture-viewer-layout>

@@ -50,6 +50,7 @@ final class SwallowtailImageServeService
         $etagSource = $imageType === 'rawtherapee_sample'
             ? (string)($info['profile_signature'] ?? '')
             : (string)($info['sha256'] ?? '');
+        $cacheVersion = $this->normaliseCacheVersion($etagSource);
         $bytes = (int)$info['bytes'];
         $modifiedAt = (int)$info['modified_at'];
 
@@ -58,10 +59,38 @@ final class SwallowtailImageServeService
             'bytes' => $bytes,
             'content_type' => 'image/jpeg',
             'image_type' => $imageType,
+            'cache_version' => $cacheVersion,
             'etag' => '"' . hash('sha256', $etagSource . ':' . $bytes . ':' . $modifiedAt) . '"',
             'filename' => $this->filenameForImage((string)($photo['original_filename'] ?? 'photo'), $imageType),
             'last_modified' => gmdate('D, d M Y H:i:s', $modifiedAt) . ' GMT',
             'photo_id' => $photoId,
+        ];
+    }
+
+    /**
+     * @return array{valid: bool, cache_control: string}
+     */
+    public function cachePolicyForVersion(string $cacheVersion, ?string $requestedVersion): array
+    {
+        if ($requestedVersion === null) {
+            return [
+                'valid' => true,
+                'cache_control' => 'private, max-age=300, must-revalidate',
+            ];
+        }
+
+        $cacheVersion = $this->normaliseCacheVersion($cacheVersion);
+        $requestedVersion = $this->normaliseCacheVersion($requestedVersion);
+        if ($cacheVersion === '' || $requestedVersion === '' || !hash_equals($cacheVersion, $requestedVersion)) {
+            return [
+                'valid' => false,
+                'cache_control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ];
+        }
+
+        return [
+            'valid' => true,
+            'cache_control' => 'private, max-age=31536000, immutable',
         ];
     }
 
@@ -70,6 +99,13 @@ final class SwallowtailImageServeService
         $imageType = strtolower(trim($imageType));
 
         return in_array($imageType, self::IMAGE_TYPES, true) ? $imageType : '';
+    }
+
+    private function normaliseCacheVersion(string $cacheVersion): string
+    {
+        $cacheVersion = strtolower(trim($cacheVersion));
+
+        return preg_match('/^[a-f0-9]{64}$/', $cacheVersion) === 1 ? $cacheVersion : '';
     }
 
     private function userCanServeImage(int $userId, int $photoId, string $imageType): bool

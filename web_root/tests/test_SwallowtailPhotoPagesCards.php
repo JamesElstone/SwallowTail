@@ -11,9 +11,11 @@ use Swallowtail\Service\SwallowtailCombinedProfilePreviewService;
 use Swallowtail\Service\SwallowtailEventManagementService;
 use Swallowtail\Service\SwallowtailJobStatisticsService;
 use Swallowtail\Service\SwallowtailInternalProfilesService;
+use Swallowtail\Service\SwallowtailImageServeService;
 use Swallowtail\Service\SwallowtailPhotoAssetNotificationService;
 use Swallowtail\Service\SwallowtailPhotoMetadataSummaryService;
 use Swallowtail\Service\SwallowtailPhotoUiService;
+use Swallowtail\Service\SwallowtailPreviewProfileService;
 use Swallowtail\Service\SwallowtailRawTherapeeProfileService;
 use Swallowtail\Service\SwallowtailRedisPipelineService;
 use Swallowtail\Service\SwallowtailServiceStatusService;
@@ -354,6 +356,37 @@ $harness->check(_rawtherapee_profilesCard::class, 'rawtherapee preview renders s
 
 $harness->check(_view::class, 'view page exposes picture viewer card', function () use ($harness): void {
     $harness->assertSame(['picture_viewer'], (new _view())->cards());
+});
+
+$harness->check(_picture_viewerCard::class, 'declares initial picture viewer state service', function () use ($harness): void {
+    $services = (new _picture_viewerCard())->services();
+
+    $harness->assertSame('viewer_state', (string)($services[0]['key'] ?? ''));
+    $harness->assertSame(SwallowtailPreviewProfileService::class, (string)($services[0]['service'] ?? ''));
+    $harness->assertSame('pictureViewerState', (string)($services[0]['method'] ?? ''));
+    $harness->assertSame(':page.photo_id', (string)($services[0]['params']['photoId'] ?? ''));
+    $harness->assertSame(':auth.user_id', (string)($services[0]['params']['userId'] ?? ''));
+});
+
+$harness->check(_picture_viewerCard::class, 'renders an immediately available viewer image', function () use ($harness): void {
+    $card = new _picture_viewerCard();
+    $method = new ReflectionMethod($card, 'mediaMarkup');
+    $method->setAccessible(true);
+
+    $html = (string)$method->invoke($card, ['original_filename' => 'IMG_0001.CR2'], [
+        'display_url' => '/api/photo-imaging.php?photo_id=1&type=original&v=' . str_repeat('a', 64),
+        'display_type' => 'original',
+        'final_status' => 'loaded',
+    ]);
+    $pending = (string)$method->invoke($card, ['original_filename' => 'IMG_0002.CR2'], [
+        'display_url' => '',
+        'display_type' => '',
+        'final_status' => 'queued',
+    ]);
+
+    $harness->assertTrue(str_contains($html, 'data-picture-viewer-image'));
+    $harness->assertTrue(str_contains($html, 'type=original&amp;v=' . str_repeat('a', 64)));
+    $harness->assertTrue(str_contains($pending, 'data-picture-viewer-placeholder'));
 });
 
 $harness->check(_picture_viewerCard::class, 'formats camel case metadata keys for display', function () use ($harness): void {
@@ -2018,9 +2051,45 @@ $harness->check(_gallery::class, 'browse gallery event assignment markup is hidd
     $harness->assertTrue(str_contains($js, 'is-assigning-events'));
     $harness->assertTrue(str_contains($js, 'has-selected-event'));
     $harness->assertTrue(str_contains($js, 'data-gallery-viewer-prefetch-url'));
-    $harness->assertTrue(str_contains($js, 'prefetchGalleryViewerImageFromEvent'));
+    $harness->assertTrue(str_contains($js, 'galleryViewerPrefetchDelayMs = 750'));
+    $harness->assertTrue(str_contains($js, 'galleryViewerPrefetchMinimumBytesPerSecond = 5000000'));
+    $harness->assertTrue(str_contains($js, 'galleryViewerPreviewThroughputBytesPerSecond'));
+    $harness->assertTrue(str_contains($js, 'rates.length < 2'));
+    $harness->assertTrue(str_contains($js, 'rates[rates.length - 1] > rates[0] * 2'));
+    $harness->assertTrue(str_contains($js, "connection.saveData === true"));
+    $harness->assertTrue(str_contains($js, "String(connection.effectiveType || '').toLowerCase() === '4g'"));
+    $harness->assertTrue(str_contains($js, "event.pointerType === 'touch'"));
+    $harness->assertTrue(str_contains($js, "link.matches(':hover') || document.activeElement === link"));
+    $harness->assertTrue(str_contains($js, 'candidate.origin === window.location.origin'));
+    $harness->assertTrue(str_contains($js, "priority: 'low'"));
+    $harness->assertTrue(!str_contains($js, 'response.blob()'));
+    $harness->assertTrue(str_contains($js, "document.addEventListener('pointerover', galleryViewerPrefetchEnter)"));
+    $harness->assertTrue(str_contains($js, "document.addEventListener('pointerout', galleryViewerPrefetchLeave)"));
+    $harness->assertTrue(str_contains($js, "window.addEventListener('pagehide', () => cancelGalleryViewerPrefetch())"));
+    $harness->assertTrue(!str_contains($js, "document.addEventListener('pointerdown',"));
+    $harness->assertTrue(!str_contains($js, "document.addEventListener('touchstart',"));
+    $harness->assertTrue(str_contains($js, "if (viewer.dataset.pictureViewerStatus !== 'loaded')"));
     $harness->assertTrue(str_contains($js, 'void poll(0);'));
     $harness->assertTrue(str_contains($action, "['event.permissions', 'browse.gallery']"));
+});
+
+$harness->check(SwallowtailImageServeService::class, 'image and download endpoints release session locks and enforce version caching', function () use ($harness): void {
+    $imagingApi = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'api' . DIRECTORY_SEPARATOR . 'photo-imaging.php');
+    $downloadApi = file_get_contents(__DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'api' . DIRECTORY_SEPARATOR . 'photo-download.php');
+
+    if (!is_string($imagingApi) || !is_string($downloadApi)) {
+        throw new RuntimeException('Unable to read image endpoint source files.');
+    }
+
+    $harness->assertTrue(str_contains($imagingApi, '$userId = $security->userId();'));
+    $harness->assertTrue(str_contains($imagingApi, 'session_write_close();'));
+    $harness->assertTrue(str_contains($imagingApi, 'cachePolicyForVersion'));
+    $harness->assertTrue(str_contains($imagingApi, "header_remove('Expires')"));
+    $harness->assertTrue(str_contains($imagingApi, "header_remove('Pragma')"));
+    $harness->assertTrue(str_contains($imagingApi, "http_response_code(304)"));
+    $harness->assertTrue(str_contains($downloadApi, '$userId = $security->userId();'));
+    $harness->assertTrue(str_contains($downloadApi, 'session_write_close();'));
+    $harness->assertTrue(str_contains($downloadApi, "header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0')"));
 });
 
 $harness->check(_gallery::class, 'browse gallery tracks pending preview rows', function () use ($harness): void {

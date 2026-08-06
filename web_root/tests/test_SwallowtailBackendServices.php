@@ -3721,6 +3721,7 @@ $harness->check(SwallowtailImageServeService::class, 'resolves only authorised p
     $harness->assertTrue(is_array($image));
     $harness->assertSame($previewPath, (string)$image['absolute_path']);
     $harness->assertSame('image/jpeg', (string)$image['content_type']);
+    $harness->assertSame(str_repeat('a', 64), (string)$image['cache_version']);
     $harness->assertTrue(str_contains((string)$image['etag'], '"'));
     $harness->assertSame(null, $finalDenied);
 
@@ -4252,6 +4253,26 @@ $harness->check(SwallowtailPreviewProfileService::class, 'queues initial preview
     ]));
 
     @unlink($source);
+});
+
+$harness->check(SwallowtailImageServeService::class, 'applies versioned and conditional image cache policies', function () use ($harness): void {
+    $service = new SwallowtailImageServeService();
+    $cacheVersion = str_repeat('a', 64);
+
+    $unversioned = $service->cachePolicyForVersion($cacheVersion, null);
+    $matching = $service->cachePolicyForVersion(strtoupper($cacheVersion), '  ' . $cacheVersion . '  ');
+    $invalid = $service->cachePolicyForVersion($cacheVersion, 'not-a-sha256');
+    $empty = $service->cachePolicyForVersion($cacheVersion, '');
+    $stale = $service->cachePolicyForVersion($cacheVersion, str_repeat('b', 64));
+
+    $harness->assertSame(true, (bool)$unversioned['valid']);
+    $harness->assertSame('private, max-age=300, must-revalidate', (string)$unversioned['cache_control']);
+    $harness->assertSame(true, (bool)$matching['valid']);
+    $harness->assertSame('private, max-age=31536000, immutable', (string)$matching['cache_control']);
+    $harness->assertSame(false, (bool)$invalid['valid']);
+    $harness->assertSame(false, (bool)$empty['valid']);
+    $harness->assertSame(false, (bool)$stale['valid']);
+    $harness->assertSame('no-store, no-cache, must-revalidate, max-age=0', (string)$stale['cache_control']);
 });
 
 $harness->check(SwallowtailPreviewProfileService::class, 'loads original as effective final when final profile matches original', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
