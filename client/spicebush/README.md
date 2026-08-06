@@ -185,22 +185,40 @@ Show textual statistics for the current run:
   source CR2 files untouched.
 - The queue journal is append-oriented so large queues do not rewrite the whole
   queue file after every processed CR2. Windows compacts the journal
-  periodically.
+  periodically. Queue compaction includes candidates being checked, prepared
+  uploads, and active uploads, so all unfinished work can be recovered after a
+  crash or restart. New queue records also retain the source volume serial, so
+  pending paths are not accidentally read from a different card later mounted
+  under the same drive letter.
 - Pending files are processed newest first using their filesystem last-modified
   time. Windows rebuilds that priority order when loading a persisted queue.
-- Windows reports distinct checksum, local-check, server-check, upload, and
-  retry phases. During an upload, Statistics shows bytes sent, total bytes,
-  percentage, and average Mbps; the log records byte progress every 10 percent.
+- Windows runs one checksum/deduplication verifier alongside one single-file
+  uploader. The verifier can prepare up to 32 confirmed uploads while network
+  transfer continues. The uploader repeats the server checksum check
+  immediately before every RAW transfer so another SpiceBush client winning
+  the race is handled as a successful duplicate.
+- Statistics separately reports unchecked candidates, confirmed uploads,
+  active verification, active upload, source interruptions, and network/server
+  failures. During an upload it shows bytes sent, total bytes, percentage, and
+  average Mbps; the log records byte progress every 10 percent. The
+  known-upload ETA covers only confirmed uploads and explicitly excludes
+  unchecked candidates.
 - Tray Exit waits for the current operation to finish before closing. While it
   waits, the Statistics window and tray tooltip report that shutdown is pending.
-- Raw upload failures stay in the queue and are retried from the back of the
-  queue after a short delay. SpiceBush only completes a queue item after a
-  confirmed local duplicate, server duplicate, successful upload, or explicit
-  oversize rejection.
+- Network/server upload failures return to the back of the prepared-upload
+  buffer with a short retry delay, without blocking verification or other
+  prepared uploads. SpiceBush only completes a queue item after a confirmed
+  local duplicate, server duplicate, successful upload, or explicit oversize
+  rejection.
 - The Windows tray app warns on exit when uploads are still pending or a scan is
   still running, so the operator has a final chance to keep the card mounted.
 - The Windows tray app also warns if a removable drive is removed while files
-  from that drive are still queued or uploading.
+  from that drive are awaiting verification or upload. A read interrupted by
+  removal abandons the partial request and requeues the file without counting a
+  network failure; work on other drives continues. Reinserting the same volume
+  wakes both workers and resumes its pending work without an automatic rescan.
+  Unknown or different volumes are scanned normally, and Manual Scan remains
+  available.
 - If a SwallowTail account uses MFA or required password change, registration
   should be treated as an interactive policy question. The current registration
   API accepts primary credentials and enforces `upload_tokens` card access.

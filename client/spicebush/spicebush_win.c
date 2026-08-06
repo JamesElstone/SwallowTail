@@ -46,9 +46,12 @@
 #define RAW_UPLOAD_RETRY 0
 #define RAW_UPLOAD_OK 1
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
+#define RAW_UPLOAD_SOURCE_INTERRUPTED 3
 #define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
 #define RAW_UPLOAD_RETRY_DELAY_MS 30000
 #define RAW_UPLOAD_WRITE_CHUNK_BYTES (256 * 1024)
+#define PREPARED_UPLOAD_LOOKAHEAD 32
+#define PREPARED_UPLOAD_CAPACITY (PREPARED_UPLOAD_LOOKAHEAD + 1)
 #define UPLOAD_TIME_WINDOW_SIZE 30
 #define PROCESS_STAGE_IDLE 0
 #define PROCESS_STAGE_CHECKSUM 1
@@ -56,6 +59,9 @@
 #define PROCESS_STAGE_SERVER_CHECK 3
 #define PROCESS_STAGE_UPLOAD 4
 #define PROCESS_STAGE_RETRY_WAIT 5
+#define UPLOAD_STAGE_IDLE 0
+#define UPLOAD_STAGE_SERVER_CHECK 1
+#define UPLOAD_STAGE_BODY 2
 
 typedef unsigned __int64 U64;
 
@@ -65,9 +71,22 @@ typedef unsigned __int64 U64;
 
 typedef struct QueueItem {
     DWORD id;
+    DWORD volumeSerial;
     U64 modifiedTime;
+    BYTE volumeSerialKnown;
     char path[MAX_PATH];
 } QueueItem;
+
+typedef struct PreparedUpload {
+    DWORD queueId;
+    DWORD notBefore;
+    DWORD volumeSerial;
+    U64 modifiedTime;
+    U64 sizeBytes;
+    BYTE volumeSerialKnown;
+    char hash[65];
+    char path[MAX_PATH];
+} PreparedUpload;
 
 typedef struct ScanStats {
     DWORD folders;
@@ -93,23 +112,39 @@ typedef struct AppState {
     HFONT boldUiFont;
     HANDLE instanceMutex;
     HANDLE processorThread;
+    HANDLE uploaderThread;
     CRITICAL_SECTION lock;
     HANDLE queueEvent;
+    HANDLE uploadQueueEvent;
+    HANDLE uploadSpaceEvent;
     HANDLE stopEvent;
     QueueItem *queue;
     DWORD queueCount;
     DWORD queueCapacity;
+    PreparedUpload prepared[PREPARED_UPLOAD_CAPACITY];
+    DWORD preparedCount;
     char processingPath[MAX_PATH];
+    char uploadPath[MAX_PATH];
+    DWORD processingQueueId;
+    DWORD uploadQueueId;
+    DWORD processingVolumeSerial;
+    DWORD uploadVolumeSerial;
+    BYTE processingVolumeSerialKnown;
+    BYTE uploadVolumeSerialKnown;
     LONG totalFound;
     LONG totalUploaded;
     LONG totalKnown;
     LONG totalFailed;
+    LONG totalVerificationFailed;
     LONG totalSkippedLocal;
     LONG totalRejectedOversize;
+    LONG totalSourceInterrupted;
     LONG totalScannedDrives;
     LONG activeScans;
     LONG processing;
+    LONG uploading;
     LONG processingStage;
+    LONG uploadStage;
     LONG uploadsPaused;
     LONG shutdownRequested;
     U64 currentUploadBytesSent;
@@ -122,6 +157,10 @@ typedef struct AppState {
     U64 uploadMillisWindowTotal;
     U64 serverMaxRawUploadBytes;
     DWORD unavailableDriveWarningMask;
+    DWORD unavailableDriveMask;
+    DWORD volumeSerial[26];
+    DWORD volumeRemovalGeneration[26];
+    BYTE volumeSerialKnown[26];
     DWORD nextQueueId;
     DWORD queueDoneSinceCompact;
     int statsPingState;
@@ -154,6 +193,7 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static LRESULT CALLBACK BalloonWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 static void ShowRegisterWindow(int quitMode);
 static DWORD WINAPI ProcessorThread(LPVOID param);
+static DWORD WINAPI UploaderThread(LPVOID param);
 static DWORD WINAPI ScanDriveThread(LPVOID param);
 static DWORD WINAPI RegisterThread(LPVOID param);
 static DWORD WINAPI PingThread(LPVOID param);
@@ -169,9 +209,10 @@ static int ShutdownRequested(void);
 static DWORD ClearUploadedHistoryCache(void);
 static U64 ParseU64(const char *text);
 static void RecordSuccessfulUpload(DWORD elapsedMillis);
-static DWORD PendingQueueCountForDrive(char letter, int *processing);
+static DWORD PendingQueueCountForDrive(char letter, DWORD volumeSerial, int volumeSerialKnown, int *processing);
 static int SourceDriveUnavailable(const char *path, char *letterOut);
 static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path);
+static int ReadVolumeSerial(char letter, DWORD *serial);
 
 static HWND ForegroundAlertOwner(void)
 {
@@ -541,7 +582,7 @@ static void SaveConfig(void)
 
 static void AppendLine(const char *path, const char *line)
 {
-    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     DWORD written;
     if (file == INVALID_HANDLE_VALUE) return;
     WriteFile(file, line, lstrlenA(line), &written, NULL);
@@ -582,12 +623,49 @@ static void LogMessage(const char *format, ...)
     AppendLine(g_app.logPath, line);
 }
 
-static int QueueContainsLocked(const char *path)
+static DWORD DriveMaskForPath(const char *path)
+{
+    char letter;
+    if (!path || path[0] == '\0' || path[1] != ':') return 0;
+    letter = path[0];
+    if (letter >= 'a' && letter <= 'z') letter = (char)(letter - 'a' + 'A');
+    if (letter < 'A' || letter > 'Z') return 0;
+    return 1UL << (letter - 'A');
+}
+
+static int SameVolumeIdentity(DWORD leftSerial, int leftKnown, DWORD rightSerial, int rightKnown)
+{
+    if (!leftKnown || !rightKnown) return 1;
+    return leftSerial == rightSerial;
+}
+
+static int SourceItemAvailableLocked(const char *path, DWORD volumeSerial, int volumeSerialKnown)
+{
+    DWORD mask = DriveMaskForPath(path);
+    int index;
+    if (mask == 0) return 1;
+    if ((g_app.unavailableDriveMask & mask) != 0) return 0;
+    if (!volumeSerialKnown) return 1;
+    index = path[0] >= 'a' && path[0] <= 'z' ? path[0] - 'a' : path[0] - 'A';
+    if (index < 0 || index >= 26 || !g_app.volumeSerialKnown[index]) return 0;
+    return g_app.volumeSerial[index] == volumeSerial;
+}
+
+static int QueueContainsLocked(const char *path, DWORD volumeSerial, int volumeSerialKnown, int ignoreProcessing)
 {
     DWORD i;
     for (i = 0; i < g_app.queueCount; i++) {
-        if (lstrcmpiA(g_app.queue[i].path, path) == 0) return 1;
+        if (lstrcmpiA(g_app.queue[i].path, path) == 0
+            && SameVolumeIdentity(g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown, volumeSerial, volumeSerialKnown)) return 1;
     }
+    for (i = 0; i < g_app.preparedCount; i++) {
+        if (lstrcmpiA(g_app.prepared[i].path, path) == 0
+            && SameVolumeIdentity(g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown, volumeSerial, volumeSerialKnown)) return 1;
+    }
+    if (!ignoreProcessing && g_app.processing && lstrcmpiA(g_app.processingPath, path) == 0
+        && SameVolumeIdentity(g_app.processingVolumeSerial, g_app.processingVolumeSerialKnown, volumeSerial, volumeSerialKnown)) return 1;
+    if (g_app.uploading && lstrcmpiA(g_app.uploadPath, path) == 0
+        && SameVolumeIdentity(g_app.uploadVolumeSerial, g_app.uploadVolumeSerialKnown, volumeSerial, volumeSerialKnown)) return 1;
     return 0;
 }
 
@@ -747,10 +825,14 @@ static DWORD AllocateQueueId(void)
     return id;
 }
 
-static void AppendQueueRecord(DWORD id, const char *path)
+static void AppendQueueRecord(DWORD id, const char *path, DWORD volumeSerial, int volumeSerialKnown)
 {
     char line[MAX_PATH + 64];
-    SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, path);
+    if (volumeSerialKnown) {
+        SbSnprintf(line, sizeof(line), "%lu\t%08lX\t%s\r\n", (unsigned long)id, (unsigned long)volumeSerial, path);
+    } else {
+        SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, path);
+    }
     AppendLine(g_app.queuePath, line);
 }
 
@@ -758,8 +840,10 @@ static void AppendQueueDone(DWORD id, const char *result)
 {
     char line[128];
     SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, result);
+    EnterCriticalSection(&g_app.lock);
     AppendLine(g_app.queueDonePath, line);
     g_app.queueDoneSinceCompact++;
+    LeaveCriticalSection(&g_app.lock);
 }
 
 static int UploadedContains(const char *hash, U64 sizeBytes)
@@ -1062,15 +1146,50 @@ static U64 FileModifiedTimeOrZero(const char *path)
     return modified.QuadPart;
 }
 
-static int QueuePushInternal(DWORD id, const char *path, int persist, int countFound, int newestFirst)
+static int QueuePushInternal(
+    DWORD id,
+    const char *path,
+    int persist,
+    int countFound,
+    int newestFirst,
+    int requeue,
+    DWORD volumeSerial,
+    int volumeSerialKnown
+)
 {
     int result = 0;
+    int volumeIndex = -1;
+    DWORD observedSerial = 0;
+    int observedKnown = 0;
     DWORD queueCount = 0;
     DWORD queueCapacity = 0;
     U64 modifiedTime = newestFirst ? FileModifiedTimeOrZero(path) : 0;
     if (id == 0) id = AllocateQueueId();
+    if (DriveMaskForPath(path) != 0) {
+        char letter = path[0];
+        if (letter >= 'a' && letter <= 'z') letter = (char)(letter - 'a' + 'A');
+        volumeIndex = letter - 'A';
+        EnterCriticalSection(&g_app.lock);
+        if (volumeIndex >= 0 && volumeIndex < 26
+            && g_app.volumeSerialKnown[volumeIndex]
+            && (g_app.unavailableDriveMask & (1UL << volumeIndex)) == 0) {
+            observedSerial = g_app.volumeSerial[volumeIndex];
+            observedKnown = 1;
+        }
+        LeaveCriticalSection(&g_app.lock);
+        if (!observedKnown) observedKnown = ReadVolumeSerial(letter, &observedSerial);
+        if (!volumeSerialKnown && observedKnown) {
+            volumeSerial = observedSerial;
+            volumeSerialKnown = 1;
+        }
+    }
     EnterCriticalSection(&g_app.lock);
-    if (!QueueContainsLocked(path)) {
+    if (volumeIndex >= 0 && volumeIndex < 26 && observedKnown) {
+        g_app.volumeSerial[volumeIndex] = observedSerial;
+        g_app.volumeSerialKnown[volumeIndex] = 1;
+        g_app.unavailableDriveMask &= ~(1UL << volumeIndex);
+    }
+    if (!QueueContainsLocked(path, volumeSerial, volumeSerialKnown, requeue)) {
         if (g_app.queueCount == g_app.queueCapacity) {
             DWORD next = g_app.queueCapacity == 0 ? QUEUE_INITIAL : g_app.queueCapacity * 2;
             QueueItem *items = g_app.queue
@@ -1090,11 +1209,13 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
                 }
             }
             g_app.queue[insertIndex].id = id;
+            g_app.queue[insertIndex].volumeSerial = volumeSerial;
             g_app.queue[insertIndex].modifiedTime = modifiedTime;
+            g_app.queue[insertIndex].volumeSerialKnown = (BYTE)(volumeSerialKnown ? 1 : 0);
             SafeCopy(g_app.queue[insertIndex].path, sizeof(g_app.queue[insertIndex].path), path);
             g_app.queueCount++;
             if (persist) {
-                AppendQueueRecord(id, path);
+                AppendQueueRecord(id, path, volumeSerial, volumeSerialKnown);
             }
             if (countFound) {
                 InterlockedIncrement(&g_app.totalFound);
@@ -1113,7 +1234,15 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
         return result;
     }
     if (result == 1) {
-        LogMessage("Queue add: id=%lu path=%s persist=%s count_found=%s priority=%s modified_time=%I64u", (unsigned long)id, path, persist ? "yes" : "no", countFound ? "yes" : "no", newestFirst ? "newest_first" : "back", modifiedTime);
+        LogMessage("Queue add: id=%lu path=%s persist=%s count_found=%s priority=%s modified_time=%I64u volume_serial=%s%08lx",
+            (unsigned long)id,
+            path,
+            persist ? "yes" : "no",
+            countFound ? "yes" : "no",
+            newestFirst ? "newest_first" : "back",
+            modifiedTime,
+            volumeSerialKnown ? "" : "unknown/",
+            (unsigned long)volumeSerial);
     } else if (result == -1) {
         LogMessage("Queue duplicate suppressed: path=%s", path);
     } else {
@@ -1124,24 +1253,29 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
 
 static void QueuePush(const char *path)
 {
-    QueuePushInternal(0, path, 1, 1, 1);
+    QueuePushInternal(0, path, 1, 1, 1, 0, 0, 0);
 }
 
-static void QueueRequeue(DWORD id, const char *path)
+static void QueueRequeue(DWORD id, const char *path, DWORD volumeSerial, int volumeSerialKnown)
 {
-    QueuePushInternal(id, path, 0, 0, 0);
+    QueuePushInternal(id, path, 0, 0, 0, 1, volumeSerial, volumeSerialKnown);
 }
 
-static int QueuePop(DWORD *id, char *path, DWORD pathSize)
+static int QueuePop(QueueItem *item)
 {
-    DWORD i;
+    DWORD i, selected = (DWORD)-1;
     DWORD remaining = 0;
     int hasItem = 0;
     EnterCriticalSection(&g_app.lock);
-    if (g_app.queueCount > 0) {
-        if (id) *id = g_app.queue[0].id;
-        SafeCopy(path, pathSize, g_app.queue[0].path);
-        for (i = 1; i < g_app.queueCount; i++) {
+    for (i = 0; i < g_app.queueCount; i++) {
+        if (SourceItemAvailableLocked(g_app.queue[i].path, g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown)) {
+            selected = i;
+            break;
+        }
+    }
+    if (selected != (DWORD)-1) {
+        if (item) *item = g_app.queue[selected];
+        for (i = selected + 1; i < g_app.queueCount; i++) {
             g_app.queue[i - 1] = g_app.queue[i];
         }
         g_app.queueCount--;
@@ -1149,8 +1283,69 @@ static int QueuePop(DWORD *id, char *path, DWORD pathSize)
         hasItem = 1;
     }
     LeaveCriticalSection(&g_app.lock);
-    if (hasItem) LogMessage("Queue pop: id=%lu path=%s remaining=%lu", id ? (unsigned long)*id : 0, path, (unsigned long)remaining);
+    if (hasItem && item) LogMessage("Queue pop: id=%lu path=%s volume_serial=%s%08lx remaining=%lu",
+        (unsigned long)item->id,
+        item->path,
+        item->volumeSerialKnown ? "" : "unknown/",
+        (unsigned long)item->volumeSerial,
+        (unsigned long)remaining);
     return hasItem;
+}
+
+static int PreparedPush(const PreparedUpload *item, int retry)
+{
+    DWORD limit = retry ? PREPARED_UPLOAD_CAPACITY : PREPARED_UPLOAD_LOOKAHEAD;
+    HANDLE waits[2];
+    if (!item) return 0;
+    waits[0] = g_app.stopEvent;
+    waits[1] = g_app.uploadSpaceEvent;
+    while (!ShutdownRequested()) {
+        int pushed = 0;
+        EnterCriticalSection(&g_app.lock);
+        if (g_app.preparedCount < limit) {
+            g_app.prepared[g_app.preparedCount++] = *item;
+            pushed = 1;
+        }
+        LeaveCriticalSection(&g_app.lock);
+        if (pushed) {
+            SetEvent(g_app.uploadQueueEvent);
+            PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+            return 1;
+        }
+        if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0) break;
+    }
+    return 0;
+}
+
+static int PreparedPop(PreparedUpload *item, DWORD *waitMillis)
+{
+    DWORD i, selected = (DWORD)-1, now = GetTickCount(), shortest = INFINITE;
+    if (waitMillis) *waitMillis = INFINITE;
+    EnterCriticalSection(&g_app.lock);
+    for (i = 0; i < g_app.preparedCount; i++) {
+        DWORD delay;
+        if (!SourceItemAvailableLocked(g_app.prepared[i].path, g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown)) continue;
+        if ((LONG)(now - g_app.prepared[i].notBefore) >= 0) {
+            selected = i;
+            break;
+        }
+        delay = g_app.prepared[i].notBefore - now;
+        if (delay < shortest) shortest = delay;
+    }
+    if (selected != (DWORD)-1) {
+        *item = g_app.prepared[selected];
+        for (i = selected + 1; i < g_app.preparedCount; i++) {
+            g_app.prepared[i - 1] = g_app.prepared[i];
+        }
+        g_app.preparedCount--;
+    }
+    LeaveCriticalSection(&g_app.lock);
+    if (selected != (DWORD)-1) {
+        SetEvent(g_app.uploadSpaceEvent);
+        return 1;
+    }
+    if (waitMillis) *waitMillis = shortest;
+    return 0;
 }
 
 static int CompareDword(const void *a, const void *b)
@@ -1173,11 +1368,23 @@ static int DoneIdContains(const DWORD *ids, DWORD count, DWORD id)
     return 0;
 }
 
-static int ParseQueueLine(char *line, DWORD *id, char *path, DWORD pathSize, int assignLegacyId)
+static int ParseQueueLine(
+    char *line,
+    DWORD *id,
+    char *path,
+    DWORD pathSize,
+    DWORD *volumeSerial,
+    int *volumeSerialKnown,
+    int assignLegacyId
+)
 {
     char *tab;
+    char *secondTab;
     char *end;
+    int i;
     if (id) *id = 0;
+    if (volumeSerial) *volumeSerial = 0;
+    if (volumeSerialKnown) *volumeSerialKnown = 0;
     if (pathSize > 0) path[0] = '\0';
     end = strpbrk(line, "\r\n");
     if (end) *end = '\0';
@@ -1191,6 +1398,22 @@ static int ParseQueueLine(char *line, DWORD *id, char *path, DWORD pathSize, int
     }
     *tab++ = '\0';
     if (id) *id = strtoul(line, NULL, 10);
+    secondTab = strchr(tab, '\t');
+    if (secondTab && secondTab - tab == 8) {
+        int validSerial = 1;
+        for (i = 0; i < 8; i++) {
+            if (!IsHexChar(tab[i])) {
+                validSerial = 0;
+                break;
+            }
+        }
+        if (validSerial) {
+            *secondTab++ = '\0';
+            if (volumeSerial) *volumeSerial = strtoul(tab, NULL, 16);
+            if (volumeSerialKnown) *volumeSerialKnown = 1;
+            tab = secondTab;
+        }
+    }
     SafeCopy(path, pathSize, tab);
     return id && *id > 0 && path[0] != '\0';
 }
@@ -1278,13 +1501,16 @@ static void LoadQueue(void)
             if (ch == '\r') continue;
             if (ch == '\n') {
                 DWORD id = 0;
+                DWORD volumeSerial = 0;
+                int volumeSerialKnown = 0;
                 char path[MAX_PATH];
                 line[lineLen] = '\0';
                 if (lineLen > 0 && strchr(line, '\t') == NULL) legacyRows++;
-                if (lineLen > 0 && ParseQueueLine(line, &id, path, sizeof(path), 1)) {
+                if (lineLen > 0 && ParseQueueLine(line, &id, path, sizeof(path), &volumeSerial, &volumeSerialKnown, 1)) {
+                    if (!volumeSerialKnown) legacyRows++;
                     if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
                     if (!DoneIdContains(doneIds, doneCount, id)) {
-                        QueuePushInternal(id, path, 0, 0, 1);
+                        QueuePushInternal(id, path, 0, 0, 1, 0, volumeSerial, volumeSerialKnown);
                         loaded++;
                     } else {
                         skipped++;
@@ -1301,13 +1527,16 @@ static void LoadQueue(void)
     }
     if (lineLen > 0) {
         DWORD id = 0;
+        DWORD volumeSerial = 0;
+        int volumeSerialKnown = 0;
         char path[MAX_PATH];
         line[lineLen] = '\0';
         if (strchr(line, '\t') == NULL) legacyRows++;
-        if (ParseQueueLine(line, &id, path, sizeof(path), 1)) {
+        if (ParseQueueLine(line, &id, path, sizeof(path), &volumeSerial, &volumeSerialKnown, 1)) {
+            if (!volumeSerialKnown) legacyRows++;
             if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
             if (!DoneIdContains(doneIds, doneCount, id)) {
-                QueuePushInternal(id, path, 0, 0, 1);
+                QueuePushInternal(id, path, 0, 0, 1, 0, volumeSerial, volumeSerialKnown);
                 loaded++;
             } else {
                 skipped++;
@@ -1344,13 +1573,29 @@ static U64 FileSizeOrZero(const char *path)
     return size.QuadPart;
 }
 
+static int WritePendingQueueLine(HANDLE file, DWORD id, const char *path, DWORD volumeSerial, int volumeSerialKnown)
+{
+    char line[MAX_PATH + 64];
+    DWORD written;
+    DWORD length;
+    if (volumeSerialKnown) {
+        SbSnprintf(line, sizeof(line), "%lu\t%08lX\t%s\r\n", (unsigned long)id, (unsigned long)volumeSerial, path);
+    } else {
+        SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)id, path);
+    }
+    length = (DWORD)lstrlenA(line);
+    return WriteFile(file, line, length, &written, NULL) != 0 && written == length;
+}
+
 static void CompactQueueIfNeeded(void)
 {
     char tmp[MAX_PATH];
     HANDLE file;
     HANDLE doneFile;
-    DWORD i, written;
-    DWORD pendingCount;
+    DWORD i;
+    DWORD pendingCount = 0;
+    DWORD doneCount = 0;
+    DWORD *doneIds = NULL;
     U64 doneSize;
 
     doneSize = FileSizeOrZero(g_app.queueDonePath);
@@ -1358,28 +1603,70 @@ static void CompactQueueIfNeeded(void)
 
     PathJoin(tmp, sizeof(tmp), g_app.appDir, "queue.tmp");
     EnterCriticalSection(&g_app.lock);
-    pendingCount = g_app.queueCount;
+    doneIds = LoadDoneIds(&doneCount);
+    if (doneSize > 0 && !doneIds) {
+        LeaveCriticalSection(&g_app.lock);
+        LogMessage("Queue compaction deferred: completion journal could not be loaded safely.");
+        return;
+    }
     file = CreateFileA(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
+        if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
         LeaveCriticalSection(&g_app.lock);
         LogMessage("Queue compaction failed: could not create temp path=%s error=%lu", tmp, GetLastError());
         return;
     }
     for (i = 0; i < g_app.queueCount; i++) {
-        char line[MAX_PATH + 64];
-        SbSnprintf(line, sizeof(line), "%lu\t%s\r\n", (unsigned long)g_app.queue[i].id, g_app.queue[i].path);
-        if (!WriteFile(file, line, lstrlenA(line), &written, NULL)) {
+        if (DoneIdContains(doneIds, doneCount, g_app.queue[i].id)) continue;
+        if (!WritePendingQueueLine(file, g_app.queue[i].id, g_app.queue[i].path, g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown)) {
             CloseHandle(file);
             DeleteFileA(tmp);
+            if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
             LeaveCriticalSection(&g_app.lock);
             LogMessage("Queue compaction failed: write error=%lu", GetLastError());
             return;
         }
+        pendingCount++;
+    }
+    for (i = 0; i < g_app.preparedCount; i++) {
+        if (DoneIdContains(doneIds, doneCount, g_app.prepared[i].queueId)) continue;
+        if (!WritePendingQueueLine(file, g_app.prepared[i].queueId, g_app.prepared[i].path, g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown)) {
+            CloseHandle(file);
+            DeleteFileA(tmp);
+            if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
+            LeaveCriticalSection(&g_app.lock);
+            LogMessage("Queue compaction failed while writing prepared uploads: error=%lu", GetLastError());
+            return;
+        }
+        pendingCount++;
+    }
+    if (g_app.processing && !DoneIdContains(doneIds, doneCount, g_app.processingQueueId)) {
+        if (!WritePendingQueueLine(file, g_app.processingQueueId, g_app.processingPath, g_app.processingVolumeSerial, g_app.processingVolumeSerialKnown)) {
+            CloseHandle(file);
+            DeleteFileA(tmp);
+            if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
+            LeaveCriticalSection(&g_app.lock);
+            LogMessage("Queue compaction failed while writing active verification: error=%lu", GetLastError());
+            return;
+        }
+        pendingCount++;
+    }
+    if (g_app.uploading && !DoneIdContains(doneIds, doneCount, g_app.uploadQueueId)) {
+        if (!WritePendingQueueLine(file, g_app.uploadQueueId, g_app.uploadPath, g_app.uploadVolumeSerial, g_app.uploadVolumeSerialKnown)) {
+            CloseHandle(file);
+            DeleteFileA(tmp);
+            if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
+            LeaveCriticalSection(&g_app.lock);
+            LogMessage("Queue compaction failed while writing active upload: error=%lu", GetLastError());
+            return;
+        }
+        pendingCount++;
     }
     FlushFileBuffers(file);
     CloseHandle(file);
     if (!MoveFileExA(tmp, g_app.queuePath, MOVEFILE_REPLACE_EXISTING)) {
         DeleteFileA(tmp);
+        if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
         LeaveCriticalSection(&g_app.lock);
         LogMessage("Queue compaction failed: replace error=%lu", GetLastError());
         return;
@@ -1387,6 +1674,7 @@ static void CompactQueueIfNeeded(void)
     doneFile = CreateFileA(g_app.queueDonePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (doneFile != INVALID_HANDLE_VALUE) CloseHandle(doneFile);
     g_app.queueDoneSinceCompact = 0;
+    if (doneIds) HeapFree(GetProcessHeap(), 0, doneIds);
     LeaveCriticalSection(&g_app.lock);
     LogMessage("Queue compaction complete: pending=%lu done_size=%I64u", (unsigned long)pendingCount, doneSize);
 }
@@ -1946,21 +2234,94 @@ static const char *ProcessingStageLabel(LONG stage)
 
 static void SetProcessingStage(LONG stage, U64 uploadTotalBytes)
 {
+    (void)uploadTotalBytes;
     EnterCriticalSection(&g_app.lock);
     g_app.processingStage = stage;
-    if (stage == PROCESS_STAGE_UPLOAD) {
-        g_app.currentUploadBytesSent = 0;
-        g_app.currentUploadTotalBytes = uploadTotalBytes;
-        g_app.currentUploadStartedAt = GetTickCount();
-        g_app.currentUploadLastLoggedPercent = 0;
-    } else {
-        g_app.currentUploadBytesSent = 0;
-        g_app.currentUploadTotalBytes = 0;
-        g_app.currentUploadStartedAt = 0;
-        g_app.currentUploadLastLoggedPercent = 0;
-    }
     LeaveCriticalSection(&g_app.lock);
     if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static void SetUploadActive(DWORD queueId, const char *path, U64 totalBytes, DWORD volumeSerial, int volumeSerialKnown)
+{
+    EnterCriticalSection(&g_app.lock);
+    g_app.uploadQueueId = queueId;
+    g_app.uploadVolumeSerial = volumeSerial;
+    g_app.uploadVolumeSerialKnown = (BYTE)(volumeSerialKnown ? 1 : 0);
+    SafeCopy(g_app.uploadPath, sizeof(g_app.uploadPath), path ? path : "");
+    g_app.currentUploadBytesSent = 0;
+    g_app.currentUploadTotalBytes = totalBytes;
+    g_app.currentUploadStartedAt = 0;
+    g_app.currentUploadLastLoggedPercent = 0;
+    g_app.uploadStage = UPLOAD_STAGE_SERVER_CHECK;
+    g_app.uploading = 1;
+    LeaveCriticalSection(&g_app.lock);
+    if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static void StartUploadBody(void)
+{
+    EnterCriticalSection(&g_app.lock);
+    g_app.currentUploadBytesSent = 0;
+    g_app.currentUploadStartedAt = GetTickCount();
+    g_app.currentUploadLastLoggedPercent = 0;
+    g_app.uploadStage = UPLOAD_STAGE_BODY;
+    LeaveCriticalSection(&g_app.lock);
+    if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static void ClearUploadActive(void)
+{
+    EnterCriticalSection(&g_app.lock);
+    g_app.uploading = 0;
+    g_app.uploadPath[0] = '\0';
+    g_app.uploadQueueId = 0;
+    g_app.uploadVolumeSerial = 0;
+    g_app.uploadVolumeSerialKnown = 0;
+    g_app.currentUploadBytesSent = 0;
+    g_app.currentUploadTotalBytes = 0;
+    g_app.currentUploadStartedAt = 0;
+    g_app.currentUploadLastLoggedPercent = 0;
+    g_app.uploadStage = UPLOAD_STAGE_IDLE;
+    LeaveCriticalSection(&g_app.lock);
+    if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static int IsSourceInterruptionError(const char *path, DWORD error)
+{
+    if (DriveMaskForPath(path) == 0) return 0;
+    if (SourceDriveUnavailable(path, NULL)) return 1;
+    return error == ERROR_FILE_INVALID
+        || error == ERROR_DEVICE_NOT_CONNECTED
+        || error == ERROR_NOT_READY
+        || error == ERROR_MEDIA_CHANGED
+        || error == ERROR_UNRECOGNIZED_MEDIA;
+}
+
+static void MarkSourceUnavailable(const char *path)
+{
+    DWORD mask = DriveMaskForPath(path);
+    if (mask == 0) return;
+    EnterCriticalSection(&g_app.lock);
+    g_app.unavailableDriveMask |= mask;
+    LeaveCriticalSection(&g_app.lock);
+    WarnIfUnavailableSourceDriveHasPendingWork(path);
+}
+
+static DWORD SourceRemovalGeneration(const char *path)
+{
+    DWORD mask = DriveMaskForPath(path);
+    DWORD generation = 0;
+    int i;
+    if (mask == 0) return 0;
+    for (i = 0; i < 26; i++) {
+        if (mask & (1UL << i)) {
+            EnterCriticalSection(&g_app.lock);
+            generation = g_app.volumeRemovalGeneration[i];
+            LeaveCriticalSection(&g_app.lock);
+            break;
+        }
+    }
+    return generation;
 }
 
 static void AddCurrentUploadBytes(DWORD bytesWritten)
@@ -2000,6 +2361,7 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     DWORD got, wrote, status = 0, statusSize = sizeof(DWORD), used = 0;
     DWORD uploadStart = 0, headerMs = 0, bodyMs = 0, endRequestMs = 0, responseMs = 0;
     DWORD phaseStart = 0, writeRemaining = 0;
+    DWORD fileError = ERROR_SUCCESS;
     BOOL readOk;
     BYTE *buf = NULL;
     BYTE *writePtr = NULL;
@@ -2042,7 +2404,9 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     }
     file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        LogMessage("Raw upload failed before send: could not open file path=%s error=%lu", path, GetLastError());
+        fileError = GetLastError();
+        LogMessage("Raw upload failed before send: could not open file path=%s error=%lu", path, fileError);
+        if (IsSourceInterruptionError(path, fileError)) result = RAW_UPLOAD_SOURCE_INTERRUPTED;
         goto done;
     }
     internet = InternetOpenA("SpiceBush/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
@@ -2093,7 +2457,9 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
     }
     bodyMs = GetTickCount() - phaseStart;
     if (!readOk) {
-        LogMessage("Raw upload failed during file read: path=%s error=%lu", path, GetLastError());
+        fileError = GetLastError();
+        LogMessage("Raw upload interrupted during file read: path=%s error=%lu", path, fileError);
+        if (IsSourceInterruptionError(path, fileError)) result = RAW_UPLOAD_SOURCE_INTERRUPTED;
         goto done;
     }
     phaseStart = GetTickCount();
@@ -2156,43 +2522,36 @@ done:
     return result;
 }
 
-static void ProcessPath(DWORD queueId, const char *path)
+static void ProcessPath(DWORD queueId, const char *path, DWORD volumeSerial, int volumeSerialKnown)
 {
+    PreparedUpload prepared;
     char hash[65];
     U64 sizeBytes = 0;
     U64 maxRawUploadBytes = 0;
     int serverMaxRawUploadState = 0;
-    int uploadResult = RAW_UPLOAD_RETRY;
     DWORD photoId = 0;
-    DWORD start = GetTickCount();
-    LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
+    DWORD sourceGeneration = SourceRemovalGeneration(path);
+    LogMessage("Verification start: queue_id=%lu path=%s", (unsigned long)queueId, path);
     SetProcessingStage(PROCESS_STAGE_CHECKSUM, 0);
     if (!ComputeSha256(path, hash, sizeof(hash), &sizeBytes)) {
-        if (SourceDriveUnavailable(path, NULL)) {
-            LogMessage("Process deferred: source drive unavailable during SHA-256 path=%s delay_ms=%lu",
-                path,
-                (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
-            WarnIfUnavailableSourceDriveHasPendingWork(path);
-            QueueRequeue(queueId, path);
-            SetProcessingStage(PROCESS_STAGE_RETRY_WAIT, 0);
-            if (g_app.stopEvent) {
-                WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
-            } else {
-                Sleep(RAW_UPLOAD_RETRY_DELAY_MS);
-            }
+        if (SourceDriveUnavailable(path, NULL) || SourceRemovalGeneration(path) != sourceGeneration) {
+            InterlockedIncrement(&g_app.totalSourceInterrupted);
+            LogMessage("Verification interrupted: source unavailable during SHA-256 path=%s", path);
+            MarkSourceUnavailable(path);
+            QueueRequeue(queueId, path, volumeSerial, volumeSerialKnown);
             return;
         }
-        InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process failed: could not calculate SHA-256 path=%s", path);
+        InterlockedIncrement(&g_app.totalVerificationFailed);
+        LogMessage("Verification failed permanently: could not calculate SHA-256 path=%s", path);
         AppendQueueDone(queueId, "failed_permanent");
         CompactQueueIfNeeded();
         return;
     }
-    LogMessage("Process SHA-256 complete: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
+    LogMessage("Verification SHA-256 complete: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
     SetProcessingStage(PROCESS_STAGE_LOCAL_CHECK, 0);
     if (UploadedContains(hash, sizeBytes)) {
         InterlockedIncrement(&g_app.totalSkippedLocal);
-        LogMessage("Process skipped local dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Verification resolved by local history: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "local_duplicate");
         CompactQueueIfNeeded();
         return;
@@ -2201,7 +2560,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     if (CheckServerKnowsFile(hash, sizeBytes, &photoId)) {
         MarkUploadedStatus(hash, sizeBytes, photoId, "server_known", path);
         InterlockedIncrement(&g_app.totalKnown);
-        LogMessage("Process skipped server dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
+        LogMessage("Verification resolved by server dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
         AppendQueueDone(queueId, "server_known");
         CompactQueueIfNeeded();
         return;
@@ -2215,7 +2574,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     if (serverMaxRawUploadState == 0) {
         char pingError[256];
         if (!PerformPingCheck(&maxRawUploadBytes, pingError, sizeof(pingError))) {
-            LogMessage("Process could not refresh upload limit before upload: %s", pingError);
+            LogMessage("Verification could not refresh upload limit: %s", pingError);
         }
         EnterCriticalSection(&g_app.lock);
         serverMaxRawUploadState = g_app.serverMaxRawUploadState;
@@ -2224,7 +2583,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     }
     if (serverMaxRawUploadState > 0 && maxRawUploadBytes > 0 && sizeBytes > maxRawUploadBytes) {
         InterlockedIncrement(&g_app.totalRejectedOversize);
-        LogMessage("Process rejected over upload limit: path=%s sha256=%s size=%I64u max_raw_upload_bytes=%I64u",
+        LogMessage("Verification rejected over upload limit: path=%s sha256=%s size=%I64u max_raw_upload_bytes=%I64u",
             path,
             hash,
             sizeBytes,
@@ -2234,33 +2593,23 @@ static void ProcessPath(DWORD queueId, const char *path)
         return;
     }
 
-    SetProcessingStage(PROCESS_STAGE_UPLOAD, sizeBytes);
-    uploadResult = UploadFileRaw(path, hash, sizeBytes);
-    if (uploadResult == RAW_UPLOAD_OK) {
-        DWORD elapsed = GetTickCount() - start;
-        RecordSuccessfulUpload(elapsed);
-        LogMessage("Process uploaded: path=%s sha256=%s size=%I64u elapsed_ms=%lu", path, hash, sizeBytes, elapsed);
-        AppendQueueDone(queueId, "uploaded");
-        CompactQueueIfNeeded();
-    } else if (uploadResult == RAW_UPLOAD_REJECT_OVERSIZE) {
-        InterlockedIncrement(&g_app.totalRejectedOversize);
-        LogMessage("Process rejected after upload limit response: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
-        AppendQueueDone(queueId, "rejected_oversize");
-        CompactQueueIfNeeded();
-    } else {
-        InterlockedIncrement(&g_app.totalFailed);
-        LogMessage("Process upload failed; requeueing after delay: path=%s sha256=%s size=%I64u delay_ms=%lu",
+    ZeroMemory(&prepared, sizeof(prepared));
+    prepared.queueId = queueId;
+    prepared.volumeSerial = volumeSerial;
+    prepared.volumeSerialKnown = (BYTE)(volumeSerialKnown ? 1 : 0);
+    prepared.modifiedTime = FileModifiedTimeOrZero(path);
+    prepared.sizeBytes = sizeBytes;
+    SafeCopy(prepared.hash, sizeof(prepared.hash), hash);
+    SafeCopy(prepared.path, sizeof(prepared.path), path);
+    if (PreparedPush(&prepared, 0)) {
+        LogMessage("Verification prepared upload: queue_id=%lu path=%s sha256=%s size=%I64u prepared_buffer=%lu",
+            (unsigned long)queueId,
             path,
             hash,
             sizeBytes,
-            (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
-        QueueRequeue(queueId, path);
-        SetProcessingStage(PROCESS_STAGE_RETRY_WAIT, 0);
-        if (g_app.stopEvent) {
-            WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
-        } else {
-            Sleep(RAW_UPLOAD_RETRY_DELAY_MS);
-        }
+            (unsigned long)g_app.preparedCount);
+    } else {
+        LogMessage("Verification stopped before prepared upload could be buffered: queue_id=%lu path=%s", (unsigned long)queueId, path);
     }
 }
 
@@ -2287,27 +2636,94 @@ static void RecordSuccessfulUpload(DWORD elapsedMillis)
 static DWORD WINAPI ProcessorThread(LPVOID param)
 {
     HANDLE handles[2];
-    char path[MAX_PATH];
-    DWORD queueId = 0;
+    QueueItem item;
     (void)param;
     handles[0] = g_app.stopEvent;
     handles[1] = g_app.queueEvent;
     for (;;) {
         DWORD wait = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         if (wait == WAIT_OBJECT_0) break;
-        while (!ShutdownRequested() && !UploadsPaused() && QueuePop(&queueId, path, sizeof(path))) {
+        while (!ShutdownRequested() && !UploadsPaused() && QueuePop(&item)) {
             EnterCriticalSection(&g_app.lock);
-            SafeCopy(g_app.processingPath, sizeof(g_app.processingPath), path);
+            g_app.processingQueueId = item.id;
+            g_app.processingVolumeSerial = item.volumeSerial;
+            g_app.processingVolumeSerialKnown = item.volumeSerialKnown;
+            SafeCopy(g_app.processingPath, sizeof(g_app.processingPath), item.path);
+            g_app.processing = 1;
             LeaveCriticalSection(&g_app.lock);
-            InterlockedExchange(&g_app.processing, 1);
-            ProcessPath(queueId, path);
+            ProcessPath(item.id, item.path, item.volumeSerial, item.volumeSerialKnown);
             EnterCriticalSection(&g_app.lock);
+            g_app.processing = 0;
             g_app.processingPath[0] = '\0';
+            g_app.processingQueueId = 0;
+            g_app.processingVolumeSerial = 0;
+            g_app.processingVolumeSerialKnown = 0;
             LeaveCriticalSection(&g_app.lock);
-            InterlockedExchange(&g_app.processing, 0);
             SetProcessingStage(PROCESS_STAGE_IDLE, 0);
             if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
         }
+    }
+    return 0;
+}
+
+static DWORD WINAPI UploaderThread(LPVOID param)
+{
+    HANDLE handles[2];
+    PreparedUpload item;
+    (void)param;
+    handles[0] = g_app.stopEvent;
+    handles[1] = g_app.uploadQueueEvent;
+    for (;;) {
+        DWORD waitMillis = INFINITE;
+        DWORD wait;
+        while (!ShutdownRequested() && !UploadsPaused() && PreparedPop(&item, &waitMillis)) {
+            DWORD photoId = 0;
+            DWORD started;
+            int uploadResult;
+            SetUploadActive(item.queueId, item.path, item.sizeBytes, item.volumeSerial, item.volumeSerialKnown);
+            LogMessage("Upload worker final checksum recheck: queue_id=%lu path=%s sha256=%s size=%I64u",
+                (unsigned long)item.queueId, item.path, item.hash, item.sizeBytes);
+            if (CheckServerKnowsFile(item.hash, item.sizeBytes, &photoId)) {
+                MarkUploadedStatus(item.hash, item.sizeBytes, photoId, "server_known", item.path);
+                InterlockedIncrement(&g_app.totalKnown);
+                LogMessage("Upload avoided by final server dedupe: path=%s sha256=%s size=%I64u", item.path, item.hash, item.sizeBytes);
+                AppendQueueDone(item.queueId, "server_known_final");
+                CompactQueueIfNeeded();
+                ClearUploadActive();
+                continue;
+            }
+            started = GetTickCount();
+            StartUploadBody();
+            uploadResult = UploadFileRaw(item.path, item.hash, item.sizeBytes);
+            if (uploadResult == RAW_UPLOAD_OK) {
+                DWORD elapsed = GetTickCount() - started;
+                RecordSuccessfulUpload(elapsed);
+                LogMessage("Upload worker completed: path=%s sha256=%s size=%I64u elapsed_ms=%lu", item.path, item.hash, item.sizeBytes, (unsigned long)elapsed);
+                AppendQueueDone(item.queueId, "uploaded");
+                CompactQueueIfNeeded();
+            } else if (uploadResult == RAW_UPLOAD_REJECT_OVERSIZE) {
+                InterlockedIncrement(&g_app.totalRejectedOversize);
+                LogMessage("Upload worker rejected by server limit: path=%s sha256=%s size=%I64u", item.path, item.hash, item.sizeBytes);
+                AppendQueueDone(item.queueId, "rejected_oversize");
+                CompactQueueIfNeeded();
+            } else if (uploadResult == RAW_UPLOAD_SOURCE_INTERRUPTED) {
+                InterlockedIncrement(&g_app.totalSourceInterrupted);
+                item.notBefore = 0;
+                LogMessage("Upload source interrupted; returning to prepared queue without failure: path=%s sha256=%s size=%I64u", item.path, item.hash, item.sizeBytes);
+                if (SourceDriveUnavailable(item.path, NULL)) MarkSourceUnavailable(item.path);
+                PreparedPush(&item, 1);
+            } else {
+                InterlockedIncrement(&g_app.totalFailed);
+                item.notBefore = GetTickCount() + RAW_UPLOAD_RETRY_DELAY_MS;
+                LogMessage("Network/server upload failed; retry moved to back: path=%s sha256=%s size=%I64u delay_ms=%lu",
+                    item.path, item.hash, item.sizeBytes, (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
+                PreparedPush(&item, 1);
+            }
+            ClearUploadActive();
+            if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
+        }
+        wait = WaitForMultipleObjects(2, handles, FALSE, waitMillis);
+        if (wait == WAIT_OBJECT_0) break;
     }
     return 0;
 }
@@ -2337,7 +2753,7 @@ static void ScanFolder(const char *folder, int depth, int maxDepth, ScanStats *s
                 stats->files++;
                 stats->cr2++;
             }
-            queued = QueuePushInternal(0, child, 1, 1, 1);
+            queued = QueuePushInternal(0, child, 1, 1, 1, 0, 0, 0);
             if (stats) {
                 if (queued == 1) stats->queued++;
                 else if (queued == -1) stats->duplicateQueue++;
@@ -2364,6 +2780,34 @@ static int PathOnDrive(const char *path, char letter)
     return pathLetter == letter
         && path[1] == ':'
         && (path[2] == '\\' || path[2] == '/');
+}
+
+static int ReadVolumeSerial(char letter, DWORD *serial)
+{
+    char root[] = "A:\\";
+    DWORD value = 0;
+    root[0] = letter;
+    if (!GetVolumeInformationA(root, NULL, 0, &value, NULL, NULL, NULL, 0)) return 0;
+    if (serial) *serial = value;
+    return 1;
+}
+
+static void RememberVolumeSerial(char letter)
+{
+    DWORD serial;
+    int index;
+    if (letter >= 'a' && letter <= 'z') letter = (char)(letter - 'a' + 'A');
+    if (letter < 'A' || letter > 'Z' || !ReadVolumeSerial(letter, &serial)) return;
+    index = letter - 'A';
+    EnterCriticalSection(&g_app.lock);
+    g_app.volumeSerial[index] = serial;
+    g_app.volumeSerialKnown[index] = 1;
+    g_app.unavailableDriveMask &= ~(1UL << index);
+    g_app.unavailableDriveWarningMask &= ~(1UL << index);
+    LeaveCriticalSection(&g_app.lock);
+    if (g_app.queueEvent) SetEvent(g_app.queueEvent);
+    if (g_app.uploadQueueEvent) SetEvent(g_app.uploadQueueEvent);
+    LogMessage("Remembered source volume: drive=%c serial=%08lx", letter, (unsigned long)serial);
 }
 
 static int SourceDriveUnavailable(const char *path, char *letterOut)
@@ -2419,12 +2863,16 @@ static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path)
     DWORD bit;
     DWORD pending;
     DWORD unuploaded;
+    DWORD volumeSerial = 0;
+    int volumeSerialKnown = 0;
+    int volumeIndex;
     int processing = 0;
     int shouldWarn = 0;
     char message[512];
 
     if (!SourceDriveUnavailable(path, &letter)) return;
     bit = 1UL << (letter - 'A');
+    volumeIndex = letter - 'A';
     root[0] = letter;
 
     EnterCriticalSection(&g_app.lock);
@@ -2432,10 +2880,12 @@ static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path)
         g_app.unavailableDriveWarningMask |= bit;
         shouldWarn = 1;
     }
+    volumeSerial = g_app.volumeSerial[volumeIndex];
+    volumeSerialKnown = g_app.volumeSerialKnown[volumeIndex] != 0;
     LeaveCriticalSection(&g_app.lock);
 
-    pending = PendingQueueCountForDrive(letter, &processing);
-    unuploaded = pending + (processing ? 1 : 0);
+    pending = PendingQueueCountForDrive(letter, volumeSerial, volumeSerialKnown, &processing);
+    unuploaded = pending + (DWORD)processing;
     if (unuploaded == 0) unuploaded = 1;
 
     if (!shouldWarn) {
@@ -2447,7 +2897,7 @@ static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path)
     }
 
     SbSnprintf(message, sizeof(message),
-        "%s is no longer available while %lu file%s from it %s still waiting to upload.\r\n\r\n"
+        "%s is no longer available while %lu file%s from it %s still awaiting verification or upload.\r\n\r\n"
         "Reinsert the card and let SpiceBush finish before formatting it.",
         root,
         (unsigned long)unuploaded,
@@ -2494,6 +2944,7 @@ static void StartScanDrive(char letter, int maxDepth)
     request->root[2] = '\\';
     request->root[3] = '\0';
     request->maxDepth = maxDepth;
+    RememberVolumeSerial(letter);
     LogMessage("Scan drive queued: root=%s max_depth=%d", request->root, maxDepth);
     InterlockedIncrement(&g_app.activeScans);
     thread = CreateThread(NULL, 0, ScanDriveThread, request, 0, NULL);
@@ -2541,15 +2992,42 @@ static void HandleDeviceArrival(LPARAM lp)
     }
     mask = ((DEV_BROADCAST_VOLUME *)hdr)->dbcv_unitmask;
     LogMessage("Device arrival volume mask=0x%08lx", (unsigned long)mask);
-    EnterCriticalSection(&g_app.lock);
-    g_app.unavailableDriveWarningMask &= ~mask;
-    LeaveCriticalSection(&g_app.lock);
     for (i = 0; i < 26; i++) {
-        if (mask & (1UL << i)) StartScanDrive((char)('A' + i), 3);
+        if (mask & (1UL << i)) {
+            char letter = (char)('A' + i);
+            DWORD serial = 0;
+            DWORD pending = 0;
+            int active = 0;
+            int serialKnown = 0;
+            int sameVolume = 0;
+            serialKnown = ReadVolumeSerial(letter, &serial);
+            if (serialKnown) {
+                EnterCriticalSection(&g_app.lock);
+                g_app.volumeSerial[i] = serial;
+                g_app.volumeSerialKnown[i] = 1;
+                LeaveCriticalSection(&g_app.lock);
+                pending = PendingQueueCountForDrive(letter, serial, 1, &active);
+            }
+            EnterCriticalSection(&g_app.lock);
+            g_app.unavailableDriveWarningMask &= ~(1UL << i);
+            g_app.unavailableDriveMask &= ~(1UL << i);
+            LeaveCriticalSection(&g_app.lock);
+            SetEvent(g_app.queueEvent);
+            SetEvent(g_app.uploadQueueEvent);
+            sameVolume = pending + (DWORD)active > 0;
+            if (sameVolume) {
+                LogMessage("Source volume resumed without automatic rescan: drive=%c serial=%08lx pending=%lu active=%d",
+                    letter, (unsigned long)serial, (unsigned long)pending, active);
+            } else {
+                LogMessage("Source volume arrival requires scan: drive=%c serial_known=%s same_volume=%s pending=%lu active=%d",
+                    letter, serialKnown ? "yes" : "no", sameVolume ? "yes" : "no", (unsigned long)pending, active);
+                StartScanDrive(letter, 3);
+            }
+        }
     }
 }
 
-static DWORD PendingQueueCountForDrive(char letter, int *processing)
+static DWORD PendingQueueCountForDrive(char letter, DWORD volumeSerial, int volumeSerialKnown, int *processing)
 {
     DWORD pending = 0;
     DWORD i;
@@ -2557,10 +3035,20 @@ static DWORD PendingQueueCountForDrive(char letter, int *processing)
 
     EnterCriticalSection(&g_app.lock);
     for (i = 0; i < g_app.queueCount; i++) {
-        if (PathOnDrive(g_app.queue[i].path, letter)) pending++;
+        if (PathOnDrive(g_app.queue[i].path, letter)
+            && SameVolumeIdentity(g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown, volumeSerial, volumeSerialKnown)) pending++;
     }
-    if (processing && PathOnDrive(g_app.processingPath, letter)) {
-        *processing = 1;
+    for (i = 0; i < g_app.preparedCount; i++) {
+        if (PathOnDrive(g_app.prepared[i].path, letter)
+            && SameVolumeIdentity(g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown, volumeSerial, volumeSerialKnown)) pending++;
+    }
+    if (processing && PathOnDrive(g_app.processingPath, letter)
+        && SameVolumeIdentity(g_app.processingVolumeSerial, g_app.processingVolumeSerialKnown, volumeSerial, volumeSerialKnown)) {
+        (*processing)++;
+    }
+    if (processing && PathOnDrive(g_app.uploadPath, letter)
+        && SameVolumeIdentity(g_app.uploadVolumeSerial, g_app.uploadVolumeSerialKnown, volumeSerial, volumeSerialKnown)) {
+        (*processing)++;
     }
     LeaveCriticalSection(&g_app.lock);
 
@@ -2571,20 +3059,26 @@ static void WarnIfRemovedDriveHasPendingWork(char letter)
 {
     DWORD pending;
     DWORD unuploaded;
+    DWORD volumeSerial = 0;
+    int volumeSerialKnown = 0;
     int processing = 0;
     char root[] = "A:\\";
     char message[512];
 
     root[0] = letter;
-    pending = PendingQueueCountForDrive(letter, &processing);
-    unuploaded = pending + (processing ? 1 : 0);
+    EnterCriticalSection(&g_app.lock);
+    volumeSerial = g_app.volumeSerial[letter - 'A'];
+    volumeSerialKnown = g_app.volumeSerialKnown[letter - 'A'] != 0;
+    LeaveCriticalSection(&g_app.lock);
+    pending = PendingQueueCountForDrive(letter, volumeSerial, volumeSerialKnown, &processing);
+    unuploaded = pending + (DWORD)processing;
     if (unuploaded == 0) {
         LogMessage("Device removal: root=%s pending=0 processing=no", root);
         return;
     }
 
     SbSnprintf(message, sizeof(message),
-        "%s was removed while %lu file%s from it %s still waiting to upload.\r\n\r\n"
+        "%s was removed while %lu file%s from it %s still awaiting verification or upload.\r\n\r\n"
         "Reinsert the card and let SpiceBush finish before formatting it.",
         root,
         (unsigned long)unuploaded,
@@ -2614,6 +3108,12 @@ static void HandleDeviceRemoval(LPARAM lp)
     }
     mask = ((DEV_BROADCAST_VOLUME *)hdr)->dbcv_unitmask;
     LogMessage("Device removal volume mask=0x%08lx", (unsigned long)mask);
+    EnterCriticalSection(&g_app.lock);
+    g_app.unavailableDriveMask |= mask;
+    for (i = 0; i < 26; i++) {
+        if (mask & (1UL << i)) g_app.volumeRemovalGeneration[i]++;
+    }
+    LeaveCriticalSection(&g_app.lock);
     for (i = 0; i < 26; i++) {
         if (mask & (1UL << i)) WarnIfRemovedDriveHasPendingWork((char)('A' + i));
     }
@@ -2665,11 +3165,6 @@ static void RemoveTrayIcon(HWND hwnd)
     LogMessage("Tray icon remove: ok=%s error=%lu", ok ? "yes" : "no", ok ? 0 : GetLastError());
 }
 
-static const char *PluralPhoto(LONG value)
-{
-    return value == 1 ? "photo" : "photos";
-}
-
 static void BuildTrayTooltip(char *tip, DWORD tipSize)
 {
     LONG found;
@@ -2677,35 +3172,61 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize)
     LONG pending;
     LONG active;
     LONG processing;
+    LONG uploading;
+    LONG prepared;
     LONG processingStage;
+    LONG uploadStage;
     LONG uploadsPaused;
     LONG shutdownRequested;
+    DWORD unavailablePendingMask = 0;
+    DWORD i;
+    char waitingStatus[32];
     const char *status = "Idle";
 
     EnterCriticalSection(&g_app.lock);
     found = g_app.totalFound;
     alreadyUploaded = g_app.totalKnown + g_app.totalSkippedLocal;
     pending = (LONG)g_app.queueCount;
+    prepared = (LONG)g_app.preparedCount;
     active = g_app.activeScans;
     processing = g_app.processing;
+    uploading = g_app.uploading;
     processingStage = g_app.processingStage;
+    uploadStage = g_app.uploadStage;
     uploadsPaused = g_app.uploadsPaused;
     shutdownRequested = g_app.shutdownRequested;
+    for (i = 0; i < g_app.queueCount; i++) {
+        if (!SourceItemAvailableLocked(g_app.queue[i].path, g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown)) {
+            unavailablePendingMask |= DriveMaskForPath(g_app.queue[i].path);
+        }
+    }
+    for (i = 0; i < g_app.preparedCount; i++) {
+        if (!SourceItemAvailableLocked(g_app.prepared[i].path, g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown)) {
+            unavailablePendingMask |= DriveMaskForPath(g_app.prepared[i].path);
+        }
+    }
     LeaveCriticalSection(&g_app.lock);
 
-    if (shutdownRequested && processing) status = "Exiting after current operation";
+    if (shutdownRequested && (processing || uploading)) status = "Exiting after current work";
     else if (shutdownRequested) status = "Exiting";
     else if (uploadsPaused) status = "Paused";
+    else if (uploading && processing) status = uploadStage == UPLOAD_STAGE_BODY ? "Uploading and checking" : "Final-checking and checking";
+    else if (uploading) status = uploadStage == UPLOAD_STAGE_BODY ? "Uploading" : "Final server check";
     else if (processing) status = ProcessingStageLabel(processingStage);
     else if (active > 0) status = "Scanning";
-    else if (pending > 0) status = "Waiting";
+    else if (unavailablePendingMask != 0) {
+        for (i = 0; i < 26; i++) if (unavailablePendingMask & (1UL << i)) break;
+        SbSnprintf(waitingStatus, sizeof(waitingStatus), "Waiting for source %c:\\", i < 26 ? (char)('A' + i) : '?');
+        status = waitingStatus;
+    }
+    else if (pending > 0 || prepared > 0) status = "Waiting";
 
-    SbSnprintf(tip, tipSize, "SpiceBush: %s. %ld %s found, %ld already uploaded, %ld waiting.",
+    SbSnprintf(tip, tipSize, "SpiceBush: %s. %ld found, %ld known, %ld unchecked, %ld ready.",
         status,
         found,
-        PluralPhoto(found),
         alreadyUploaded,
-        pending);
+        pending,
+        prepared);
 }
 
 static void UpdateTrayTooltip(HWND hwnd)
@@ -2881,6 +3402,7 @@ static void SetUploadsPaused(int paused)
     InterlockedExchange(&g_app.uploadsPaused, paused ? 1 : 0);
     UpdateStatsPauseButton();
     if (!paused && g_app.queueEvent) SetEvent(g_app.queueEvent);
+    if (!paused && g_app.uploadQueueEvent) SetEvent(g_app.uploadQueueEvent);
     PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
 }
 
@@ -2917,6 +3439,12 @@ static int CompleteGracefulShutdownIfReady(HWND hwnd)
         CloseHandle(g_app.processorThread);
         g_app.processorThread = NULL;
     }
+    if (g_app.uploaderThread) {
+        DWORD wait = WaitForSingleObject(g_app.uploaderThread, 0);
+        if (wait != WAIT_OBJECT_0) return 0;
+        CloseHandle(g_app.uploaderThread);
+        g_app.uploaderThread = NULL;
+    }
     KillTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER);
     DestroyWindow(hwnd);
     return 1;
@@ -2926,7 +3454,9 @@ static DWORD PendingQueueCount(void)
 {
     DWORD pending;
     EnterCriticalSection(&g_app.lock);
-    pending = g_app.queueCount;
+    pending = g_app.queueCount + g_app.preparedCount;
+    if (g_app.processing) pending++;
+    if (g_app.uploading) pending++;
     LeaveCriticalSection(&g_app.lock);
     return pending;
 }
@@ -2934,9 +3464,8 @@ static DWORD PendingQueueCount(void)
 static int ConfirmGracefulShutdown(HWND hwnd)
 {
     DWORD pending = PendingQueueCount();
-    LONG processing = InterlockedCompareExchange(&g_app.processing, 0, 0);
     LONG activeScans = InterlockedCompareExchange(&g_app.activeScans, 0, 0);
-    DWORD unuploaded = pending + (processing ? 1 : 0);
+    DWORD unuploaded = pending;
     HWND owner;
     UINT flags = MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST | MB_TASKMODAL;
     char message[512];
@@ -2989,6 +3518,8 @@ static void BeginGracefulShutdown(HWND hwnd)
     if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
     if (g_app.stopEvent) SetEvent(g_app.stopEvent);
     if (g_app.queueEvent) SetEvent(g_app.queueEvent);
+    if (g_app.uploadQueueEvent) SetEvent(g_app.uploadQueueEvent);
+    if (g_app.uploadSpaceEvent) SetEvent(g_app.uploadSpaceEvent);
     if (!CompleteGracefulShutdownIfReady(hwnd)) {
         SetTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER, 250, NULL);
     }
@@ -3079,7 +3610,7 @@ static void ShowStatsWindow(void)
         RECT rect;
         rect.left = 0;
         rect.top = 0;
-        rect.right = 18 + 280 + 18;
+        rect.right = 18 + 520 + 18;
         rect.bottom = 580;
         AdjustWindowRect(&rect, style, FALSE);
         g_app.statsWindow = CreateWindowA("SpiceBushStats", "Statistics", style, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, g_app.instance, NULL);
@@ -3157,160 +3688,150 @@ static void FormatBytes(U64 bytes, char *out, DWORD outSize)
 
 static void RefreshStats(void)
 {
-    char text[256];
-    char currentPath[MAX_PATH];
-    char foundText[32];
-    char uploadedText[32];
-    char alreadyLocalText[32];
-    char alreadyRemoteText[32];
-    char pendingText[32];
-    char failedText[32];
-    char rejectedOversizeText[32];
-    char scannedText[32];
-    char activeText[32];
-    char queueText[32];
-    char etaText[80];
-    char serverLimitText[80];
-    char uploadSentText[32];
-    char uploadTotalText[32];
-    const char *status = "Idle";
-    LONG pending;
-    LONG found;
-    LONG uploaded;
-    LONG alreadyUploaded;
-    LONG alreadyLocal;
-    LONG alreadyRemote;
-    LONG failed;
-    LONG rejectedOversize;
-    LONG scanned;
-    LONG active;
-    LONG processing;
-    LONG processingStage;
-    LONG uploadsPaused;
-    LONG shutdownRequested;
-    int serverMaxRawUploadState;
-    LONG progress = 0;
-    DWORD uploadPercent = 0;
-    DWORD uploadStartedAt = 0;
-    U64 avg = 0;
-    U64 etaMillis = 0;
-    U64 serverMaxRawUploadBytes;
-    U64 uploadBytesSent = 0;
-    U64 uploadTotalBytes = 0;
-    U64 uploadMbpsX10 = 0;
+    char text[512], status[128], checkPath[MAX_PATH];
+    char foundText[32], uploadedText[32], localText[32], remoteText[32];
+    char candidateText[32], preparedText[32], failedText[32], verifyFailedText[32];
+    char rejectedText[32], interruptedText[32], scannedText[32], activeText[32];
+    char etaText[80], serverLimitText[80], uploadSentText[32], uploadTotalText[32];
+    LONG candidates, prepared, found, uploaded, local, remote, failed, verifyFailed;
+    LONG rejected, interrupted, scanned, active, processing, uploading, stage, uploadStage, paused, shutdown;
+    LONG resolved, unresolved, progress = 0;
+    DWORD uploadPercent = 0, uploadStartedAt = 0, unavailableMask, i;
+    U64 avg = 0, etaMillis = 0, serverLimit, uploadSent, uploadTotal, uploadMbpsX10 = 0;
+    int serverLimitState;
+
     EnterCriticalSection(&g_app.lock);
-    pending = (LONG)g_app.queueCount;
+    candidates = (LONG)g_app.queueCount;
+    prepared = (LONG)g_app.preparedCount;
     found = g_app.totalFound;
     uploaded = g_app.totalUploaded;
-    alreadyLocal = g_app.totalSkippedLocal;
-    alreadyRemote = g_app.totalKnown;
-    alreadyUploaded = alreadyLocal + alreadyRemote;
+    local = g_app.totalSkippedLocal;
+    remote = g_app.totalKnown;
     failed = g_app.totalFailed;
-    rejectedOversize = g_app.totalRejectedOversize;
+    verifyFailed = g_app.totalVerificationFailed;
+    rejected = g_app.totalRejectedOversize;
+    interrupted = g_app.totalSourceInterrupted;
     scanned = g_app.totalScannedDrives;
     active = g_app.activeScans;
     processing = g_app.processing;
-    processingStage = g_app.processingStage;
-    uploadsPaused = g_app.uploadsPaused;
-    shutdownRequested = g_app.shutdownRequested;
-    uploadBytesSent = g_app.currentUploadBytesSent;
-    uploadTotalBytes = g_app.currentUploadTotalBytes;
+    uploading = g_app.uploading;
+    stage = g_app.processingStage;
+    uploadStage = g_app.uploadStage;
+    paused = g_app.uploadsPaused;
+    shutdown = g_app.shutdownRequested;
+    uploadSent = g_app.currentUploadBytesSent;
+    uploadTotal = g_app.currentUploadTotalBytes;
     uploadStartedAt = g_app.currentUploadStartedAt;
-    SafeCopy(currentPath, sizeof(currentPath), g_app.processingPath);
-    serverMaxRawUploadState = g_app.serverMaxRawUploadState;
-    serverMaxRawUploadBytes = g_app.serverMaxRawUploadBytes;
-    if (g_app.uploadMillisWindowCount > 0) {
-        avg = g_app.uploadMillisWindowTotal / (U64)g_app.uploadMillisWindowCount;
+    unavailableMask = 0;
+    for (i = 0; i < g_app.queueCount; i++) {
+        if (!SourceItemAvailableLocked(g_app.queue[i].path, g_app.queue[i].volumeSerial, g_app.queue[i].volumeSerialKnown)) {
+            unavailableMask |= DriveMaskForPath(g_app.queue[i].path);
+        }
     }
+    for (i = 0; i < g_app.preparedCount; i++) {
+        if (!SourceItemAvailableLocked(g_app.prepared[i].path, g_app.prepared[i].volumeSerial, g_app.prepared[i].volumeSerialKnown)) {
+            unavailableMask |= DriveMaskForPath(g_app.prepared[i].path);
+        }
+    }
+    SafeCopy(checkPath, sizeof(checkPath), g_app.processingPath);
+    serverLimitState = g_app.serverMaxRawUploadState;
+    serverLimit = g_app.serverMaxRawUploadBytes;
+    if (g_app.uploadMillisWindowCount > 0) avg = g_app.uploadMillisWindowTotal / (U64)g_app.uploadMillisWindowCount;
     LeaveCriticalSection(&g_app.lock);
+
     UpdateTrayTooltip(g_app.mainWindow);
     if (!g_app.statsWindow) return;
     UpdateStatsPauseButton();
 
-    if (found > 0) progress = ((uploaded + alreadyUploaded) * 100L) / found;
-    if (progress > 100) progress = 100;
-    if (shutdownRequested && processing && processingStage == PROCESS_STAGE_UPLOAD) status = "Exiting after current upload";
-    else if (shutdownRequested && processing) status = "Exiting after current operation";
-    else if (shutdownRequested) status = "Exiting";
-    else if (uploadsPaused) status = "Paused";
-    else if (processing) status = ProcessingStageLabel(processingStage);
-    else if (active > 0) status = "Scanning";
-    else if (pending > 0) status = "Waiting";
+    resolved = uploaded + local + remote + rejected + verifyFailed;
+    unresolved = candidates + prepared + (processing ? 1 : 0) + (uploading ? 1 : 0);
+    if (resolved + unresolved > 0) progress = (resolved * 100L) / (resolved + unresolved);
+    SafeCopy(status, sizeof(status), "Idle");
+    if (shutdown && (processing || uploading)) SafeCopy(status, sizeof(status), "Exiting after current work");
+    else if (shutdown) SafeCopy(status, sizeof(status), "Exiting");
+    else if (paused) SafeCopy(status, sizeof(status), "Paused");
+    else if (uploading && processing) SbSnprintf(status, sizeof(status), "%s; %s",
+        uploadStage == UPLOAD_STAGE_BODY ? "Uploading" : "Final server upload check",
+        ProcessingStageLabel(stage));
+    else if (uploading) SafeCopy(status, sizeof(status), uploadStage == UPLOAD_STAGE_BODY ? "Uploading" : "Final server upload check");
+    else if (processing) SafeCopy(status, sizeof(status), ProcessingStageLabel(stage));
+    else if (active > 0) SafeCopy(status, sizeof(status), "Scanning");
+    else if (unavailableMask && (candidates > 0 || prepared > 0)) {
+        for (i = 0; i < 26; i++) if (unavailableMask & (1UL << i)) break;
+        SbSnprintf(status, sizeof(status), "Waiting for source %c:\\", i < 26 ? (char)('A' + i) : '?');
+    } else if (candidates > 0) SafeCopy(status, sizeof(status), "Waiting to check candidates");
+    else if (prepared > 0) SafeCopy(status, sizeof(status), "Waiting to upload confirmed files");
 
     FormatCount(found, foundText, sizeof(foundText));
     FormatCount(uploaded, uploadedText, sizeof(uploadedText));
-    FormatCount(alreadyLocal, alreadyLocalText, sizeof(alreadyLocalText));
-    FormatCount(alreadyRemote, alreadyRemoteText, sizeof(alreadyRemoteText));
-    FormatCount(pending, pendingText, sizeof(pendingText));
+    FormatCount(local, localText, sizeof(localText));
+    FormatCount(remote, remoteText, sizeof(remoteText));
+    FormatCount(candidates, candidateText, sizeof(candidateText));
+    FormatCount(prepared, preparedText, sizeof(preparedText));
     FormatCount(failed, failedText, sizeof(failedText));
-    FormatCount(rejectedOversize, rejectedOversizeText, sizeof(rejectedOversizeText));
+    FormatCount(verifyFailed, verifyFailedText, sizeof(verifyFailedText));
+    FormatCount(rejected, rejectedText, sizeof(rejectedText));
+    FormatCount(interrupted, interruptedText, sizeof(interruptedText));
     FormatCount(scanned, scannedText, sizeof(scannedText));
     FormatCount(active, activeText, sizeof(activeText));
-    FormatCount(pending, queueText, sizeof(queueText));
-    etaMillis = avg * (U64)pending;
-    FormatDuration(etaMillis, etaText, sizeof(etaText));
-    if (serverMaxRawUploadState > 0 && serverMaxRawUploadBytes > 0) {
-        FormatBytes(serverMaxRawUploadBytes, serverLimitText, sizeof(serverLimitText));
-    } else if (serverMaxRawUploadState < 0) {
-        SafeCopy(serverLimitText, sizeof(serverLimitText), "Unavailable");
-    } else {
-        SafeCopy(serverLimitText, sizeof(serverLimitText), "Not checked");
+    etaMillis = avg * (U64)prepared;
+    if (uploading && avg > 0) {
+        if (uploadTotal > 0 && uploadSent < uploadTotal) etaMillis += (avg * (uploadTotal - uploadSent)) / uploadTotal;
+        else etaMillis += avg;
     }
+    FormatDuration(etaMillis, etaText, sizeof(etaText));
+    if (serverLimitState > 0 && serverLimit > 0) FormatBytes(serverLimit, serverLimitText, sizeof(serverLimitText));
+    else SafeCopy(serverLimitText, sizeof(serverLimitText), serverLimitState < 0 ? "Unavailable" : "Not checked");
 
     SetWindowTextIfChanged(g_app.statsLabels[0], "SwallowTail RAW CR2 Photo Uploads");
     SbSnprintf(text, sizeof(text), "Status: %s", status);
     SetWindowTextIfChanged(g_app.statsLabels[1], text);
-    SbSnprintf(text, sizeof(text), "Upload progress: %ld%%", progress);
+    SbSnprintf(text, sizeof(text), "Candidate resolution progress: %ld%%", progress);
     SetWindowTextIfChanged(g_app.statsLabels[2], text);
-    SbSnprintf(text, sizeof(text), "Upload queue: %s waiting", queueText);
-    SetWindowTextIfChanged(g_app.statsLabels[3], text);
-    if (processing && processingStage == PROCESS_STAGE_UPLOAD && uploadTotalBytes > 0) {
-        DWORD elapsedMs = GetTickCount() - uploadStartedAt;
-        if (uploadBytesSent > uploadTotalBytes) uploadBytesSent = uploadTotalBytes;
-        uploadPercent = (DWORD)((uploadBytesSent * 100ULL) / uploadTotalBytes);
-        if (elapsedMs > 0) {
-            uploadMbpsX10 = (uploadBytesSent * 80ULL) / ((U64)elapsedMs * 1000ULL);
-        }
-        FormatBytes(uploadBytesSent, uploadSentText, sizeof(uploadSentText));
-        FormatBytes(uploadTotalBytes, uploadTotalText, sizeof(uploadTotalText));
-        SbSnprintf(text, sizeof(text), "Current upload: %s / %s (%lu%%, %I64u.%I64u Mbps)",
-            uploadSentText,
-            uploadTotalText,
-            (unsigned long)uploadPercent,
-            uploadMbpsX10 / 10ULL,
-            uploadMbpsX10 % 10ULL);
-        SetWindowTextIfChanged(g_app.statsLabels[4], text);
-    } else if (processing && currentPath[0] != '\0') {
-        const char *slash = strrchr(currentPath, '\\');
-        SbSnprintf(text, sizeof(text), "Current file: %s", slash ? slash + 1 : currentPath);
-        SetWindowTextIfChanged(g_app.statsLabels[4], text);
+    if (processing && checkPath[0]) {
+        const char *slash = strrchr(checkPath, '\\');
+        SbSnprintf(text, sizeof(text), "Candidates awaiting checksum/dedupe: %s (checking %s)", candidateText, slash ? slash + 1 : checkPath);
     } else {
-        SetWindowTextIfChanged(g_app.statsLabels[4], "");
+        SbSnprintf(text, sizeof(text), "Candidates awaiting checksum/dedupe: %s", candidateText);
     }
-    SbSnprintf(text, sizeof(text), "Files found: %s", foundText);
+    SetWindowTextIfChanged(g_app.statsLabels[3], text);
+    if (uploading && uploadStage == UPLOAD_STAGE_BODY && uploadTotal > 0) {
+        DWORD elapsedMs = GetTickCount() - uploadStartedAt;
+        if (uploadSent > uploadTotal) uploadSent = uploadTotal;
+        uploadPercent = (DWORD)((uploadSent * 100ULL) / uploadTotal);
+        if (elapsedMs > 0) uploadMbpsX10 = (uploadSent * 80ULL) / ((U64)elapsedMs * 1000ULL);
+        FormatBytes(uploadSent, uploadSentText, sizeof(uploadSentText));
+        FormatBytes(uploadTotal, uploadTotalText, sizeof(uploadTotalText));
+        SbSnprintf(text, sizeof(text), "Current upload: %s / %s (%lu%%, %I64u.%I64u Mbps)", uploadSentText, uploadTotalText,
+            (unsigned long)uploadPercent, uploadMbpsX10 / 10ULL, uploadMbpsX10 % 10ULL);
+        SetWindowTextIfChanged(g_app.statsLabels[4], text);
+    } else if (uploading) SetWindowTextIfChanged(g_app.statsLabels[4], "Current upload: final server checksum recheck");
+    else SetWindowTextIfChanged(g_app.statsLabels[4], "Current upload: none");
+    SbSnprintf(text, sizeof(text), "Files found this session: %s", foundText);
     SetWindowTextIfChanged(g_app.statsLabels[5], text);
     SbSnprintf(text, sizeof(text), "Uploaded this session: %s", uploadedText);
     SetWindowTextIfChanged(g_app.statsLabels[6], text);
-    SbSnprintf(text, sizeof(text), "Already uploaded (local cache): %s", alreadyLocalText);
+    SbSnprintf(text, sizeof(text), "Already uploaded (local cache): %s", localText);
     SetWindowTextIfChanged(g_app.statsLabels[7], text);
-    SbSnprintf(text, sizeof(text), "Already uploaded (remote): %s", alreadyRemoteText);
+    SbSnprintf(text, sizeof(text), "Already uploaded (remote): %s", remoteText);
     SetWindowTextIfChanged(g_app.statsLabels[8], text);
-    SbSnprintf(text, sizeof(text), "Waiting to upload: %s", pendingText);
+    SbSnprintf(text, sizeof(text), "Confirmed uploads waiting: %s", preparedText);
     SetWindowTextIfChanged(g_app.statsLabels[9], text);
-    SbSnprintf(text, sizeof(text), "Failed uploads: %s", failedText);
+    SbSnprintf(text, sizeof(text), "Network/server upload failures: %s", failedText);
     SetWindowTextIfChanged(g_app.statsLabels[10], text);
-    SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedOversizeText);
+    SbSnprintf(text, sizeof(text), "Over-size rejects: %s", rejectedText);
     SetWindowTextIfChanged(g_app.statsLabels[11], text);
-    SetWindowTextIfChanged(g_app.statsLabels[12], "");
+    SbSnprintf(text, sizeof(text), "Source interruptions: %s; verification errors: %s", interruptedText, verifyFailedText);
+    SetWindowTextIfChanged(g_app.statsLabels[12], text);
     SbSnprintf(text, sizeof(text), "Drives scanned this session: %s", scannedText);
     SetWindowTextIfChanged(g_app.statsLabels[13], text);
     SbSnprintf(text, sizeof(text), "Active scans: %s", activeText);
     SetWindowTextIfChanged(g_app.statsLabels[14], text);
     SbSnprintf(text, sizeof(text), "Server upload limit: %s", serverLimitText);
     SetWindowTextIfChanged(g_app.statsLabels[15], text);
-    SbSnprintf(text, sizeof(text), "Average upload time: %I64u ms", avg);
+    SbSnprintf(text, sizeof(text), "Average completed upload time: %I64u ms", avg);
     SetWindowTextIfChanged(g_app.statsLabels[16], text);
-    SbSnprintf(text, sizeof(text), "Estimated time remaining: %s", etaText);
+    SbSnprintf(text, sizeof(text), "Known-upload ETA (excludes unchecked candidates): %s", etaText);
     SetWindowTextIfChanged(g_app.statsLabels[17], text);
 }
 
@@ -3508,7 +4029,7 @@ static LRESULT CALLBACK StatsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             int pauseY = buttonY + 36;
             int clearY = pauseY + 36;
             int pingY = clearY + 36;
-            int labelWidth = 280;
+            int labelWidth = 520;
             for (i = 0; i < STATS_LABEL_COUNT; i++) {
                 g_app.statsLabels[i] = Label(hwnd, "", margin, 18 + i * 22, labelWidth, 20);
             }
@@ -3680,6 +4201,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_DESTROY:
         SetEvent(g_app.stopEvent);
+        if (g_app.queueEvent) SetEvent(g_app.queueEvent);
+        if (g_app.uploadQueueEvent) SetEvent(g_app.uploadQueueEvent);
+        if (g_app.uploadSpaceEvent) SetEvent(g_app.uploadSpaceEvent);
         KillTimer(hwnd, ID_MAIN_SHUTDOWN_TIMER);
         RemoveTrayIcon(hwnd);
         PostQuitMessage(0);
@@ -3731,6 +4255,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     }
     InitializeCriticalSection(&g_app.lock);
     g_app.queueEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
+    g_app.uploadQueueEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
+    g_app.uploadSpaceEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     g_app.stopEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
     EnsureAppStorage();
     LogMessage("SpiceBush starting: app_dir=%s ini_path=%s log_path=%s", g_app.appDir, g_app.iniPath, g_app.logPath);
@@ -3739,6 +4265,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     g_app.mainWindow = CreateWindowA("SpiceBushMain", APP_NAME, WS_OVERLAPPEDWINDOW, 0, 0, 0, 0, NULL, NULL, instance, NULL);
     LoadQueue();
     g_app.processorThread = CreateThread(NULL, 0, ProcessorThread, NULL, 0, NULL);
+    g_app.uploaderThread = CreateThread(NULL, 0, UploaderThread, NULL, 0, NULL);
+    if (!g_app.processorThread || !g_app.uploaderThread) {
+        LogMessage("SpiceBush pipeline thread creation failed: verifier=%s uploader=%s error=%lu",
+            g_app.processorThread ? "yes" : "no",
+            g_app.uploaderThread ? "yes" : "no",
+            GetLastError());
+    } else {
+        LogMessage("SpiceBush pipeline started: verifier_workers=1 uploader_workers=1 prepared_capacity=%u", PREPARED_UPLOAD_LOOKAHEAD);
+    }
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow(1);
     else StartPingCheck();
     while (GetMessageA(&msg, NULL, 0, 0)) {
@@ -3750,10 +4285,18 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
         DispatchMessageA(&msg);
     }
     if (g_app.stopEvent) SetEvent(g_app.stopEvent);
+    if (g_app.queueEvent) SetEvent(g_app.queueEvent);
+    if (g_app.uploadQueueEvent) SetEvent(g_app.uploadQueueEvent);
+    if (g_app.uploadSpaceEvent) SetEvent(g_app.uploadSpaceEvent);
     if (g_app.processorThread) {
         WaitForSingleObject(g_app.processorThread, INFINITE);
         CloseHandle(g_app.processorThread);
         g_app.processorThread = NULL;
+    }
+    if (g_app.uploaderThread) {
+        WaitForSingleObject(g_app.uploaderThread, INFINITE);
+        CloseHandle(g_app.uploaderThread);
+        g_app.uploaderThread = NULL;
     }
     DeleteCriticalSection(&g_app.lock);
     if (g_app.balloonWindow) DestroyWindow(g_app.balloonWindow);
@@ -3762,6 +4305,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
     if (g_app.uiFont) DeleteObject(g_app.uiFont);
     if (g_app.queue) HeapFree(GetProcessHeap(), 0, g_app.queue);
     if (g_app.queueEvent) CloseHandle(g_app.queueEvent);
+    if (g_app.uploadQueueEvent) CloseHandle(g_app.uploadQueueEvent);
+    if (g_app.uploadSpaceEvent) CloseHandle(g_app.uploadSpaceEvent);
     if (g_app.stopEvent) CloseHandle(g_app.stopEvent);
     if (g_app.instanceMutex) CloseHandle(g_app.instanceMutex);
     LogMessage("SpiceBush exiting.");
