@@ -188,6 +188,11 @@ Show textual statistics for the current run:
   periodically.
 - Pending files are processed newest first using their filesystem last-modified
   time. Windows rebuilds that priority order when loading a persisted queue.
+- Windows reports distinct checksum, local-check, server-check, upload, and
+  retry phases. During an upload, Statistics shows bytes sent, total bytes,
+  percentage, and average Mbps; the log records byte progress every 10 percent.
+- Tray Exit waits for the current operation to finish before closing. While it
+  waits, the Statistics window and tray tooltip report that shutdown is pending.
 - Raw upload failures stay in the queue and are retried from the back of the
   queue after a short delay. SpiceBush only completes a queue item after a
   confirmed local duplicate, server duplicate, successful upload, or explicit

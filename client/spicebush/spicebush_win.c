@@ -48,7 +48,14 @@
 #define RAW_UPLOAD_REJECT_OVERSIZE 2
 #define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
 #define RAW_UPLOAD_RETRY_DELAY_MS 30000
+#define RAW_UPLOAD_WRITE_CHUNK_BYTES (256 * 1024)
 #define UPLOAD_TIME_WINDOW_SIZE 30
+#define PROCESS_STAGE_IDLE 0
+#define PROCESS_STAGE_CHECKSUM 1
+#define PROCESS_STAGE_LOCAL_CHECK 2
+#define PROCESS_STAGE_SERVER_CHECK 3
+#define PROCESS_STAGE_UPLOAD 4
+#define PROCESS_STAGE_RETRY_WAIT 5
 
 typedef unsigned __int64 U64;
 
@@ -102,8 +109,13 @@ typedef struct AppState {
     LONG totalScannedDrives;
     LONG activeScans;
     LONG processing;
+    LONG processingStage;
     LONG uploadsPaused;
     LONG shutdownRequested;
+    U64 currentUploadBytesSent;
+    U64 currentUploadTotalBytes;
+    DWORD currentUploadStartedAt;
+    DWORD currentUploadLastLoggedPercent;
     U64 uploadMillisWindow[UPLOAD_TIME_WINDOW_SIZE];
     DWORD uploadMillisWindowCount;
     DWORD uploadMillisWindowNext;
@@ -1920,6 +1932,63 @@ static void StartPingCheck(void)
     else ShowRegisterWindow(0);
 }
 
+static const char *ProcessingStageLabel(LONG stage)
+{
+    switch (stage) {
+    case PROCESS_STAGE_CHECKSUM: return "Calculating checksum";
+    case PROCESS_STAGE_LOCAL_CHECK: return "Checking local history";
+    case PROCESS_STAGE_SERVER_CHECK: return "Checking server";
+    case PROCESS_STAGE_UPLOAD: return "Uploading";
+    case PROCESS_STAGE_RETRY_WAIT: return "Waiting to retry";
+    default: return "Processing";
+    }
+}
+
+static void SetProcessingStage(LONG stage, U64 uploadTotalBytes)
+{
+    EnterCriticalSection(&g_app.lock);
+    g_app.processingStage = stage;
+    if (stage == PROCESS_STAGE_UPLOAD) {
+        g_app.currentUploadBytesSent = 0;
+        g_app.currentUploadTotalBytes = uploadTotalBytes;
+        g_app.currentUploadStartedAt = GetTickCount();
+        g_app.currentUploadLastLoggedPercent = 0;
+    } else {
+        g_app.currentUploadBytesSent = 0;
+        g_app.currentUploadTotalBytes = 0;
+        g_app.currentUploadStartedAt = 0;
+        g_app.currentUploadLastLoggedPercent = 0;
+    }
+    LeaveCriticalSection(&g_app.lock);
+    if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+}
+
+static void AddCurrentUploadBytes(DWORD bytesWritten)
+{
+    U64 bytesSent;
+    U64 totalBytes;
+    DWORD percent = 0;
+    int logProgress = 0;
+    EnterCriticalSection(&g_app.lock);
+    g_app.currentUploadBytesSent += (U64)bytesWritten;
+    if (g_app.currentUploadBytesSent > g_app.currentUploadTotalBytes) {
+        g_app.currentUploadBytesSent = g_app.currentUploadTotalBytes;
+    }
+    bytesSent = g_app.currentUploadBytesSent;
+    totalBytes = g_app.currentUploadTotalBytes;
+    if (totalBytes > 0) {
+        percent = (DWORD)((bytesSent * 100ULL) / totalBytes);
+        if (percent >= g_app.currentUploadLastLoggedPercent + 10 || bytesSent >= totalBytes) {
+            g_app.currentUploadLastLoggedPercent = percent;
+            logProgress = 1;
+        }
+    }
+    LeaveCriticalSection(&g_app.lock);
+    if (logProgress) {
+        LogMessage("Raw upload progress: bytes_sent=%I64u total_bytes=%I64u percent=%lu", bytesSent, totalBytes, (unsigned long)percent);
+    }
+}
+
 static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
 {
     ParsedUrl parsed;
@@ -2011,13 +2080,15 @@ static int UploadFileRaw(const char *path, const char *hash, U64 sizeBytes)
         writePtr = buf;
         writeRemaining = got;
         while (writeRemaining > 0) {
+            DWORD writeChunk = writeRemaining > RAW_UPLOAD_WRITE_CHUNK_BYTES ? RAW_UPLOAD_WRITE_CHUNK_BYTES : writeRemaining;
             wrote = 0;
-            if (!InternetWriteFile(request, writePtr, writeRemaining, &wrote) || wrote == 0) {
+            if (!InternetWriteFile(request, writePtr, writeChunk, &wrote) || wrote == 0) {
                 LogMessage("Raw upload failed during body send: wrote=%lu expected_remaining=%lu error=%lu", wrote, writeRemaining, GetLastError());
                 goto done;
             }
             writePtr += wrote;
             writeRemaining -= wrote;
+            AddCurrentUploadBytes(wrote);
         }
     }
     bodyMs = GetTickCount() - phaseStart;
@@ -2095,6 +2166,7 @@ static void ProcessPath(DWORD queueId, const char *path)
     DWORD photoId = 0;
     DWORD start = GetTickCount();
     LogMessage("Process start: queue_id=%lu path=%s", (unsigned long)queueId, path);
+    SetProcessingStage(PROCESS_STAGE_CHECKSUM, 0);
     if (!ComputeSha256(path, hash, sizeof(hash), &sizeBytes)) {
         if (SourceDriveUnavailable(path, NULL)) {
             LogMessage("Process deferred: source drive unavailable during SHA-256 path=%s delay_ms=%lu",
@@ -2102,6 +2174,7 @@ static void ProcessPath(DWORD queueId, const char *path)
                 (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
             WarnIfUnavailableSourceDriveHasPendingWork(path);
             QueueRequeue(queueId, path);
+            SetProcessingStage(PROCESS_STAGE_RETRY_WAIT, 0);
             if (g_app.stopEvent) {
                 WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
             } else {
@@ -2116,6 +2189,7 @@ static void ProcessPath(DWORD queueId, const char *path)
         return;
     }
     LogMessage("Process SHA-256 complete: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
+    SetProcessingStage(PROCESS_STAGE_LOCAL_CHECK, 0);
     if (UploadedContains(hash, sizeBytes)) {
         InterlockedIncrement(&g_app.totalSkippedLocal);
         LogMessage("Process skipped local dedupe: path=%s sha256=%s size=%I64u", path, hash, sizeBytes);
@@ -2123,6 +2197,7 @@ static void ProcessPath(DWORD queueId, const char *path)
         CompactQueueIfNeeded();
         return;
     }
+    SetProcessingStage(PROCESS_STAGE_SERVER_CHECK, 0);
     if (CheckServerKnowsFile(hash, sizeBytes, &photoId)) {
         MarkUploadedStatus(hash, sizeBytes, photoId, "server_known", path);
         InterlockedIncrement(&g_app.totalKnown);
@@ -2132,6 +2207,7 @@ static void ProcessPath(DWORD queueId, const char *path)
         return;
     }
 
+    SetProcessingStage(PROCESS_STAGE_SERVER_CHECK, 0);
     EnterCriticalSection(&g_app.lock);
     serverMaxRawUploadState = g_app.serverMaxRawUploadState;
     maxRawUploadBytes = g_app.serverMaxRawUploadBytes;
@@ -2158,6 +2234,7 @@ static void ProcessPath(DWORD queueId, const char *path)
         return;
     }
 
+    SetProcessingStage(PROCESS_STAGE_UPLOAD, sizeBytes);
     uploadResult = UploadFileRaw(path, hash, sizeBytes);
     if (uploadResult == RAW_UPLOAD_OK) {
         DWORD elapsed = GetTickCount() - start;
@@ -2178,6 +2255,7 @@ static void ProcessPath(DWORD queueId, const char *path)
             sizeBytes,
             (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
         QueueRequeue(queueId, path);
+        SetProcessingStage(PROCESS_STAGE_RETRY_WAIT, 0);
         if (g_app.stopEvent) {
             WaitForSingleObject(g_app.stopEvent, RAW_UPLOAD_RETRY_DELAY_MS);
         } else {
@@ -2227,7 +2305,7 @@ static DWORD WINAPI ProcessorThread(LPVOID param)
             g_app.processingPath[0] = '\0';
             LeaveCriticalSection(&g_app.lock);
             InterlockedExchange(&g_app.processing, 0);
-            PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
+            SetProcessingStage(PROCESS_STAGE_IDLE, 0);
             if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
         }
     }
@@ -2599,6 +2677,9 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize)
     LONG pending;
     LONG active;
     LONG processing;
+    LONG processingStage;
+    LONG uploadsPaused;
+    LONG shutdownRequested;
     const char *status = "Idle";
 
     EnterCriticalSection(&g_app.lock);
@@ -2607,10 +2688,17 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize)
     pending = (LONG)g_app.queueCount;
     active = g_app.activeScans;
     processing = g_app.processing;
+    processingStage = g_app.processingStage;
+    uploadsPaused = g_app.uploadsPaused;
+    shutdownRequested = g_app.shutdownRequested;
     LeaveCriticalSection(&g_app.lock);
 
-    if (active > 0) status = "Scanning";
-    else if (processing || pending > 0) status = "Uploading";
+    if (shutdownRequested && processing) status = "Exiting after current operation";
+    else if (shutdownRequested) status = "Exiting";
+    else if (uploadsPaused) status = "Paused";
+    else if (processing) status = ProcessingStageLabel(processingStage);
+    else if (active > 0) status = "Scanning";
+    else if (pending > 0) status = "Waiting";
 
     SbSnprintf(tip, tipSize, "SpiceBush: %s. %ld %s found, %ld already uploaded, %ld waiting.",
         status,
@@ -2898,6 +2986,7 @@ static void BeginGracefulShutdown(HWND hwnd)
     if (!ShutdownRequested() && !ConfirmGracefulShutdown(hwnd)) return;
     if (InterlockedExchange(&g_app.shutdownRequested, 1) != 0) return;
     UpdateStatsPauseButton();
+    if (g_app.mainWindow) PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
     if (g_app.stopEvent) SetEvent(g_app.stopEvent);
     if (g_app.queueEvent) SetEvent(g_app.queueEvent);
     if (!CompleteGracefulShutdownIfReady(hwnd)) {
@@ -3069,6 +3158,7 @@ static void FormatBytes(U64 bytes, char *out, DWORD outSize)
 static void RefreshStats(void)
 {
     char text[256];
+    char currentPath[MAX_PATH];
     char foundText[32];
     char uploadedText[32];
     char alreadyLocalText[32];
@@ -3081,6 +3171,8 @@ static void RefreshStats(void)
     char queueText[32];
     char etaText[80];
     char serverLimitText[80];
+    char uploadSentText[32];
+    char uploadTotalText[32];
     const char *status = "Idle";
     LONG pending;
     LONG found;
@@ -3093,11 +3185,19 @@ static void RefreshStats(void)
     LONG scanned;
     LONG active;
     LONG processing;
+    LONG processingStage;
+    LONG uploadsPaused;
+    LONG shutdownRequested;
     int serverMaxRawUploadState;
     LONG progress = 0;
+    DWORD uploadPercent = 0;
+    DWORD uploadStartedAt = 0;
     U64 avg = 0;
     U64 etaMillis = 0;
     U64 serverMaxRawUploadBytes;
+    U64 uploadBytesSent = 0;
+    U64 uploadTotalBytes = 0;
+    U64 uploadMbpsX10 = 0;
     EnterCriticalSection(&g_app.lock);
     pending = (LONG)g_app.queueCount;
     found = g_app.totalFound;
@@ -3110,6 +3210,13 @@ static void RefreshStats(void)
     scanned = g_app.totalScannedDrives;
     active = g_app.activeScans;
     processing = g_app.processing;
+    processingStage = g_app.processingStage;
+    uploadsPaused = g_app.uploadsPaused;
+    shutdownRequested = g_app.shutdownRequested;
+    uploadBytesSent = g_app.currentUploadBytesSent;
+    uploadTotalBytes = g_app.currentUploadTotalBytes;
+    uploadStartedAt = g_app.currentUploadStartedAt;
+    SafeCopy(currentPath, sizeof(currentPath), g_app.processingPath);
     serverMaxRawUploadState = g_app.serverMaxRawUploadState;
     serverMaxRawUploadBytes = g_app.serverMaxRawUploadBytes;
     if (g_app.uploadMillisWindowCount > 0) {
@@ -3122,8 +3229,13 @@ static void RefreshStats(void)
 
     if (found > 0) progress = ((uploaded + alreadyUploaded) * 100L) / found;
     if (progress > 100) progress = 100;
-    if (active > 0) status = "Scanning";
-    else if (processing || pending > 0) status = "Uploading";
+    if (shutdownRequested && processing && processingStage == PROCESS_STAGE_UPLOAD) status = "Exiting after current upload";
+    else if (shutdownRequested && processing) status = "Exiting after current operation";
+    else if (shutdownRequested) status = "Exiting";
+    else if (uploadsPaused) status = "Paused";
+    else if (processing) status = ProcessingStageLabel(processingStage);
+    else if (active > 0) status = "Scanning";
+    else if (pending > 0) status = "Waiting";
 
     FormatCount(found, foundText, sizeof(foundText));
     FormatCount(uploaded, uploadedText, sizeof(uploadedText));
@@ -3152,7 +3264,29 @@ static void RefreshStats(void)
     SetWindowTextIfChanged(g_app.statsLabels[2], text);
     SbSnprintf(text, sizeof(text), "Upload queue: %s waiting", queueText);
     SetWindowTextIfChanged(g_app.statsLabels[3], text);
-    SetWindowTextIfChanged(g_app.statsLabels[4], "");
+    if (processing && processingStage == PROCESS_STAGE_UPLOAD && uploadTotalBytes > 0) {
+        DWORD elapsedMs = GetTickCount() - uploadStartedAt;
+        if (uploadBytesSent > uploadTotalBytes) uploadBytesSent = uploadTotalBytes;
+        uploadPercent = (DWORD)((uploadBytesSent * 100ULL) / uploadTotalBytes);
+        if (elapsedMs > 0) {
+            uploadMbpsX10 = (uploadBytesSent * 80ULL) / ((U64)elapsedMs * 1000ULL);
+        }
+        FormatBytes(uploadBytesSent, uploadSentText, sizeof(uploadSentText));
+        FormatBytes(uploadTotalBytes, uploadTotalText, sizeof(uploadTotalText));
+        SbSnprintf(text, sizeof(text), "Current upload: %s / %s (%lu%%, %I64u.%I64u Mbps)",
+            uploadSentText,
+            uploadTotalText,
+            (unsigned long)uploadPercent,
+            uploadMbpsX10 / 10ULL,
+            uploadMbpsX10 % 10ULL);
+        SetWindowTextIfChanged(g_app.statsLabels[4], text);
+    } else if (processing && currentPath[0] != '\0') {
+        const char *slash = strrchr(currentPath, '\\');
+        SbSnprintf(text, sizeof(text), "Current file: %s", slash ? slash + 1 : currentPath);
+        SetWindowTextIfChanged(g_app.statsLabels[4], text);
+    } else {
+        SetWindowTextIfChanged(g_app.statsLabels[4], "");
+    }
     SbSnprintf(text, sizeof(text), "Files found: %s", foundText);
     SetWindowTextIfChanged(g_app.statsLabels[5], text);
     SbSnprintf(text, sizeof(text), "Uploaded this session: %s", uploadedText);
