@@ -11,6 +11,7 @@ namespace Swallowtail\Service;
 
 use AppConfigurationStore;
 use InterfaceDB;
+use Throwable;
 
 final class SwallowtailProfileDataService
 {
@@ -19,6 +20,7 @@ final class SwallowtailProfileDataService
     private const DEFAULT_PROFILE_QUEUE = 'swallowtail:metadata:profile_urgent';
     private const PROFILE_SECTION_MAX_LENGTH = 64;
     private const PROFILE_KEY_MAX_LENGTH = 191;
+    private const PROFILE_REVISION_INSERT_ATTEMPTS = 3;
 
     private object $redis;
 
@@ -211,33 +213,32 @@ final class SwallowtailProfileDataService
         return (int)InterfaceDB::transaction(function () use ($photoId, $changed): int {
             $inserted = 0;
             foreach ($changed as $row) {
-                $revision = (int)InterfaceDB::fetchColumn(
-                    "SELECT COALESCE(MAX(revision), 0) + 1
-                     FROM photo_profile_data
-                     WHERE photo_id = :photo_id
-                       AND type = :type
-                       AND `key` = :key",
-                    [
-                        'photo_id' => $photoId,
-                        'type' => $row['type'],
-                        'key' => $row['key'],
-                    ]
-                );
-                InterfaceDB::prepareExecute(
-                    "INSERT INTO photo_profile_data (
-                        photo_id, revision, type, `key`, value, value_type
-                    ) VALUES (
-                        :photo_id, :revision, :type, :key, :value, :value_type
-                    )",
-                    [
-                        'photo_id' => $photoId,
-                        'revision' => $revision,
-                        'type' => $row['type'],
-                        'key' => $row['key'],
-                        'value' => $row['value'],
-                        'value_type' => $row['value_type'],
-                    ]
-                );
+                for ($attempt = 1; $attempt <= self::PROFILE_REVISION_INSERT_ATTEMPTS; $attempt++) {
+                    $revision = $this->nextRevision($photoId, $row['type'], $row['key']);
+                    try {
+                        InterfaceDB::prepareExecute(
+                            "INSERT INTO photo_profile_data (
+                                photo_id, revision, type, `key`, value, value_type
+                            ) VALUES (
+                                :photo_id, :revision, :type, :key, :value, :value_type
+                            )",
+                            [
+                                'photo_id' => $photoId,
+                                'revision' => $revision,
+                                'type' => $row['type'],
+                                'key' => $row['key'],
+                                'value' => $row['value'],
+                                'value_type' => $row['value_type'],
+                            ]
+                        );
+                        break;
+                    } catch (Throwable $exception) {
+                        if ($attempt >= self::PROFILE_REVISION_INSERT_ATTEMPTS
+                            || !$this->revisionExists($photoId, $row['type'], $row['key'], $revision)) {
+                            throw $exception;
+                        }
+                    }
+                }
                 $inserted++;
             }
 
@@ -331,14 +332,57 @@ final class SwallowtailProfileDataService
 
     public function setValue(int $photoId, string $type, string $key, mixed $value, string $valueType): void
     {
+        $type = substr(trim($type), 0, self::PROFILE_SECTION_MAX_LENGTH);
+        $key = substr(trim($key), 0, self::PROFILE_KEY_MAX_LENGTH);
+        if ($photoId <= 0 || $type === '' || $key === '') {
+            return;
+        }
         $valueType = $this->normaliseValueType($valueType);
         $storedValue = $value === null ? null : (string)$value;
+        $params = [
+            'photo_id' => $photoId,
+            'type' => $type,
+            'key' => $key,
+            'value' => $storedValue,
+            'value_type' => $valueType,
+        ];
+        InterfaceDB::prepareExecute(
+            "UPDATE photo_profile_data
+             SET value = :value,
+                 value_type = :value_type,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE photo_id = :photo_id
+               AND type = :type
+               AND `key` = :key
+               AND revision = 0",
+            $params
+        );
         $existing = InterfaceDB::fetchColumn(
             "SELECT id FROM photo_profile_data WHERE photo_id = :photo_id AND type = :type AND `key` = :key AND revision = 0 LIMIT 1",
-            ['photo_id' => $photoId, 'type' => $type, 'key' => $key]
+            $params
         );
 
         if ($existing !== false && $existing !== null) {
+            return;
+        }
+
+        try {
+            InterfaceDB::prepareExecute(
+                "INSERT INTO photo_profile_data (
+                    photo_id, revision, type, `key`, value, value_type
+                ) VALUES (
+                    :photo_id, 0, :type, :key, :value, :value_type
+                )",
+                $params
+            );
+        } catch (Throwable $exception) {
+            $existing = InterfaceDB::fetchColumn(
+                "SELECT id FROM photo_profile_data WHERE photo_id = :photo_id AND type = :type AND `key` = :key AND revision = 0 LIMIT 1",
+                $params
+            );
+            if ($existing === false || $existing === null) {
+                throw $exception;
+            }
             InterfaceDB::prepareExecute(
                 "UPDATE photo_profile_data
                  SET value = :value,
@@ -347,23 +391,35 @@ final class SwallowtailProfileDataService
                  WHERE id = :id",
                 ['id' => (int)$existing, 'value' => $storedValue, 'value_type' => $valueType]
             );
-            return;
         }
+    }
 
-        InterfaceDB::prepareExecute(
-            "INSERT INTO photo_profile_data (
-                photo_id, revision, type, `key`, value, value_type
-            ) VALUES (
-                :photo_id, 0, :type, :key, :value, :value_type
-            )",
-            [
-                'photo_id' => $photoId,
-                'type' => substr($type, 0, self::PROFILE_SECTION_MAX_LENGTH),
-                'key' => substr($key, 0, self::PROFILE_KEY_MAX_LENGTH),
-                'value' => $storedValue,
-                'value_type' => $valueType,
-            ]
+    private function nextRevision(int $photoId, string $type, string $key): int
+    {
+        $lockingRead = InterfaceDB::isOdbcDriver() ? ' FOR UPDATE' : '';
+
+        return (int)InterfaceDB::fetchColumn(
+            "SELECT COALESCE(MAX(revision), 0) + 1
+             FROM photo_profile_data
+             WHERE photo_id = :photo_id
+               AND type = :type
+               AND `key` = :key" . $lockingRead,
+            ['photo_id' => $photoId, 'type' => $type, 'key' => $key]
         );
+    }
+
+    private function revisionExists(int $photoId, string $type, string $key, int $revision): bool
+    {
+        return InterfaceDB::fetchColumn(
+            "SELECT id
+             FROM photo_profile_data
+             WHERE photo_id = :photo_id
+               AND type = :type
+               AND `key` = :key
+               AND revision = :revision
+             LIMIT 1",
+            ['photo_id' => $photoId, 'type' => $type, 'key' => $key, 'revision' => $revision]
+        ) !== false;
     }
 
     private function identityKey(string $section, string $key): string

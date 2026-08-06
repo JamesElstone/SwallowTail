@@ -2690,9 +2690,50 @@ $harness->check(SwallowtailPhotoIngestService::class, 'detects duplicate RAW upl
     $harness->assertSame((int)$created['photo_id'], (int)$duplicate['photo_id']);
     $harness->assertSame(1, InterfaceDB::tableRowCount('photos'));
     $harness->assertSame(1, InterfaceDB::countWhere('photo_audit', 'action_type', 'raw_duplicate_detected'));
+    $harness->assertSame(3, InterfaceDB::countWhere('photo_conversion_jobs', 'photo_id', (int)$created['photo_id']));
+    $harness->assertSame(1, (int)InterfaceDB::fetchColumn(
+        "SELECT COUNT(*) FROM photo_profile_data
+         WHERE photo_id = :photo_id
+           AND type = 'swallowtail'
+           AND `key` = 'status'
+           AND revision = 0",
+        ['photo_id' => (int)$created['photo_id']]
+    ));
 
     @unlink($first);
     @unlink($second);
+});
+
+$harness->check(SwallowtailPhotoIngestService::class, 'rolls back atomic ingest state when initial profile creation fails', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
+    $swallowtailCreateSqliteSchema();
+    InterfaceDB::execute(
+        "CREATE TRIGGER reject_initial_profile_status
+         BEFORE INSERT ON photo_profile_data
+         WHEN NEW.type = 'swallowtail' AND NEW.`key` = 'status'
+         BEGIN
+             SELECT RAISE(ABORT, 'forced initial profile failure');
+         END"
+    );
+
+    $source = swallowtail_backend_test_temp_file('swallowtail-test-');
+    if (!is_string($source)) {
+        throw new RuntimeException('Unable to create RAW fixture.');
+    }
+    $swallowtailWriteRawFixture($source, 'cr2');
+
+    $failed = false;
+    try {
+        (new SwallowtailPhotoIngestService())->ingestLocalRawFile($source, 'IMG_ATOMIC_FAILURE.CR2');
+    } catch (RuntimeException $exception) {
+        $failed = str_contains($exception->getMessage(), 'forced initial profile failure');
+    }
+
+    $harness->assertTrue($failed);
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photos'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photo_conversion_jobs'));
+    $harness->assertSame(0, InterfaceDB::tableRowCount('photo_profile_data'));
+
+    @unlink($source);
 });
 
 $harness->check(SwallowtailQuickChecksumApiService::class, 'reports whether a CR2 SHA-256 checksum already exists', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailWriteRawFixture): void {
@@ -4009,6 +4050,27 @@ $harness->check(SwallowtailCombinedProfileService::class, 'requests metadata pro
     } finally {
         \Swallowtail\Store\SwallowtailConfigurationStore::set('redis.metadata_profile_queue', 'swallowtail:metadata:profile_urgent');
     }
+});
+
+$harness->check(SwallowtailProfileDataService::class, 'updates revision-zero values without creating duplicate rows', function () use ($harness, $swallowtailCreateSqliteSchema): void {
+    $swallowtailCreateSqliteSchema();
+    $service = new SwallowtailProfileDataService();
+    $type = str_repeat('section-', 12);
+    $key = str_repeat('setting-', 32);
+
+    $service->setValue(81, $type, $key, 'queued', 'string');
+    $service->setValue(81, $type, $key, 'processed', 'string');
+
+    $rows = InterfaceDB::fetchAll(
+        "SELECT type, `key`, value, revision
+         FROM photo_profile_data
+         WHERE photo_id = 81"
+    );
+    $harness->assertCount(1, $rows);
+    $harness->assertSame(64, strlen((string)$rows[0]['type']));
+    $harness->assertSame(191, strlen((string)$rows[0]['key']));
+    $harness->assertSame('processed', (string)$rows[0]['value']);
+    $harness->assertSame(0, (int)$rows[0]['revision']);
 });
 
 $harness->check(SwallowtailCombinedProfilePreviewService::class, 'selects accessible example photos without derivative assets', function () use ($harness, $swallowtailCreateSqliteSchema, $swallowtailCreateSpiceBushUserSchema): void {

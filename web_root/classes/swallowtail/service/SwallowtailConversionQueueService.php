@@ -542,6 +542,16 @@ final class SwallowtailConversionQueueService
         return $jobs;
     }
 
+    /**
+     * Notify workers about jobs that were created inside a caller-owned transaction.
+     *
+     * @param array<string, array<string, mixed>> $jobs
+     */
+    public function notifyQueuedJobs(array $jobs): void
+    {
+        $this->notifyRedisForJobs($jobs);
+    }
+
     public function notifyQueuedJob(int $jobId, string $imageType, string|int $priority): void
     {
         $jobId = max(0, $jobId);

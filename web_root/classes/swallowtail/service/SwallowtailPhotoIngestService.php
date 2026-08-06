@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Swallowtail\Service;
 
+use InterfaceDB;
 use RuntimeException;
 
 final class SwallowtailPhotoIngestService
@@ -124,34 +125,18 @@ final class SwallowtailPhotoIngestService
         }
 
         $existing = $this->photoLibraryService->photoByChecksum($sha256);
-        if ($existing !== null) {
-            $recorded = $this->photoLibraryService->recordRawUpload([
-                'sha256' => $sha256,
-                'original_filename' => $originalFilename,
-                'uploaded_via' => (string)($context['uploaded_via'] ?? 'api'),
-                'uploaded_by_user_id' => $context['uploaded_by_user_id'] ?? null,
-                'upload_token_id' => $context['upload_token_id'] ?? null,
-                'request_metadata' => (array)($context['request_metadata'] ?? []),
-            ]);
-
-            return [
-                'success' => true,
-                'status' => 'duplicate',
-                'duplicate' => true,
-                'photo_id' => (int)($recorded['photo']['id'] ?? $existing['id'] ?? 0),
-                'sha256' => $sha256,
-                'warnings' => $validation['warnings'],
+        $stored = $existing === null
+            ? $this->storageService->storeSourceFile(
+                $sourcePath,
+                $sha256,
+                !empty($context['move_source']),
+                $this->contextStorageBaseLocation($context)
+            )
+            : [
+                'bytes' => (int)($existing['original_bytes'] ?? filesize($sourcePath)),
+                'storage_base_location' => (string)($existing['storage_base_location'] ?? ''),
             ];
-        }
-
-        $stored = $this->storageService->storeSourceFile(
-            $sourcePath,
-            $sha256,
-            !empty($context['move_source']),
-            $this->contextStorageBaseLocation($context)
-        );
-
-        $recorded = $this->photoLibraryService->recordRawUpload([
+        $upload = [
             'sha256' => $sha256,
             'original_filename' => $originalFilename,
             'extension' => $validation['extension'],
@@ -161,10 +146,20 @@ final class SwallowtailPhotoIngestService
             'uploaded_by_user_id' => $context['uploaded_by_user_id'] ?? null,
             'upload_token_id' => $context['upload_token_id'] ?? null,
             'request_metadata' => (array)($context['request_metadata'] ?? []),
-        ]);
+        ];
 
+        try {
+            $initialised = $this->initialiseUploadTransaction($upload);
+        } catch (RuntimeException $exception) {
+            if ($this->photoLibraryService->photoByChecksum($sha256) === null) {
+                throw $exception;
+            }
+            $initialised = $this->initialiseUploadTransaction($upload);
+        }
+
+        $recorded = (array)$initialised['recorded'];
         $photoId = (int)($recorded['photo']['id'] ?? 0);
-        $conversionJobs = $this->conversionQueueService->enqueueRawConversionJobs($photoId);
+        $conversionJobs = (array)$initialised['conversion_jobs'];
         $firstJobId = null;
         foreach ($conversionJobs as $job) {
             $jobId = (int)($job['job_id'] ?? 0);
@@ -173,19 +168,74 @@ final class SwallowtailPhotoIngestService
                 break;
             }
         }
-        $this->profileDataService->requestUrgentProfile((array)($recorded['photo'] ?? []), 'raw_upload');
+        $this->conversionQueueService->notifyQueuedJobs($conversionJobs);
+        $profileStatus = (array)($initialised['profile_status'] ?? []);
+        if (empty($profileStatus['ready']) && !$this->profileDataService->notifyUrgentProfile($photoId, 'raw_upload')) {
+            error_log('SwallowTail RAW upload committed but the urgent profile worker notification failed for photo ' . $photoId . '.');
+        }
+
+        $duplicate = !empty($recorded['duplicate']);
 
         return [
             'success' => true,
-            'status' => 'uploaded',
-            'duplicate' => false,
+            'status' => $duplicate ? 'duplicate' : 'uploaded',
+            'duplicate' => $duplicate,
             'photo_id' => $photoId,
             'sha256' => $sha256,
-            'storage_base_location' => $stored['storage_base_location'] ?? '',
+            'storage_base_location' => (string)($recorded['photo']['storage_base_location'] ?? $stored['storage_base_location'] ?? ''),
             'conversion_job_id' => $firstJobId,
             'conversion_jobs' => $conversionJobs,
             'warnings' => $validation['warnings'],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $upload
+     * @return array{recorded: array<string, mixed>, conversion_jobs: array<string, mixed>, profile_status: array<string, mixed>}
+     */
+    private function initialiseUploadTransaction(array $upload): array
+    {
+        return (array)InterfaceDB::transaction(function () use ($upload): array {
+            $recorded = $this->photoLibraryService->recordRawUpload($upload);
+            $photo = (array)($recorded['photo'] ?? []);
+            $photoId = max(0, (int)($photo['id'] ?? 0));
+            if ($photoId <= 0) {
+                throw new RuntimeException('Uploaded photo row was not available for initialisation.');
+            }
+
+            $missingTypes = $this->missingInitialConversionTypes($photoId);
+            $conversionJobs = $missingTypes === []
+                ? []
+                : $this->conversionQueueService->enqueueRawConversionJobsForTypes($photoId, $missingTypes);
+            $profileStatus = $this->profileDataService->ensureQueued($photo, true);
+
+            return [
+                'recorded' => $recorded,
+                'conversion_jobs' => $conversionJobs,
+                'profile_status' => $profileStatus,
+            ];
+        });
+    }
+
+    /** @return array<int, string> */
+    private function missingInitialConversionTypes(int $photoId): array
+    {
+        $existing = InterfaceDB::fetchAll(
+            "SELECT DISTINCT image_type
+             FROM photo_conversion_jobs
+             WHERE photo_id = :photo_id
+               AND image_type IN ('embedded', 'thumbnail', 'original')",
+            ['photo_id' => $photoId]
+        );
+        $present = [];
+        foreach ($existing as $row) {
+            $present[(string)($row['image_type'] ?? '')] = true;
+        }
+
+        return array_values(array_filter(
+            ['embedded', 'thumbnail', 'original'],
+            static fn(string $imageType): bool => empty($present[$imageType])
+        ));
     }
 
     public function validateRawFile(string $sourcePath, string $originalFilename, ?int $maxRawBytes = null): array
