@@ -58,6 +58,7 @@ typedef unsigned __int64 U64;
 
 typedef struct QueueItem {
     DWORD id;
+    U64 modifiedTime;
     char path[MAX_PATH];
 } QueueItem;
 
@@ -1039,11 +1040,22 @@ static void MigrateUploadedCache(void)
     }
 }
 
-static int QueuePushInternal(DWORD id, const char *path, int persist, int countFound)
+static U64 FileModifiedTimeOrZero(const char *path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    ULARGE_INTEGER modified;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) return 0;
+    modified.LowPart = data.ftLastWriteTime.dwLowDateTime;
+    modified.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    return modified.QuadPart;
+}
+
+static int QueuePushInternal(DWORD id, const char *path, int persist, int countFound, int newestFirst)
 {
     int result = 0;
     DWORD queueCount = 0;
     DWORD queueCapacity = 0;
+    U64 modifiedTime = newestFirst ? FileModifiedTimeOrZero(path) : 0;
     if (id == 0) id = AllocateQueueId();
     EnterCriticalSection(&g_app.lock);
     if (!QueueContainsLocked(path)) {
@@ -1058,8 +1070,16 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
             }
         }
         if (g_app.queueCount < g_app.queueCapacity) {
-            g_app.queue[g_app.queueCount].id = id;
-            SafeCopy(g_app.queue[g_app.queueCount].path, sizeof(g_app.queue[g_app.queueCount].path), path);
+            DWORD insertIndex = g_app.queueCount;
+            if (newestFirst && modifiedTime > 0) {
+                while (insertIndex > 0 && g_app.queue[insertIndex - 1].modifiedTime < modifiedTime) {
+                    g_app.queue[insertIndex] = g_app.queue[insertIndex - 1];
+                    insertIndex--;
+                }
+            }
+            g_app.queue[insertIndex].id = id;
+            g_app.queue[insertIndex].modifiedTime = modifiedTime;
+            SafeCopy(g_app.queue[insertIndex].path, sizeof(g_app.queue[insertIndex].path), path);
             g_app.queueCount++;
             if (persist) {
                 AppendQueueRecord(id, path);
@@ -1081,7 +1101,7 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
         return result;
     }
     if (result == 1) {
-        LogMessage("Queue add: id=%lu path=%s persist=%s count_found=%s", (unsigned long)id, path, persist ? "yes" : "no", countFound ? "yes" : "no");
+        LogMessage("Queue add: id=%lu path=%s persist=%s count_found=%s priority=%s modified_time=%I64u", (unsigned long)id, path, persist ? "yes" : "no", countFound ? "yes" : "no", newestFirst ? "newest_first" : "back", modifiedTime);
     } else if (result == -1) {
         LogMessage("Queue duplicate suppressed: path=%s", path);
     } else {
@@ -1092,12 +1112,12 @@ static int QueuePushInternal(DWORD id, const char *path, int persist, int countF
 
 static void QueuePush(const char *path)
 {
-    QueuePushInternal(0, path, 1, 1);
+    QueuePushInternal(0, path, 1, 1, 1);
 }
 
 static void QueueRequeue(DWORD id, const char *path)
 {
-    QueuePushInternal(id, path, 0, 0);
+    QueuePushInternal(id, path, 0, 0, 0);
 }
 
 static int QueuePop(DWORD *id, char *path, DWORD pathSize)
@@ -1252,7 +1272,7 @@ static void LoadQueue(void)
                 if (lineLen > 0 && ParseQueueLine(line, &id, path, sizeof(path), 1)) {
                     if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
                     if (!DoneIdContains(doneIds, doneCount, id)) {
-                        QueuePushInternal(id, path, 0, 0);
+                        QueuePushInternal(id, path, 0, 0, 1);
                         loaded++;
                     } else {
                         skipped++;
@@ -1275,7 +1295,7 @@ static void LoadQueue(void)
         if (ParseQueueLine(line, &id, path, sizeof(path), 1)) {
             if (id >= g_app.nextQueueId) g_app.nextQueueId = id + 1;
             if (!DoneIdContains(doneIds, doneCount, id)) {
-                QueuePushInternal(id, path, 0, 0);
+                QueuePushInternal(id, path, 0, 0, 1);
                 loaded++;
             } else {
                 skipped++;
@@ -2239,7 +2259,7 @@ static void ScanFolder(const char *folder, int depth, int maxDepth, ScanStats *s
                 stats->files++;
                 stats->cr2++;
             }
-            queued = QueuePushInternal(0, child, 1, 1);
+            queued = QueuePushInternal(0, child, 1, 1, 1);
             if (stats) {
                 if (queued == 1) stats->queued++;
                 else if (queued == -1) stats->duplicateQueue++;

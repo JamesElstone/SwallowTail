@@ -186,6 +186,8 @@ Show textual statistics for the current run:
 - The queue journal is append-oriented so large queues do not rewrite the whole
   queue file after every processed CR2. Windows compacts the journal
   periodically.
+- Pending files are processed newest first using their filesystem last-modified
+  time. Windows rebuilds that priority order when loading a persisted queue.
 - Raw upload failures stay in the queue and are retried from the back of the
   queue after a short delay. SpiceBush only completes a queue item after a
   confirmed local duplicate, server duplicate, successful upload, or explicit
