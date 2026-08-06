@@ -50,7 +50,7 @@
 #define RAW_UPLOAD_BUFFER_BYTES (4 * 1024 * 1024)
 #define RAW_UPLOAD_RETRY_DELAY_MS 30000
 #define RAW_UPLOAD_WRITE_CHUNK_BYTES (256 * 1024)
-#define PREPARED_UPLOAD_LOOKAHEAD 32
+#define PREPARED_UPLOAD_LOOKAHEAD 128
 #define PREPARED_UPLOAD_CAPACITY (PREPARED_UPLOAD_LOOKAHEAD + 1)
 #define UPLOAD_TIME_WINDOW_SIZE 30
 #define PROCESS_STAGE_IDLE 0
@@ -59,6 +59,7 @@
 #define PROCESS_STAGE_SERVER_CHECK 3
 #define PROCESS_STAGE_UPLOAD 4
 #define PROCESS_STAGE_RETRY_WAIT 5
+#define PROCESS_STAGE_BUFFER_WAIT 6
 #define UPLOAD_STAGE_IDLE 0
 #define UPLOAD_STAGE_SERVER_CHECK 1
 #define UPLOAD_STAGE_BODY 2
@@ -209,6 +210,7 @@ static int ShutdownRequested(void);
 static DWORD ClearUploadedHistoryCache(void);
 static U64 ParseU64(const char *text);
 static void RecordSuccessfulUpload(DWORD elapsedMillis);
+static void SetProcessingStage(LONG stage, U64 uploadTotalBytes);
 static DWORD PendingQueueCountForDrive(char letter, DWORD volumeSerial, int volumeSerialKnown, int *processing);
 static int SourceDriveUnavailable(const char *path, char *letterOut);
 static void WarnIfUnavailableSourceDriveHasPendingWork(const char *path);
@@ -1292,10 +1294,11 @@ static int QueuePop(QueueItem *item)
     return hasItem;
 }
 
-static int PreparedPush(const PreparedUpload *item, int retry)
+static int PreparedPush(const PreparedUpload *item, int retry, int reportVerificationWait)
 {
     DWORD limit = retry ? PREPARED_UPLOAD_CAPACITY : PREPARED_UPLOAD_LOOKAHEAD;
     HANDLE waits[2];
+    int waitReported = 0;
     if (!item) return 0;
     waits[0] = g_app.stopEvent;
     waits[1] = g_app.uploadSpaceEvent;
@@ -1311,6 +1314,19 @@ static int PreparedPush(const PreparedUpload *item, int retry)
             SetEvent(g_app.uploadQueueEvent);
             PostMessageA(g_app.mainWindow, WM_REFRESH_STATS, 0, 0);
             return 1;
+        }
+        if (reportVerificationWait && !waitReported) {
+            DWORD preparedCount;
+            SetProcessingStage(PROCESS_STAGE_BUFFER_WAIT, 0);
+            EnterCriticalSection(&g_app.lock);
+            preparedCount = g_app.preparedCount;
+            LeaveCriticalSection(&g_app.lock);
+            LogMessage("Verification waiting for prepared upload buffer space: queue_id=%lu path=%s prepared_buffer=%lu capacity=%lu",
+                (unsigned long)item->queueId,
+                item->path,
+                (unsigned long)preparedCount,
+                (unsigned long)limit);
+            waitReported = 1;
         }
         if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0) break;
     }
@@ -2228,6 +2244,7 @@ static const char *ProcessingStageLabel(LONG stage)
     case PROCESS_STAGE_SERVER_CHECK: return "Checking server";
     case PROCESS_STAGE_UPLOAD: return "Uploading";
     case PROCESS_STAGE_RETRY_WAIT: return "Waiting to retry";
+    case PROCESS_STAGE_BUFFER_WAIT: return "Waiting for upload buffer space";
     default: return "Processing";
     }
 }
@@ -2601,7 +2618,7 @@ static void ProcessPath(DWORD queueId, const char *path, DWORD volumeSerial, int
     prepared.sizeBytes = sizeBytes;
     SafeCopy(prepared.hash, sizeof(prepared.hash), hash);
     SafeCopy(prepared.path, sizeof(prepared.path), path);
-    if (PreparedPush(&prepared, 0)) {
+    if (PreparedPush(&prepared, 0, 1)) {
         LogMessage("Verification prepared upload: queue_id=%lu path=%s sha256=%s size=%I64u prepared_buffer=%lu",
             (unsigned long)queueId,
             path,
@@ -2711,13 +2728,13 @@ static DWORD WINAPI UploaderThread(LPVOID param)
                 item.notBefore = 0;
                 LogMessage("Upload source interrupted; returning to prepared queue without failure: path=%s sha256=%s size=%I64u", item.path, item.hash, item.sizeBytes);
                 if (SourceDriveUnavailable(item.path, NULL)) MarkSourceUnavailable(item.path);
-                PreparedPush(&item, 1);
+                PreparedPush(&item, 1, 0);
             } else {
                 InterlockedIncrement(&g_app.totalFailed);
                 item.notBefore = GetTickCount() + RAW_UPLOAD_RETRY_DELAY_MS;
                 LogMessage("Network/server upload failed; retry moved to back: path=%s sha256=%s size=%I64u delay_ms=%lu",
                     item.path, item.hash, item.sizeBytes, (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);
-                PreparedPush(&item, 1);
+                PreparedPush(&item, 1, 0);
             }
             ClearUploadActive();
             if (WaitForSingleObject(g_app.stopEvent, 0) == WAIT_OBJECT_0) return 0;
@@ -3210,6 +3227,9 @@ static void BuildTrayTooltip(char *tip, DWORD tipSize)
     if (shutdownRequested && (processing || uploading)) status = "Exiting after current work";
     else if (shutdownRequested) status = "Exiting";
     else if (uploadsPaused) status = "Paused";
+    else if (uploading && processing && processingStage == PROCESS_STAGE_BUFFER_WAIT) {
+        status = uploadStage == UPLOAD_STAGE_BODY ? "Uploading; buffer full" : "Final check; buffer full";
+    }
     else if (uploading && processing) status = uploadStage == UPLOAD_STAGE_BODY ? "Uploading and checking" : "Final-checking and checking";
     else if (uploading) status = uploadStage == UPLOAD_STAGE_BODY ? "Uploading" : "Final server check";
     else if (processing) status = ProcessingStageLabel(processingStage);
@@ -3788,7 +3808,7 @@ static void RefreshStats(void)
     SetWindowTextIfChanged(g_app.statsLabels[1], text);
     SbSnprintf(text, sizeof(text), "Candidate resolution progress: %ld%%", progress);
     SetWindowTextIfChanged(g_app.statsLabels[2], text);
-    if (processing && checkPath[0]) {
+    if (processing && checkPath[0] && stage != PROCESS_STAGE_BUFFER_WAIT) {
         const char *slash = strrchr(checkPath, '\\');
         SbSnprintf(text, sizeof(text), "Candidates awaiting checksum/dedupe: %s (checking %s)", candidateText, slash ? slash + 1 : checkPath);
     } else {
@@ -3815,7 +3835,14 @@ static void RefreshStats(void)
     SetWindowTextIfChanged(g_app.statsLabels[7], text);
     SbSnprintf(text, sizeof(text), "Already uploaded (remote): %s", remoteText);
     SetWindowTextIfChanged(g_app.statsLabels[8], text);
-    SbSnprintf(text, sizeof(text), "Confirmed uploads waiting: %s", preparedText);
+    if (processing && checkPath[0] && stage == PROCESS_STAGE_BUFFER_WAIT) {
+        const char *slash = strrchr(checkPath, '\\');
+        SbSnprintf(text, sizeof(text), "Confirmed uploads waiting: %s buffered; %s ready, waiting for space",
+            preparedText,
+            slash ? slash + 1 : checkPath);
+    } else {
+        SbSnprintf(text, sizeof(text), "Confirmed uploads waiting: %s", preparedText);
+    }
     SetWindowTextIfChanged(g_app.statsLabels[9], text);
     SbSnprintf(text, sizeof(text), "Network/server upload failures: %s", failedText);
     SetWindowTextIfChanged(g_app.statsLabels[10], text);
@@ -4272,7 +4299,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR cmdLine, int sh
             g_app.uploaderThread ? "yes" : "no",
             GetLastError());
     } else {
-        LogMessage("SpiceBush pipeline started: verifier_workers=1 uploader_workers=1 prepared_capacity=%u", PREPARED_UPLOAD_LOOKAHEAD);
+        LogMessage("SpiceBush pipeline started: verifier_workers=1 uploader_workers=1 prepared_capacity=%u prepared_entry_bytes=%u prepared_memory_bytes=%u",
+            PREPARED_UPLOAD_LOOKAHEAD,
+            (unsigned int)sizeof(PreparedUpload),
+            (unsigned int)sizeof(g_app.prepared));
     }
     if (g_app.uploadToken[0] == '\0' || g_app.apiUrl[0] == '\0') ShowRegisterWindow(1);
     else StartPingCheck();
