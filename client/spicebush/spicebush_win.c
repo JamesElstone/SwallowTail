@@ -1401,18 +1401,20 @@ static int ParseUrl(const char *url, ParsedUrl *parsed)
     return parsed->host[0] != '\0';
 }
 
-static int HttpSimpleRequest(const char *method, const char *url, const char *headers, const BYTE *body, DWORD bodyLen, DWORD *status, char *response, DWORD responseSize)
+static int HttpSimpleRequestDetailed(const char *method, const char *url, const char *headers, const BYTE *body, DWORD bodyLen, DWORD *status, char *response, DWORD responseSize, char *effectiveUrl, DWORD effectiveUrlSize)
 {
     ParsedUrl parsed;
     HINTERNET internet = NULL, connect = NULL, request = NULL;
     DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
     DWORD got, used = 0, statusSize = sizeof(DWORD);
     int ok = 0;
+    if (effectiveUrl && effectiveUrlSize > 0) SafeCopy(effectiveUrl, effectiveUrlSize, url);
     if (!ParseUrl(url, &parsed)) {
         LogMessage("HTTP %s failed before send: could not parse URL %s", method, url);
         return 0;
     }
     if (parsed.secure) flags |= INTERNET_FLAG_SECURE;
+    if (lstrcmpiA(method, "POST") == 0) flags |= INTERNET_FLAG_NO_AUTO_REDIRECT;
     internet = InternetOpenA("SpiceBush/1.0", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     if (!internet) {
         LogMessage("HTTP %s %s failed: InternetOpen error=%lu", method, url, GetLastError());
@@ -1432,6 +1434,14 @@ static int HttpSimpleRequest(const char *method, const char *url, const char *he
         LogMessage("HTTP %s %s failed: HttpSendRequest error=%lu header_length=%u body_length=%lu", method, url, GetLastError(), (unsigned)(headers ? lstrlenA(headers) : 0), bodyLen);
         goto done;
     }
+    if (effectiveUrl && effectiveUrlSize > 0) {
+        DWORD queriedUrlSize = effectiveUrlSize;
+        if (!InternetQueryOptionA(request, INTERNET_OPTION_URL, effectiveUrl, &queriedUrlSize)) {
+            SafeCopy(effectiveUrl, effectiveUrlSize, url);
+        } else {
+            effectiveUrl[effectiveUrlSize - 1] = '\0';
+        }
+    }
     *status = 0;
     HttpQueryInfoA(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, status, &statusSize, NULL);
     if (response && responseSize > 0) response[0] = '\0';
@@ -1446,6 +1456,11 @@ done:
     if (connect) InternetCloseHandle(connect);
     if (internet) InternetCloseHandle(internet);
     return ok;
+}
+
+static int HttpSimpleRequest(const char *method, const char *url, const char *headers, const BYTE *body, DWORD bodyLen, DWORD *status, char *response, DWORD responseSize)
+{
+    return HttpSimpleRequestDetailed(method, url, headers, body, bodyLen, status, response, responseSize, NULL, 0);
 }
 
 static int JsonStringValue(const char *json, const char *key, char *out, DWORD outSize)
@@ -1669,6 +1684,84 @@ static void BuildRegisterEndpoint(const char *siteUrl, char *endpoint, DWORD end
     } else {
         lstrcatA(endpoint, "/api/upload-register.php");
     }
+}
+
+static int IsRegisterEndpointUrl(const ParsedUrl *parsed)
+{
+    char path[2048];
+    char *query;
+    SafeCopy(path, sizeof(path), parsed->path);
+    query = strpbrk(path, "?#");
+    if (query) *query = '\0';
+    return EndsWithNoCase(path, "/api/upload-register.php");
+}
+
+static int ResolveRegisterEndpoint(const char *requestedEndpoint, char *resolvedEndpoint, DWORD resolvedEndpointSize, char *errorMessage, DWORD errorMessageSize)
+{
+    char response[1024];
+    char effectiveUrl[2048];
+    DWORD status = 0;
+    ParsedUrl requested;
+    ParsedUrl effective;
+
+    SafeCopy(resolvedEndpoint, resolvedEndpointSize, requestedEndpoint);
+    if (errorMessage && errorMessageSize > 0) errorMessage[0] = '\0';
+
+    if (!HttpSimpleRequestDetailed("GET", requestedEndpoint, NULL, NULL, 0, &status, response, sizeof(response), effectiveUrl, sizeof(effectiveUrl))) {
+        SafeCopy(errorMessage, errorMessageSize, "Could not resolve the registration URL before sending credentials.");
+        return 0;
+    }
+    if (lstrcmpA(requestedEndpoint, effectiveUrl) == 0) return 1;
+    if (!ParseUrl(requestedEndpoint, &requested) || !ParseUrl(effectiveUrl, &effective)) {
+        SafeCopy(errorMessage, errorMessageSize, "The registration URL redirected to an invalid URL.");
+        return 0;
+    }
+    if (lstrcmpiA(requested.host, effective.host) != 0) {
+        SbSnprintf(errorMessage, errorMessageSize, "The registration URL redirected to a different host. Enter the final site URL directly: %s", effectiveUrl);
+        return 0;
+    }
+    if (requested.secure && !effective.secure) {
+        SafeCopy(errorMessage, errorMessageSize, "The registration URL attempted to redirect from HTTPS to insecure HTTP.");
+        return 0;
+    }
+    if (!IsRegisterEndpointUrl(&effective)) {
+        SbSnprintf(errorMessage, errorMessageSize, "The registration URL redirected away from the SpiceBush registration API. Enter the final site URL directly: %s", effectiveUrl);
+        return 0;
+    }
+
+    SafeCopy(resolvedEndpoint, resolvedEndpointSize, effectiveUrl);
+    LogMessage("Registration endpoint resolved through redirect: requested=%s effective=%s", requestedEndpoint, resolvedEndpoint);
+    return 1;
+}
+
+static void SiteUrlFromRegisterEndpoint(const char *endpoint, char *siteUrl, DWORD siteUrlSize)
+{
+    static const char suffix[] = "/api/upload-register.php";
+    char *query;
+    size_t length;
+    SafeCopy(siteUrl, siteUrlSize, endpoint);
+    query = strpbrk(siteUrl, "?#");
+    if (query) *query = '\0';
+    length = strlen(siteUrl);
+    if (length >= sizeof(suffix) - 1 && EndsWithNoCase(siteUrl, suffix)) {
+        siteUrl[length - (sizeof(suffix) - 1)] = '\0';
+    }
+    TrimTrailingSlashes(siteUrl);
+}
+
+static void ApiUrlFromRegisterEndpoint(const char *endpoint, char *apiUrl, DWORD apiUrlSize)
+{
+    static const char suffix[] = "/upload-register.php";
+    char *query;
+    size_t length;
+    SafeCopy(apiUrl, apiUrlSize, endpoint);
+    query = strpbrk(apiUrl, "?#");
+    if (query) *query = '\0';
+    length = strlen(apiUrl);
+    if (length >= sizeof(suffix) - 1 && EndsWithNoCase(apiUrl, suffix)) {
+        apiUrl[length - (sizeof(suffix) - 1)] = '\0';
+    }
+    TrimTrailingSlashes(apiUrl);
 }
 
 static int CheckServerKnowsFile(const char *hash, U64 sizeBytes, DWORD *photoId)
@@ -3078,13 +3171,24 @@ typedef struct RegisterRequest {
 static DWORD WINAPI RegisterThread(LPVOID param)
 {
     RegisterRequest *rr = (RegisterRequest *)param;
-    char endpoint[2048], u[MAX_TEXT * 2], p[MAX_TEXT * 2], o[80], d[256], json[4096], headers[256], response[8192];
-    char token[MAX_TEXT], apiUrl[MAX_TEXT];
+    char requestedEndpoint[2048], endpoint[2048], canonicalSiteUrl[MAX_TEXT], u[MAX_TEXT * 2], p[MAX_TEXT * 2], o[80], d[256], json[4096], headers[256], response[8192];
+    char token[MAX_TEXT], responseApiUrl[MAX_TEXT], publicApiUrl[MAX_TEXT];
     char errorText[512];
     char *postedError = NULL;
     int requestOk;
     DWORD status = 0;
-    BuildRegisterEndpoint(rr->siteUrl, endpoint, sizeof(endpoint));
+    BuildRegisterEndpoint(rr->siteUrl, requestedEndpoint, sizeof(requestedEndpoint));
+    if (!ResolveRegisterEndpoint(requestedEndpoint, endpoint, sizeof(endpoint), errorText, sizeof(errorText))) {
+        postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 32);
+        if (postedError) {
+            SbSnprintf(postedError, lstrlenA(errorText) + 32, "Registration failed: %s", errorText);
+        }
+        PostMessageA(rr->hwnd, WM_REGISTER_DONE, 0, (LPARAM)postedError);
+        SecureZeroMemory(rr->password, sizeof(rr->password));
+        SecureZeroMemory(rr->otpCode, sizeof(rr->otpCode));
+        HeapFree(GetProcessHeap(), 0, rr);
+        return 0;
+    }
     JsonEscape(rr->username, u, sizeof(u));
     JsonEscape(rr->password, p, sizeof(p));
     JsonEscape(rr->otpCode, o, sizeof(o));
@@ -3096,14 +3200,40 @@ static DWORD WINAPI RegisterThread(LPVOID param)
     if (requestOk
         && status == 200
         && JsonStringValue(response, "token", token, sizeof(token))
-        && JsonStringValue(response, "api_url", apiUrl, sizeof(apiUrl))) {
-        SafeCopy(g_app.siteUrl, sizeof(g_app.siteUrl), rr->siteUrl);
-        SafeCopy(g_app.uploadToken, sizeof(g_app.uploadToken), token);
-        SafeCopy(g_app.apiUrl, sizeof(g_app.apiUrl), apiUrl);
-        SaveConfig();
-        PostMessageA(rr->hwnd, WM_REGISTER_DONE, 1, 0);
+        && JsonStringValue(response, "api_url", responseApiUrl, sizeof(responseApiUrl))) {
+        size_t configurationErrorSize;
+        SiteUrlFromRegisterEndpoint(endpoint, canonicalSiteUrl, sizeof(canonicalSiteUrl));
+        ApiUrlFromRegisterEndpoint(endpoint, publicApiUrl, sizeof(publicApiUrl));
+        if (publicApiUrl[0] != '\0' && lstrcmpiA(publicApiUrl, responseApiUrl) != 0) {
+            LogMessage("Registration response API URL differs from the public registration endpoint: response=%s expected=%s", responseApiUrl, publicApiUrl);
+            configurationErrorSize = strlen(responseApiUrl) + strlen(publicApiUrl) + strlen(canonicalSiteUrl) + 360;
+            postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, configurationErrorSize);
+            if (postedError) {
+                SbSnprintf(
+                    postedError,
+                    configurationErrorSize,
+                    "Registration credentials were accepted, but SwallowTail returned API URL \"%s\" instead of \"%s\". In SwallowTail, set \"External Base Web URL (Blank for Automatic)\" to \"%s/\" and register again.",
+                    responseApiUrl,
+                    publicApiUrl,
+                    canonicalSiteUrl
+                );
+            }
+            PostMessageA(rr->hwnd, WM_REGISTER_DONE, 0, (LPARAM)postedError);
+        } else {
+            SafeCopy(g_app.siteUrl, sizeof(g_app.siteUrl), canonicalSiteUrl[0] ? canonicalSiteUrl : rr->siteUrl);
+            SafeCopy(g_app.uploadToken, sizeof(g_app.uploadToken), token);
+            SafeCopy(g_app.apiUrl, sizeof(g_app.apiUrl), publicApiUrl[0] ? publicApiUrl : responseApiUrl);
+            SaveConfig();
+            PostMessageA(rr->hwnd, WM_REGISTER_DONE, 1, 0);
+        }
     } else {
-        if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
+        if (requestOk && (status == 301 || status == 302 || status == 303 || status == 307 || status == 308)) {
+            SafeCopy(errorText, sizeof(errorText), "The registration POST was redirected. Enter the final HTTPS site URL directly and try again.");
+            postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 32);
+            if (postedError) {
+                SbSnprintf(postedError, lstrlenA(errorText) + 32, "Registration failed: %s", errorText);
+            }
+        } else if (requestOk && JsonFirstArrayStringValue(response, "errors", errorText, sizeof(errorText))) {
             postedError = (char *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlenA(errorText) + 32);
             if (postedError) {
                 SbSnprintf(postedError, lstrlenA(errorText) + 32, "Registration failed: %s", errorText);

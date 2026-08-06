@@ -113,6 +113,17 @@ the INI file and uses them for upload-checksum and upload-raw API calls.
 The client sends both the bearer token and the legacy upload-token header for
 compatibility with older SwallowTail API builds.
 
+Before submitting registration credentials, the Windows client resolves any
+same-host redirect with a credential-free request. This lets an HTTP site URL
+that redirects to HTTPS register against the final endpoint without allowing
+the redirected POST to be changed into a GET. The final site URL is saved after
+registration. HTTPS-to-HTTP downgrades and cross-host redirects are rejected.
+The client also checks that the API base returned by SwallowTail matches the
+successful public registration endpoint. If a reverse-proxy deployment returns
+an internal or insecure API URL, registration remains open with an actionable
+message identifying the expected URL and the SwallowTail External Base Web URL
+setting that needs correction.
+
 ## FreeBSD Usage
 
 Register:
