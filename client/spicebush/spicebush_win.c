@@ -82,6 +82,7 @@ typedef struct PreparedUpload {
     DWORD queueId;
     DWORD notBefore;
     DWORD volumeSerial;
+    DWORD outstandingUploadFailures;
     U64 modifiedTime;
     U64 sizeBytes;
     BYTE volumeSerialKnown;
@@ -2650,6 +2651,25 @@ static void RecordSuccessfulUpload(DWORD elapsedMillis)
     LeaveCriticalSection(&g_app.lock);
 }
 
+static void ResolveOutstandingUploadFailures(PreparedUpload *item, const char *resolution)
+{
+    DWORD resolved;
+
+    if (!item || item->outstandingUploadFailures == 0) return;
+
+    resolved = item->outstandingUploadFailures;
+    item->outstandingUploadFailures = 0;
+    while (resolved > 0) {
+        InterlockedDecrement(&g_app.totalFailed);
+        resolved--;
+    }
+    LogMessage("Network/server upload failures resolved: path=%s sha256=%s resolution=%s remaining=%ld",
+        item->path,
+        item->hash,
+        resolution ? resolution : "success",
+        g_app.totalFailed);
+}
+
 static DWORD WINAPI ProcessorThread(LPVOID param)
 {
     HANDLE handles[2];
@@ -2703,6 +2723,7 @@ static DWORD WINAPI UploaderThread(LPVOID param)
             if (CheckServerKnowsFile(item.hash, item.sizeBytes, &photoId)) {
                 MarkUploadedStatus(item.hash, item.sizeBytes, photoId, "server_known", item.path);
                 InterlockedIncrement(&g_app.totalKnown);
+                ResolveOutstandingUploadFailures(&item, "server_known");
                 LogMessage("Upload avoided by final server dedupe: path=%s sha256=%s size=%I64u", item.path, item.hash, item.sizeBytes);
                 AppendQueueDone(item.queueId, "server_known_final");
                 CompactQueueIfNeeded();
@@ -2715,6 +2736,7 @@ static DWORD WINAPI UploaderThread(LPVOID param)
             if (uploadResult == RAW_UPLOAD_OK) {
                 DWORD elapsed = GetTickCount() - started;
                 RecordSuccessfulUpload(elapsed);
+                ResolveOutstandingUploadFailures(&item, "uploaded");
                 LogMessage("Upload worker completed: path=%s sha256=%s size=%I64u elapsed_ms=%lu", item.path, item.hash, item.sizeBytes, (unsigned long)elapsed);
                 AppendQueueDone(item.queueId, "uploaded");
                 CompactQueueIfNeeded();
@@ -2731,6 +2753,7 @@ static DWORD WINAPI UploaderThread(LPVOID param)
                 PreparedPush(&item, 1, 0);
             } else {
                 InterlockedIncrement(&g_app.totalFailed);
+                item.outstandingUploadFailures++;
                 item.notBefore = GetTickCount() + RAW_UPLOAD_RETRY_DELAY_MS;
                 LogMessage("Network/server upload failed; retry moved to back: path=%s sha256=%s size=%I64u delay_ms=%lu",
                     item.path, item.hash, item.sizeBytes, (unsigned long)RAW_UPLOAD_RETRY_DELAY_MS);

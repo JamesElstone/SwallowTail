@@ -198,11 +198,12 @@ Show textual statistics for the current run:
   immediately before every RAW transfer so another SpiceBush client winning
   the race is handled as a successful duplicate.
 - Statistics separately reports unchecked candidates, confirmed uploads,
-  active verification, active upload, source interruptions, and network/server
-  failures. During an upload it shows bytes sent, total bytes, percentage, and
-  average Mbps; the log records byte progress every 10 percent. The
-  known-upload ETA covers only confirmed uploads and explicitly excludes
-  unchecked candidates.
+  active verification, active upload, source interruptions, and unresolved
+  network/server upload failures. Failures are removed from the counter when
+  the affected file is subsequently uploaded or confirmed by server dedupe.
+  During an upload it shows bytes sent, total bytes, percentage, and average
+  Mbps; the log records byte progress every 10 percent. The known-upload ETA
+  covers only confirmed uploads and explicitly excludes unchecked candidates.
 - Tray Exit waits for the current operation to finish before closing. While it
   waits, the Statistics window and tray tooltip report that shutdown is pending.
 - Network/server upload failures return to the back of the prepared-upload
