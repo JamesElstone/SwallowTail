@@ -31,6 +31,7 @@ class MetadataWorker:
         self.last_rawtherapee_profile_scan_at = time.time()
         self.data_integrity_requested = True
         self.profiled_derivative_queue_requested = True
+        self.asset_retry_at: dict[int, float] = {}
 
     def request_shutdown(self) -> None:
         self.shutdown_requested.set()
@@ -91,7 +92,12 @@ class MetadataWorker:
         if profile_photo is None:
             profile_photo = self.db.next_unprofiled_photo()
             if profile_photo is None:
-                asset_job = self.db.next_unrecorded_image_asset_job() if hasattr(self.db, "next_unrecorded_image_asset_job") else None
+                now = time.monotonic()
+                self.asset_retry_at = {
+                    job_id: retry_at for job_id, retry_at in getattr(self, "asset_retry_at", {}).items()
+                    if retry_at > now
+                }
+                asset_job = self.db.next_unrecorded_image_asset_job(tuple(self.asset_retry_at)) if hasattr(self.db, "next_unrecorded_image_asset_job") else None
                 if asset_job is None:
                     if self.process_profiled_derivative_queue_batch():
                         self._touch_status()
@@ -101,9 +107,9 @@ class MetadataWorker:
                         return True
                     self.log.info("No metadata, profile, or asset records returned; worker idle")
                     return False
-                self.process_asset_job(asset_job)
+                recorded = self.process_asset_job(asset_job)
                 self._touch_status()
-                return True
+                return recorded
             self.log.info("Found uploaded photo without profile data; photo=%s", int(profile_photo.get("id") or 0))
         self.process_profile_photo(profile_photo)
         self._touch_status()
@@ -393,7 +399,7 @@ class MetadataWorker:
             "profile_signature": notification.profile_signature,
         })
 
-    def process_asset_job(self, job: dict[str, Any]) -> None:
+    def process_asset_job(self, job: dict[str, Any]) -> bool:
         photo_id = int(job.get("photo_id") or 0)
         job_id = int(job.get("job_id") or 0)
         image_type = str(job.get("image_type") or "").strip().lower()
@@ -403,6 +409,12 @@ class MetadataWorker:
         try:
             if photo_id <= 0 or image_type == "" or output_path_text == "":
                 raise RuntimeError("Asset notification did not include a valid photo, image type, and output path.")
+            if image_type == "rawtherapee_sample" and (
+                len(profile_signature) != 64
+                or any(character not in "0123456789abcdef" for character in profile_signature)
+                or not output_path.name.lower().endswith(f"_{profile_signature}.jpg")
+            ):
+                raise RuntimeError("RawTherapee sample output does not identify its profile variant; legacy shared outputs require review.")
             if not output_path.is_file():
                 raise RuntimeError(f"Asset output file was not found: {output_path}")
             stat = output_path.stat()
@@ -421,8 +433,18 @@ class MetadataWorker:
                 job_id,
             )
             self.log.info("Recorded image asset photo=%s image_type=%s job=%s path=%s", photo_id, image_type, job_id, output_path)
+            getattr(self, "asset_retry_at", {}).pop(job_id, None)
+            return True
         except Exception as exc:
+            if job_id > 0:
+                if not hasattr(self, "asset_retry_at"):
+                    self.asset_retry_at = {}
+                self.asset_retry_at[job_id] = time.monotonic() + max(60, self.config.worker.retry_delay_seconds)
+                # Bound SQL parameters and memory even when many historical jobs fail.
+                if len(self.asset_retry_at) > 256:
+                    self.asset_retry_at.pop(next(iter(self.asset_retry_at)))
             self.log.warning("Image asset recording failed for photo=%s image_type=%s job=%s: %s", photo_id, image_type, job_id, exc)
+            return False
 
     def source_path(self, photo: dict[str, Any]) -> Path:
         return self.image_path(photo, "source")

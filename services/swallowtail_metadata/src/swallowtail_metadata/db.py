@@ -395,11 +395,15 @@ class MetadataDatabase:
         )
         self.connection.commit()
 
-    def next_unrecorded_image_asset_job(self) -> dict[str, Any] | None:
+    def next_unrecorded_image_asset_job(self, excluded_job_ids: tuple[int, ...] = ()) -> dict[str, Any] | None:
         if not self._table_exists("photo_image_assets"):
             return None
+        excluded_job_ids = tuple(int(job_id) for job_id in excluded_job_ids)
+        exclusion_sql = ""
+        if excluded_job_ids:
+            exclusion_sql = " AND job.id NOT IN (" + ", ".join(["%s"] * len(excluded_job_ids)) + ")"
         row = self._fetchone(
-            """
+            f"""
             SELECT job.id AS job_id,
                    job.photo_id,
                    job.image_type,
@@ -409,10 +413,11 @@ class MetadataDatabase:
               LEFT JOIN photo_image_assets asset
                 ON asset.photo_id = job.photo_id
                AND asset.image_type = job.image_type
-               AND (
-                   job.image_type <> 'rawtherapee_sample'
-                   OR asset.asset_variant_key = job.profile_signature
-               )
+               AND asset.asset_variant_key = CASE
+                   WHEN job.image_type = 'rawtherapee_sample'
+                   THEN CONVERT(job.profile_signature USING ascii) COLLATE ascii_bin
+                   ELSE _ascii'' COLLATE ascii_bin
+               END
              WHERE job.status = 'succeeded'
                AND job.image_type IN ('embedded', 'thumbnail', 'original', 'preview', 'final', 'rawtherapee_sample')
                AND (
@@ -420,6 +425,7 @@ class MetadataDatabase:
                    OR LENGTH(COALESCE(job.profile_signature, '')) = 64
                )
                AND asset.id IS NULL
+               {exclusion_sql}
              ORDER BY
                    CASE job.image_type
                        WHEN 'thumbnail' THEN 0
@@ -433,7 +439,8 @@ class MetadataDatabase:
                    job.completed_at DESC,
                    job.id DESC
              LIMIT 1
-            """
+            """,
+            excluded_job_ids,
         )
         self._rollback_read()
         return row

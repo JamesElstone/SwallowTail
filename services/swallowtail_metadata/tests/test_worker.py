@@ -47,8 +47,11 @@ class FakeDatabase:
     def next_unprofiled_photo(self):
         return self.unprofiled_photos.pop(0) if self.unprofiled_photos else None
 
-    def next_unrecorded_image_asset_job(self):
-        return self.asset_jobs.pop(0) if self.asset_jobs else None
+    def next_unrecorded_image_asset_job(self, excluded_job_ids=()):
+        for index, job in enumerate(self.asset_jobs):
+            if job["job_id"] not in excluded_job_ids:
+                return self.asset_jobs.pop(index)
+        return None
 
     def upsert_ready(self, photo_id, fields, raw):
         self.ready.append((photo_id, fields, raw))
@@ -627,8 +630,20 @@ class MetadataDatabaseProfileDataTest(unittest.TestCase):
             sql for sql, _params in connection.executed
             if "FROM photo_conversion_jobs job" in sql
         )
-        self.assertIn("asset.asset_variant_key = job.profile_signature", sql)
+        self.assertIn("asset.asset_variant_key = CASE", sql)
+        self.assertIn("CONVERT(job.profile_signature USING ascii) COLLATE ascii_bin", sql)
+        self.assertIn("ELSE _ascii'' COLLATE ascii_bin", sql)
         self.assertIn("job.image_type <> 'rawtherapee_sample'", sql)
+
+    def test_unrecorded_asset_backfill_excludes_retry_jobs_with_parameters(self) -> None:
+        database, connection = self.database()
+        database._table_exists = lambda _table_name: True
+        database.next_unrecorded_image_asset_job((27323, 27321))
+        sql, params = next((sql, params) for sql, params in connection.executed
+                           if "FROM photo_conversion_jobs job" in sql)
+        self.assertIn("job.id NOT IN", sql)
+        self.assertNotIn("27323", sql)
+        self.assertEqual((27323, 27321), tuple(params))
 
     def test_upsert_image_asset_uses_rawtherapee_profile_signature_as_variant_key(self) -> None:
         database, connection = self.database()
@@ -922,6 +937,50 @@ class MetadataWorkerTest(unittest.TestCase):
         self.assertEqual(1, len(db.image_assets))
         self.assertEqual("preview", db.image_assets[0]["image_type"])
         self.assertEqual("e" * 64, db.image_assets[0]["profile_signature"])
+
+    def test_missing_asset_backs_off_and_allows_another_job(self) -> None:
+        output = self.root / "preview.jpg"
+        output.write_bytes(display_jpeg(160, 90, b"preview-asset"))
+        missing = {"job_id": 93, "photo_id": 43, "image_type": "preview",
+                   "output_path": str(self.root / "missing.jpg")}
+        valid = {"job_id": 94, "photo_id": 44, "image_type": "preview",
+                 "output_path": str(output)}
+        db = FakeDatabase()
+        db.asset_jobs.append(missing)
+        worker = self.worker(db)
+        with patch("swallowtail_metadata.worker.time.monotonic", return_value=100):
+            self.assertFalse(worker.run_once())
+        self.assertEqual(160, worker.asset_retry_at[93])
+        db.asset_jobs.extend([missing, valid])
+        with patch("swallowtail_metadata.worker.time.monotonic", return_value=101):
+            self.assertTrue(worker.run_once())
+        self.assertEqual(94, db.image_assets[0]["conversion_job_id"])
+        with patch("swallowtail_metadata.worker.time.monotonic", return_value=161):
+            self.assertFalse(worker.run_once())
+        self.assertEqual(221, worker.asset_retry_at[93])
+
+    def test_legacy_shared_sample_is_not_assigned_to_a_profile(self) -> None:
+        output = self.root / "checksum_rawtheapee_sample.jpg"
+        output.write_bytes(display_jpeg(160, 90, b"legacy"))
+        db = FakeDatabase()
+        worker = self.worker(db)
+        self.assertFalse(worker.process_asset_job({
+            "job_id": 95, "photo_id": 43, "image_type": "rawtherapee_sample",
+            "output_path": str(output), "profile_signature": "a" * 64,
+        }))
+        self.assertEqual([], db.image_assets)
+
+    def test_profile_sample_records_only_its_named_variant(self) -> None:
+        signature = "a" * 64
+        output = self.root / f"checksum_rawtherapee_sample_{signature}.jpg"
+        output.write_bytes(display_jpeg(160, 90, b"variant"))
+        db = FakeDatabase()
+        worker = self.worker(db)
+        self.assertTrue(worker.process_asset_job({
+            "job_id": 96, "photo_id": 43, "image_type": "rawtherapee_sample",
+            "output_path": str(output), "profile_signature": signature,
+        }))
+        self.assertEqual(signature, db.image_assets[0]["profile_signature"])
 
     def test_run_once_generates_source_profile_when_metadata_is_idle(self) -> None:
         checksum = "abcdef" + ("0" * 58)
